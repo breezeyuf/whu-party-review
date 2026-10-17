@@ -8,6 +8,7 @@ import { useRequest } from "../../hooks/useRequest"
 import { createUser, importTemplate, importUsers, listUsers, resetPassword, updateUser } from "../../api/users"
 import { saveBlob } from "../../api/client"
 import { listBatches } from "../../api/batches"
+import { listOrgs } from "../../api/orgs"
 import { roleName, fmtDateTime } from "../../utils/format"
 import { useMeta } from "../../context/MetaContext"
 import { useToast } from "../../context/ToastContext"
@@ -20,6 +21,7 @@ export default function UsersPage() {
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listUsers(query), [JSON.stringify(query)])
   const batches = useRequest(() => listBatches({ page_size: 20 }), [])
+  const orgs = useRequest(() => listOrgs({ flat: true }), [])
   const [edit, setEdit] = useState(null)
   const [secret, setSecret] = useState("")
   const [importResult, setImportResult] = useState(null)
@@ -141,7 +143,14 @@ export default function UsersPage() {
           <div className="grid gap-2">
             {!edit.id && <input className="input input-bordered input-sm" placeholder="账号（工号/学号）" value={edit.username} onChange={(e) => setEdit({ ...edit, username: e.target.value })} />}
             <input className="input input-bordered input-sm" placeholder="姓名" value={edit.real_name || ""} onChange={(e) => setEdit({ ...edit, real_name: e.target.value })} />
-            <input className="input input-bordered input-sm" placeholder="组织 ID" value={edit.org_id || ""} onChange={(e) => setEdit({ ...edit, org_id: e.target.value })} />
+            <select className="select select-bordered select-sm" value={edit.org_id || ""} onChange={(e) => setEdit({ ...edit, org_id: e.target.value })}>
+              <option value="">请选择组织</option>
+              {(orgs.data || []).map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name}（{org.org_type}）
+                </option>
+              ))}
+            </select>
             <select className="select select-bordered select-sm" value={(edit.role || "").split(",")[0]} onChange={(e) => setEdit({ ...edit, role: e.target.value })}>
               {ROLES.map((r) => <option key={r} value={r}>{roleName(meta, r)}</option>)}
             </select>
