@@ -79,12 +79,20 @@ export default function UsersPage() {
           <button type="button" className="btn btn-primary btn-sm" onClick={() => { setSecret(""); setEdit({ username: "", real_name: "", org_id: "", role: "STUDENT", is_active: true }) }}>新增用户</button>
         </>
       } />
-      <FilterBar values={query} onChange={setQuery} onReset={() => setQuery({ q: "", role: "", is_active: "" })} fields={[
+      <FilterBar values={query} onChange={setQuery} onReset={() => setQuery({ q: "", role: "", org_id: "", is_active: "" })} fields={[
         { key: "q", label: "姓名 / 账号" },
         { key: "role", label: "角色", type: "select", metaKey: "roles" },
         { key: "org_id", label: "组织 ID" },
         { key: "is_active", label: "状态", type: "select", options: [{ code: "true", name: "启用" }, { code: "false", name: "停用" }] },
       ]} />
+      {req.error && (
+        <div className="alert alert-error mb-4 flex items-center justify-between gap-3 text-sm" role="alert">
+          <span>{req.error.message || "用户列表加载失败"}</span>
+          <button type="button" className="btn btn-error btn-outline btn-xs" onClick={() => req.reload()}>
+            重新加载
+          </button>
+        </div>
+      )}
       <div className="surface-card mb-4 p-3 text-sm">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-base-content/60">Excel 导入</span>
