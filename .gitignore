@@ -21,6 +21,12 @@ __pycache__/
 .venv/
 venv/
 
+# 运行数据：材料原件与预览不入库（启动后可在系统设置初始化演示数据自动生成）
+backend/storage/
+
+# 测试缓存
+.pytest_cache/
+
 # Node
 node_modules/
 dist/
