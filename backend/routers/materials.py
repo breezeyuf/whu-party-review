@@ -36,6 +36,8 @@ from pathlib import Path
 
 router = APIRouter(tags=["materials"])
 
+MISSING_FILE_HINT = "材料文件缺失（仓库未包含 storage 材料），请先在「系统设置」初始化演示数据，或重新上传材料"
+
 
 def _editable_submission(db, actor, material, *, reviewer=False):
     sub = ensure_submission_access(db, actor, material.submission_id)
@@ -196,7 +198,10 @@ def get_file(mid: int, version_id: int | None = None, disposition: str = "inline
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == vid, MaterialVersion.material_id == mid).first()
     if not ver:
         raise not_found()
-    return file_response(ver, disposition)
+    try:
+        return file_response(ver, disposition)
+    except FileNotFoundError:
+        raise not_found(MISSING_FILE_HINT)
 
 
 @router.get("/materials/{mid}/pages/{n}")
@@ -217,6 +222,8 @@ def get_page(mid: int, n: int, version_id: int | None = None, scale: float = 1.5
         preview = ver.stored_path
     if not preview:
         raise not_found()
+    if not (STORAGE_DIR / preview).is_file():
+        raise not_found(MISSING_FILE_HINT)
     scale = min(3, max(0.5, scale))
     cache = STORAGE_DIR / "cache" / f"{vid}_{n}_{scale}.png"
     cache.parent.mkdir(parents=True, exist_ok=True)
