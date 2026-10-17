@@ -1,0 +1,28 @@
+{
+  "name": "party-review-workbench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node --test tests/*.test.js",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router-dom": "7.18.4",
+    "axios": "1.20.0",
+    "recharts": "3.10.1",
+    "react-is": "19.3.1",
+    "lucide-react": "1.57.0",
+    "dayjs": "1.11.23"
+  },
+  "devDependencies": {
+    "vite": "8.3.4",
+    "@vitejs/plugin-react": "6.1.2",
+    "tailwindcss": "4.3.3",
+    "@tailwindcss/vite": "4.3.3",
+    "daisyui": "5.7.50"
+  }
+}

@@ -1,0 +1,237 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+/* 自定义主题：暖白底色 + 党建红强调 + 墨色中性层次（克制的红色，仅用于关键操作与品牌） */
+@plugin "daisyui/theme" {
+  name: "party";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+
+  --color-base-100: #fdfcfa;
+  --color-base-200: #f5f3ef;
+  --color-base-300: #e7e2da;
+  --color-base-content: #2b2724;
+
+  --color-primary: #b4222a;
+  --color-primary-content: #fdf6f3;
+  --color-secondary: #45403a;
+  --color-secondary-content: #f5f2ee;
+  --color-accent: #a8781f;
+  --color-accent-content: #fdf8ec;
+  --color-neutral: #322d29;
+  --color-neutral-content: #f2efe9;
+
+  --color-info: #2456a6;
+  --color-info-content: #eef4fd;
+  --color-success: #1c7a44;
+  --color-success-content: #effaf3;
+  --color-warning: #b05e09;
+  --color-warning-content: #fdf6ea;
+  --color-error: #c23b3b;
+  --color-error-content: #fdf1f1;
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, .page-title {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* ---- 卡片与层次 ---- */
+.surface-card {
+  background: var(--color-base-100);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+  border-radius: var(--radius-box);
+  box-shadow: 0 1px 2px rgb(43 39 36 / 0.04);
+  transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.surface-card.hoverable:hover,
+a.surface-card:hover {
+  border-color: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+  box-shadow: 0 4px 14px rgb(43 39 36 / 0.08);
+}
+
+/* ---- 页头装饰 ---- */
+.page-title {
+  position: relative;
+  padding-left: 0.75rem;
+}
+.page-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.18em;
+  bottom: 0.18em;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-primary);
+}
+
+/* daisyUI 5 removed form-control / label-text; keep the stacked label + full-width field layout */
+.form-control {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-control > :where(.input, .select, .textarea, .file-input) {
+  width: 100%;
+}
+
+.label-text {
+  display: block;
+  color: color-mix(in oklab, var(--color-base-content) 72%, transparent);
+  font-weight: 500;
+}
+
+/* ---- 输入控件 ---- */
+.input:focus, .select:focus, .textarea:focus {
+  border-color: color-mix(in oklab, var(--color-primary) 55%, transparent);
+  outline: 2px solid color-mix(in oklab, var(--color-primary) 18%, transparent);
+  outline-offset: 1px;
+}
+
+/* ---- 按钮 ---- */
+.btn {
+  transition: all 0.15s ease;
+}
+.btn-primary {
+  box-shadow: 0 1px 2px rgb(180 34 42 / 0.25);
+}
+.btn-primary:hover {
+  box-shadow: 0 3px 8px rgb(180 34 42 / 0.3);
+}
+
+/* ---- 表格 ---- */
+.table-compact :where(th, td) {
+  padding: 0.55rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.table :where(tbody tr) {
+  transition: background-color 0.12s ease;
+}
+.table :where(tbody tr:hover) {
+  background: color-mix(in oklab, var(--color-base-content) 4%, transparent);
+}
+.table :where(thead th) {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+}
+
+/* ---- 侧边栏菜单 ---- */
+.menu :where(li > a, li > .menu-title) {
+  border-radius: 0.5rem;
+}
+.menu li > a {
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.menu li > a.active {
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.menu li > a:not(.active):hover {
+  background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
+}
+
+/* ---- 顶栏毛玻璃 ---- */
+.navbar-glass {
+  background: color-mix(in oklab, var(--color-base-100) 82%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* ---- 统计卡 ---- */
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-base-100);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 9%, transparent);
+  border-radius: var(--radius-box);
+  box-shadow: 0 1px 2px rgb(43 39 36 / 0.04);
+  transition: box-shadow 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+.stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--color-primary);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.stat-card:hover {
+  border-color: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+  box-shadow: 0 4px 14px rgb(43 39 36 / 0.08);
+  transform: translateY(-1px);
+}
+.stat-card:hover::before {
+  opacity: 1;
+}
+
+/* ---- 滚动条 ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--color-base-content) 22%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ---- 登录页品牌区 ---- */
+.brand-panel {
+  background:
+    radial-gradient(120% 90% at 15% 0%, rgb(255 255 255 / 0.12), transparent 55%),
+    linear-gradient(160deg, #8f1a21 0%, #b4222a 52%, #7e151c 100%);
+  color: #fdf6f3;
+}
+.brand-panel .brand-dot {
+  background: rgb(255 255 255 / 0.14);
+  border: 1px solid rgb(255 255 255 / 0.22);
+}
+
+/* 页面淡入 */
+@keyframes page-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+main > * {
+  animation: page-fade 0.22s ease;
+}

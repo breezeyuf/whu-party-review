@@ -1,0 +1,350 @@
+from __future__ import annotations
+
+from datetime import date
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from ai.checks.completeness import run_completeness
+from ai.checks.content import run_content
+from ai.checks.format import run_format
+from ai.checks.timeline import run_timeline
+from ai.classify import classify_material
+from ai.extract import extract_fields, extract_nodes
+from ai.llm import llm_enabled
+from ai.parser import parse_version_file
+from ai.report import issue_fp, recommend, summarize
+from ai.suggest import fill_suggestions
+from models import (
+    AiReport,
+    Archive,
+    ArchiveTimeNode,
+    CheckRule,
+    Issue,
+    Job,
+    Material,
+    MaterialType,
+    MaterialVersion,
+    ParseResult,
+    RuleVersion,
+    Submission,
+    TimeNodeDef,
+    TimeNodeExtraction,
+)
+from services.timeline import merge_archive_nodes, node_map_for_archive
+from utils import now, get_setting
+
+
+def parse_version(db: Session, version_id: int) -> ParseResult:
+    ver = db.query(MaterialVersion).filter(MaterialVersion.id == version_id).first()
+    if not ver:
+        raise ValueError("version not found")
+    material = db.query(Material).filter(Material.id == ver.material_id).first()
+    # Use the same lock order as run_check: submission, then material version.
+    db.query(Submission).filter(Submission.id == material.submission_id).with_for_update().one()
+    db.refresh(material)
+    db.refresh(ver)
+    ver.parse_status = "RUNNING"
+    db.flush()
+    try:
+        result = parse_version_file(ver.stored_path, ver.file_ext)
+        is_current = material.current_version_id == ver.id and material.status == "ACTIVE"
+        types = db.query(MaterialType).filter(MaterialType.is_active.is_(True)).all()
+        declared = db.query(MaterialType).filter(MaterialType.id == material.declared_type_id).first() if material.declared_type_id else None
+        cls = classify_material(result.get("full_text") or "", declared, types,
+                                float(get_setting(db, "ai", {}).get("classify_confidence_threshold") or 0.7))
+        if is_current and material.type_status != "CONFIRMED":
+            material.type_id = cls["type_id"]
+            material.type_source = cls["type_source"]
+            material.type_confidence = cls["type_confidence"]
+            material.type_status = cls["type_status"]
+        type_row = db.query(MaterialType).filter(MaterialType.id == material.type_id).first() if material.type_id else None
+        fields = extract_fields(result.get("full_text") or "")
+        result["extracted_fields"] = fields
+        nodes = db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
+        extractions = extract_nodes(result.get("full_text") or "", result.get("pages") or [], type_row, nodes)
+        db.query(TimeNodeExtraction).filter(
+            TimeNodeExtraction.material_id == material.id,
+            TimeNodeExtraction.is_current.is_(True),
+            True if is_current else TimeNodeExtraction.material_version_id == ver.id,
+        ).update({"is_current": False})
+        for ex in extractions:
+            db.add(TimeNodeExtraction(
+                archive_id=material.archive_id,
+                node_code=ex["node_code"],
+                material_id=material.id,
+                material_version_id=ver.id,
+                seq_index=ex.get("seq_index") or 0,
+                value_date=ex.get("value_date"),
+                value_end_date=ex.get("value_end_date"),
+                hours=ex.get("hours"),
+                raw_text=ex.get("raw_text"),
+                invalid_reason=ex.get("invalid_reason"),
+                page_no=ex.get("page_no"),
+                bbox=ex.get("bbox"),
+                confidence=ex.get("confidence"),
+                method=ex.get("method") or "RULE",
+                is_current=is_current,
+                created_at=now(),
+            ))
+        existing = db.query(ParseResult).filter(ParseResult.version_id == ver.id).first()
+        payload = dict(
+            parser=result.get("parser") or "NONE",
+            ocr_engine=result.get("ocr_engine"),
+            preview_pdf_path=result.get("preview_pdf_path"),
+            full_text=result.get("full_text") or "",
+            char_count=result.get("char_count") or 0,
+            pages=result.get("pages") or [],
+            visual_marks=result.get("visual_marks") or {},
+            extracted_fields=fields,
+            format_features=result.get("format_features") or {},
+            warnings=result.get("warnings") or [],
+            created_at=now(),
+            updated_at=now(),
+        )
+        if existing:
+            for k, v in payload.items():
+                if k != "created_at":
+                    setattr(existing, k, v)
+            pr = existing
+        else:
+            pr = ParseResult(version_id=ver.id, **payload)
+            db.add(pr)
+        ver.parse_status = "DONE"
+        ver.parse_error = None
+        ver.parsed_at = now()
+        ver.page_count = result.get("page_count") or len(result.get("pages") or [])
+        db.flush()
+        if is_current:
+            merge_archive_nodes(db, material.archive_id)
+        return pr
+    except Exception as e:
+        ver.parse_status = "FAILED"
+        ver.parse_error = str(e)[:500]
+        db.flush()
+        raise
+
+
+def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK", user_id: Optional[int] = None, job_id: Optional[int] = None, use_llm: bool = True) -> AiReport:
+    # 行锁串行化同一提交包的并发检查，避免 report_no 冲突与问题表交错写
+    sub = db.query(Submission).filter(Submission.id == submission_id).with_for_update().first()
+    if not sub:
+        raise ValueError("submission not found")
+    rv = db.query(RuleVersion).order_by(RuleVersion.version_no.desc()).first()
+    if not rv:
+        raise ValueError("no rule version")
+    last_no = (
+        db.query(AiReport.report_no).filter(AiReport.submission_id == submission_id)
+        .order_by(AiReport.report_no.desc()).first()
+    )
+    report_no = (last_no[0] + 1) if last_no else 1
+    enabled = bool(use_llm) and llm_enabled(db)
+    mode = "RULE_LLM" if enabled else "RULE_ONLY"
+    degrade = None if enabled else "未配置大模型"
+    # 记录实际使用的模型，保证报告可追溯（仅规则模式为空）
+    model_name = (get_setting(db, "ai", {}) or {}).get("model") if enabled else None
+    report = AiReport(
+        submission_id=submission_id,
+        report_no=report_no,
+        trigger_type=trigger_type,
+        triggered_by=user_id,
+        job_id=job_id,
+        rule_version_id=rv.id,
+        mode=mode,
+        llm_model=model_name,
+        degrade_reason=degrade,
+        status="RUNNING",
+        handover_status="REQUIRED",
+        handover_reasons=[],
+        started_at=now(),
+    )
+    prev = None
+    try:
+        db.add(report)
+        db.flush()
+        if trigger_type == "RECHECK":
+            prev = (
+                db.query(AiReport)
+                .filter(AiReport.submission_id == submission_id, AiReport.id != report.id, AiReport.status == "DONE")
+                .order_by(AiReport.report_no.desc())
+                .first()
+            )
+            report.recheck_of_report_id = prev.id if prev else None
+        materials = db.query(Material).filter(Material.submission_id == submission_id, Material.status == "ACTIVE").all()
+        versions = {}
+        parses = {}
+        types = {t.id: t for t in db.query(MaterialType).all()}
+        used_versions = []
+        for m in materials:
+            if not m.current_version_id:
+                continue
+            ver = db.query(MaterialVersion).filter(MaterialVersion.id == m.current_version_id).first()
+            if not ver:
+                continue
+            versions[m.id] = ver
+            if ver.parse_status != "DONE":
+                parse_version(db, ver.id)
+                db.refresh(ver)
+            pr = db.query(ParseResult).filter(ParseResult.version_id == ver.id).first()
+            if pr:
+                parses[ver.id] = pr
+            used_versions.append({"material_id": m.id, "version_id": ver.id, "version_no": ver.version_no})
+        node_map = node_map_for_archive(db, sub.archive_id)
+        completeness, d1, r1 = run_completeness(db, sub, materials, _to_nodevals(node_map))
+        snapshot, d2, r2 = run_timeline(db, sub, node_map)
+        d3, r3 = run_format(db, materials, versions, parses, types)
+        d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled)
+        drafts = d1 + d2 + d3 + d4
+        fill_suggestions(db, drafts)
+        rule_results = r1 + r2 + r3 + r4
+        summary = summarize(drafts, len(materials), rule_results)
+        rec = recommend(summary, drafts)
+        classification = {
+            "materials": [
+                {
+                    "material_id": m.id,
+                    "title": m.title,
+                    "type_code": types[m.type_id].code if m.type_id in types else None,
+                    "confidence": m.type_confidence,
+                    "type_source": m.type_source,
+                    "status": m.type_status,
+                }
+                for m in materials
+            ],
+            "counts": _type_counts(materials, types),
+        }
+        reasons = _handover_reasons(sub, materials, drafts, mode, node_map)
+        hs = "REQUIRED" if reasons else "NOT_REQUIRED"
+        report.material_versions = used_versions
+        report.classification = classification
+        report.completeness = completeness
+        report.timeline_snapshot = snapshot
+        report.rule_results = rule_results
+        report.summary = summary
+        report.recommendation = rec
+        report.handover_status = hs
+        report.handover_reasons = reasons
+        report.effective_recommendation = None if hs == "REQUIRED" else rec
+        report.status = "DONE"
+        report.finished_at = now()
+        report.duration_ms = int((report.finished_at - report.started_at).total_seconds() * 1000)
+        # 问题重写放入保存点：中途失败时回滚"停用旧问题"，避免问题清单被清空
+        with db.begin_nested():
+            db.query(Issue).filter(Issue.submission_id == submission_id, Issue.source != "MANUAL", Issue.is_active.is_(True)).update(
+                {"is_active": False}
+            )
+            old_by_fp = {}
+            if prev:
+                olds = db.query(Issue).filter(Issue.report_id == prev.id).all()
+                old_by_fp = {i.fingerprint: i for i in olds if i.fingerprint}
+            new_fps = set()
+            for d in drafts:
+                fp = issue_fp(d)
+                new_fps.add(fp)
+                old = old_by_fp.get(fp)
+                issue = Issue(
+                    submission_id=submission_id,
+                    report_id=report.id,
+                    material_id=d.material_id,
+                    material_version_id=d.material_version_id,
+                    source=d.source,
+                    category=d.category,
+                    severity=d.severity,
+                    rule_code=d.rule_code,
+                    rule_basis=d.rule_basis,
+                    title=d.title,
+                    description=d.description,
+                    location=d.location or {},
+                    actual_value=d.actual_value,
+                    expected_value=d.expected_value,
+                    suggestion=d.suggestion,
+                    suggestion_example=d.suggestion_example,
+                    needs_human_judgement=d.needs_human_judgement,
+                    confidence=d.confidence,
+                    fingerprint=fp,
+                    is_active=True,
+                    review_status=old.review_status if old else "PENDING",
+                    resolution="UNRESOLVED" if old else "OPEN",
+                    prev_issue_id=old.id if old else None,
+                    is_new_in_recheck=bool(prev and not old),
+                    created_at=now(),
+                    updated_at=now(),
+                )
+                db.add(issue)
+            if prev:
+                resolved = unresolved = newc = 0
+                for fp, old in old_by_fp.items():
+                    if fp in new_fps:
+                        unresolved += 1
+                    else:
+                        old.resolution = "RESOLVED"
+                        old.resolved_by_report_id = report.id
+                        resolved += 1
+                newc = sum(1 for d in drafts if issue_fp(d) not in old_by_fp)
+                report.recheck_summary = {"resolved": resolved, "unresolved": unresolved, "new": newc}
+            db.flush()
+            # fill issue ids into rule_results loosely
+            sub.latest_report_id = report.id
+            sub.ai_status = "DONE"
+        db.flush()
+        return report
+    except Exception as e:
+        report.status = "FAILED"
+        report.error = str(e)[:800]
+        report.finished_at = now()
+        sub.ai_status = "FAILED"
+        db.flush()
+        raise
+
+
+def _to_nodevals(node_map: dict):
+    from ai.dsl import NodeVal
+    from utils import as_date
+    out = {}
+    for code, n in node_map.items():
+        d = as_date(n.get("date") or n.get("value_date"))
+        out[code] = type("N", (), {
+            "date": d,
+            "end": as_date(n.get("end") or n.get("end_date")),
+            "hours": n.get("hours"),
+            "seq": [as_date(x) for x in (n.get("seq") or []) if as_date(x)],
+            "has_conflict": n.get("has_conflict"),
+            "missing": not bool(d or n.get("seq")),
+        })()
+    return out
+
+
+def _type_counts(materials, types):
+    from collections import Counter
+    c = Counter()
+    names = {}
+    for m in materials:
+        if m.type_id in types:
+            c[types[m.type_id].code] += 1
+            names[types[m.type_id].code] = types[m.type_id].name
+    return [{"type_code": k, "type_name": names[k], "count": v} for k, v in c.items()]
+
+
+def _handover_reasons(sub, materials, drafts, mode, node_map) -> list[str]:
+    reasons = []
+    if mode == "RULE_ONLY":
+        reasons.append("LOW_CONFIDENCE")
+    if any((m.type_status == "NEEDS_CONFIRM") or (m.type_confidence is not None and m.type_confidence < 0.7) for m in materials):
+        reasons.append("LOW_CONFIDENCE")
+    if any((d.confidence if d.confidence is not None else 1) < 0.7 for d in drafts):
+        reasons.append("LOW_CONFIDENCE")
+    if any(n.get("has_conflict") for n in node_map.values()):
+        reasons.append("MATERIAL_CONFLICT")
+    if any(d.needs_human_judgement for d in drafts):
+        reasons.append("NEEDS_JUDGEMENT")
+    rec = recommend(summarize(drafts, len(materials), []), drafts)
+    if rec == "NEEDS_REVIEW":
+        reasons.append("NEEDS_JUDGEMENT")
+    if sub.stage_code in (1, 2, 3, 4, 5):
+        reasons.append("KEY_STAGE")
+    # unique preserve order
+    seen = []
+    for r in reasons:
+        if r not in seen:
+            seen.append(r)
+    return seen
