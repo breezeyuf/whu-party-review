@@ -1,0 +1,42 @@
+{
+  "generated_by": "dev-report",
+  "workspace": "C:/Users/15725/AppData/Roaming/ModexData/library-IvGwj3/workspaces/3f470f55f91d",
+  "figures": [
+    {
+      "file": "figures/fig_arch.drawio",
+      "layout_family": "layered-stack",
+      "orientation": "landscape",
+      "palette_family": "ink-slate",
+      "semantic_shapes": "rect/rounded-rect/cylinder3/arrow",
+      "seed": "8cd41ee8f481",
+      "rationale": "系统整体分层架构：展现—接口—业务服务—智能审核引擎—数据与任务五层，层间单向主箭头，无跨层连线"
+    },
+    {
+      "file": "figures/fig_er.drawio",
+      "layout_family": "matrix-flow",
+      "orientation": "portrait-columns",
+      "palette_family": "semantic-multi-hue(teal-sand+ink-slate+plum-bluegray+indigo-amber)",
+      "semantic_shapes": "rect(表框)/arrow/note",
+      "seed": "a5693bd82db5",
+      "rationale": "35 张业务表中 24 张核心表的实体关系：按用户与组织、档案与材料、时间与报告、规则与流转四域分列，列内纵向排列、跨列连线走空白通道"
+    },
+    {
+      "file": "figures/fig_flow_1.drawio",
+      "layout_family": "branch-merge",
+      "orientation": "portrait",
+      "palette_family": "indigo-amber",
+      "semantic_shapes": "ellipse/rounded-rect/rhombus/parallelogram/arrow",
+      "seed": "36d529788ff4",
+      "rationale": "学生自查—提交—多级审核—整改回退的主业务闭环：含两处真实条件分叉（阻断问题、本层结论）与两条回退回路"
+    },
+    {
+      "file": "figures/fig_flow_2.drawio",
+      "layout_family": "horizontal-pipeline",
+      "orientation": "portrait-stack",
+      "palette_family": "teal-sand",
+      "semantic_shapes": "rounded-rect/arrow/text-label",
+      "seed": "2a0eadd8b4db",
+      "rationale": "AI 智能审核流水线：解析—理解—校验—汇总—结论五阶段自下而上依次变换，阶段间标出传递的数据形态"
+    }
+  ]
+}
