@@ -48,7 +48,7 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
                 if llm_error:
                     found = []
                 else:
-                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text)
+                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text, submission.archive)
             else:
                 found = _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types)
             for d in found:
@@ -62,7 +62,7 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
     return drafts, results
 
 
-def _apply_llm_rule(db, rule, m, ver, text: str) -> tuple[list[IssueDraft], "str | None"]:
+def _apply_llm_rule(db, rule, m, ver, text: str, archive=None) -> tuple[list[IssueDraft], "str | None"]:
     """按 CONTENT_CHECK 模板做语义核查。返回为空表示未发现或不可用。"""
     text = (text or "").strip()
     if not text:
@@ -71,10 +71,12 @@ def _apply_llm_rule(db, rule, m, ver, text: str) -> tuple[list[IssueDraft], "str
 
     variables = {
         "rules": f"{rule.code} {rule.name}：{rule.basis or rule.message_template or ''}",
-        "text": text[:6000],
+        "text": text,
     }
     try:
-        parsed, err, _ms = chat_json(db, "CONTENT_CHECK", variables, override={"max_attempts": 1})
+        parsed, err, _ms = chat_json(
+            db, "CONTENT_CHECK", variables, override={"max_attempts": 1}, archive=archive,
+        )
     except Exception as exc:  # 大模型异常不得中断检查
         return [], str(exc)[:200]
     if err:

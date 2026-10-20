@@ -6,7 +6,8 @@ from typing import Any, Optional
 
 import httpx
 
-from models import PromptTemplate, SystemSetting
+from ai.desensitize import desensitize_text
+from models import Archive, PromptTemplate
 from security import decrypt_field
 from utils import get_setting
 
@@ -29,7 +30,10 @@ def llm_api_key(db) -> str:
     return decrypt_field(enc) or ""
 
 
-def chat_json(db, code: str, variables: dict, override: Optional[dict] = None) -> tuple[Optional[dict], Optional[str], float]:
+def chat_json(
+    db, code: str, variables: dict, override: Optional[dict] = None, *,
+    archive: Optional[Archive] = None,
+) -> tuple[Optional[dict], Optional[str], float]:
     cfg = dict(llm_config(db))
     if override:
         cfg.update({k: v for k, v in override.items() if v is not None})
@@ -38,14 +42,21 @@ def chat_json(db, code: str, variables: dict, override: Optional[dict] = None) -
     key = override.get("api_key") if override and override.get("api_key") else llm_api_key(db)
     if not base or not model:
         return None, "未配置大模型", 0
+    redact = cfg.get("desensitize") is not False
+    # 先替换完整变量中的身份信息，再截取长度，避免截断后留下身份信息片段。
+    safe_variables = _prepare_variables(variables, archive, redact)
     tpl = db.query(PromptTemplate).filter(PromptTemplate.code == code, PromptTemplate.is_active.is_(True)).first()
     if not tpl:
-        sys_p, user_p = "只输出 JSON。", json.dumps(variables, ensure_ascii=False)
+        sys_p, user_p = "只输出 JSON。", json.dumps(safe_variables, ensure_ascii=False)
     else:
         sys_p = tpl.system_prompt
         user_p = tpl.user_prompt
-        for k, v in variables.items():
+        for k, v in safe_variables.items():
             user_p = user_p.replace("{" + k + "}", str(v)[:6000])
+    if redact:
+        # 模板本身也可能包含身份信息；此处统一处理最终发送的两段提示词。
+        sys_p = desensitize_text(sys_p, archive)
+        user_p = desensitize_text(user_p, archive)
     payload = {
         "model": model,
         "temperature": float(cfg.get("temperature") or 0.1),
@@ -82,6 +93,16 @@ def chat_json(db, code: str, variables: dict, override: Optional[dict] = None) -
             last_err = str(e)
             time.sleep(0.5 * (2 ** attempt))
     return None, last_err or "调用失败", (time.time() - t0) * 1000
+
+
+def _prepare_variables(value: Any, archive: Optional[Archive], redact: bool) -> Any:
+    if isinstance(value, str):
+        return (desensitize_text(value, archive) if redact else value)[:6000]
+    if isinstance(value, dict):
+        return {key: _prepare_variables(item, archive, redact) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_prepare_variables(item, archive, redact) for item in value]
+    return value
 
 
 def _parse_json(content: str) -> Optional[dict]:
