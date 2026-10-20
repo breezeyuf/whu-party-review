@@ -22,23 +22,23 @@ export default function MyProgressPage() {
   return (
     <div>
       <PageHeader title="我的发展进度" extra={sub?.id && <Link className="btn btn-primary btn-sm" to={`/my/self-check/${sub.id}`}>去自查</Link>}>
-        {archive?.next_action}
+        {archive?.current_submission?.next_action || archive?.next_action}
       </PageHeader>
       <div className="surface-card mb-4 overflow-x-auto p-4">
         <div className="mb-3 flex items-center gap-2 text-sm">
           <span>{archive?.stage_name || `阶段 ${archive?.current_stage || ""}`}</span>
           <StatusBadge code={sub?.status || archive?.status} />
         </div>
-        <StageProgress current={archive?.current_stage} stages={timelineReq.data?.stages || []} />
+        <StageProgress current={archive?.current_stage} stages={timelineReq.data?.stages || []} submissionBase="/my/self-check" />
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
         <section className="lg:col-span-3">
           <h2 className="mb-2 text-sm font-medium">时间节点</h2>
-          {timelineReq.loading ? <Loading /> : <TimelineView timeline={timelineReq.data} />}
+          {timelineReq.loading ? <Loading /> : timelineReq.error ? <ErrorState error={timelineReq.error} onRetry={() => timelineReq.reload().catch(() => {})} /> : <TimelineView timeline={timelineReq.data} />}
         </section>
         <section className="lg:col-span-2">
           <h2 className="mb-2 text-sm font-medium">审核轨迹</h2>
-          <ReviewTrail records={Array.isArray(historyReq.data) ? historyReq.data : []} />
+          {historyReq.loading ? <Loading /> : historyReq.error ? <ErrorState error={historyReq.error} onRetry={() => historyReq.reload().catch(() => {})} /> : <ReviewTrail records={Array.isArray(historyReq.data) ? historyReq.data.filter((record) => record.kind === "REVIEW").map((record, index) => ({ ...record, id: `review-${index}`, action: record.title })) : []} />}
         </section>
       </div>
     </div>

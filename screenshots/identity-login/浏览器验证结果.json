@@ -1,0 +1,49 @@
+{
+  "browser": "Microsoft Edge headless",
+  "viewport": "1440x1000 and 390x844",
+  "mode": "real application routes with isolated in-memory API and credentials",
+  "results": [
+    {
+      "name": "登录前只显示统一登录入口",
+      "passed": true
+    },
+    {
+      "name": "学生登录后只显示学生功能",
+      "passed": true
+    },
+    {
+      "name": "学生访问管理地址被拦截且未加载用户数据",
+      "passed": true
+    },
+    {
+      "name": "退出学生账号后登录管理员，只显示管理界面且管理入口可用",
+      "passed": true
+    },
+    {
+      "name": "管理员访问学生页面被拦截",
+      "passed": true
+    },
+    {
+      "name": "审核员进入专属待办，原有审核门禁和问题处理可用",
+      "passed": true
+    },
+    {
+      "name": "多身份账号先选择授权身份，进入后只显示本次身份",
+      "passed": true
+    },
+    {
+      "name": "移动端学生菜单仅显示本身份功能且无横向溢出",
+      "passed": true
+    },
+    {
+      "name": "管理员移动端管理卡片布局正常",
+      "passed": true
+    },
+    {
+      "name": "无浏览器脚本异常，预览未发出真实后端请求",
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "backendRequests": []
+}

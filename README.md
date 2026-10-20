@@ -2,6 +2,8 @@
 
 武汉大学团队项目。面向党员发展全流程的材料智能审核系统：学生提交材料 → 解析入库 → AI 自查与规则引擎核查 → 支部 / 学院 / 组织部多级审核 → 整改回复 → 备案归档，全链路留痕、可追溯。
 
+已增加 Windows 本地程序：解压完整 `PartyReview` 文件夹到英文路径后，双击 `PartyReview.exe`，无需单独安装 Python、Node.js 或 PostgreSQL。首次登录、演示入口、数据备份和源码构建见 [本地程序说明](docs/Windows本地程序使用说明.md)。
+
 ![登录页](screenshots/01-登录页.png)
 
 ## 技术栈
@@ -15,18 +17,19 @@
 ## 目录结构
 
 ```
-backend/        FastAPI 后端（80 个 py，45 项 pytest）
-frontend/       React 前端（Vite 构建，79 个 jsx/js）
+backend/        FastAPI 后端与回归测试
+frontend/       React 前端、身份专属工作台与自动化测试
+desktop/        Windows 本地程序启动、打包和桌面回归测试
 docs/           RUN.md 运行说明 · DESIGN.md 设计基线 · 开发说明 · 原始包说明
 paper/          论文 main.pdf（35 页）+ LaTeX 源
 figures/        论文插图（drawio 源 + PDF/PNG 导出）
-screenshots/    15 张界面截图
+screenshots/    业务界面、精简工作台与身份登录截图
 database/       演示库 SQL（24 档案 / 72 提交包 / 84 材料版本 / 276 问题）
 start.cmd       一键启动脚本（Windows）
 start.ps1
 ```
 
-> **未入库内容**：`backend/storage/`（508 份材料 + 508 份预览，约 3.4G）与 `frontend/dist/`。材料可在系统内「初始化演示数据」自动生成，`dist` 用 `npm run build` 构建。两者均已写入 `.gitignore`。
+> **未入库内容**：`backend/storage/`（508 份材料 + 508 份预览，约 3.4G）与 `frontend/dist/`。材料可在系统内「初始化演示数据」自动生成，`dist` 用 `npm run build` 构建。桌面运行时、打包输出、`data/`、`demo-data/` 及首次登录信息同样不入库。它们均已写入 `.gitignore`。
 
 ## 快速开始（Windows）
 

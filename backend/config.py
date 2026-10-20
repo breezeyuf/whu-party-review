@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 _HERE = Path(__file__).resolve().parent
+BACKEND_DIR = Path(os.environ.get("PARTY_REVIEW_BACKEND_DIR") or _HERE)
 load_dotenv(_HERE / ".env")
 load_dotenv(_HERE.parent.parent / ".env")
 

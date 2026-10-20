@@ -3,7 +3,7 @@ import { useMeta } from "../../context/MetaContext"
 import { stageName, statusName } from "../../utils/format"
 import { StatusBadge } from "../common/Badges"
 
-export default function StageProgress({ stages = [], current }) {
+export default function StageProgress({ stages = [], current, submissionBase = "/review/submissions" }) {
   const meta = useMeta()
   const list = (meta.stages || []).map((s) => {
     const hit = stages.find((x) => Number(x.code) === Number(s.code))
@@ -21,7 +21,7 @@ export default function StageProgress({ stages = [], current }) {
               {s.status && (
                 <span className="mt-1 block">
                   {s.submission_id ? (
-                    <Link to={`/review/submissions/${s.submission_id}`} className="link"><StatusBadge code={s.status} /></Link>
+                    <Link to={`${submissionBase}/${s.submission_id}`} className="link"><StatusBadge code={s.status} /></Link>
                   ) : <StatusBadge code={s.status} />}
                 </span>
               )}

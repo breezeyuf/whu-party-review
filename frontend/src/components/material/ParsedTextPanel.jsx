@@ -8,9 +8,10 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
   const [error, setError] = useState("")
 
   useEffect(() => {
-    setText(parsed?.corrected_text || parsed?.full_text || "")
-    const f = parsed?.corrected_fields || parsed?.extracted_fields || {}
+    setText(parsed?.corrected_text ?? parsed?.full_text ?? "")
+    const f = parsed?.corrected_fields ?? parsed?.extracted_fields ?? {}
     setFields(JSON.stringify(f, null, 2))
+    setError("")
   }, [parsed])
 
   if (!parsed) return <p className="text-sm text-base-content/50">解析尚未完成。</p>
@@ -19,7 +20,10 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
     setBusy(true)
     setError("")
     let corrected_fields
-    try { corrected_fields = JSON.parse(fields) } catch { setError("抽取字段不是合法 JSON"); setBusy(false); return }
+    try {
+      corrected_fields = JSON.parse(fields)
+      if (!corrected_fields || Array.isArray(corrected_fields) || typeof corrected_fields !== "object") throw new Error()
+    } catch { setError("抽取字段必须是合法的 JSON 对象"); setBusy(false); return }
     try {
       await onSave({ version_id: parsed.version_id, corrected_text: text, corrected_fields, recheck })
     } catch (e) {

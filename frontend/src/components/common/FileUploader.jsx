@@ -8,15 +8,17 @@ export default function FileUploader({
   label = "选择文件",
   hint,
   disabled,
+  compact = false,
   onFile,
 }) {
   const inputRef = useRef(null)
+  const uploading = useRef(false)
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState("")
   const [progress, setProgress] = useState(null)
 
   const check = (file) => {
-    if (!file) return
+    if (!file || disabled || uploading.current) return
     const ext = `.${(file.name.split(".").pop() || "").toLowerCase()}`
     const allowed = accept.split(",").map((s) => s.trim().toLowerCase())
     if (!allowed.includes(ext)) {
@@ -28,16 +30,17 @@ export default function FileUploader({
       return
     }
     setError("")
+    uploading.current = true
     setProgress(0)
-    Promise.resolve(onFile(file, setProgress))
+    Promise.resolve().then(() => onFile(file, setProgress))
       .catch((e) => setError(e?.message || "上传失败"))
-      .finally(() => setProgress(null))
+      .finally(() => { uploading.current = false; setProgress(null) })
   }
 
   return (
     <div>
       <div
-        className={`rounded-lg border border-dashed px-4 py-6 text-center ${drag ? "border-primary bg-base-200" : "border-base-300"} ${disabled ? "opacity-50" : ""}`}
+        className={`${compact ? "service-compact-upload" : "rounded-lg border border-dashed px-4 py-6 text-center"} ${drag ? "border-primary bg-base-200" : "border-base-300"} ${disabled ? "opacity-50" : ""}`}
         onDragOver={(e) => { e.preventDefault(); if (!disabled) setDrag(true) }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); if (!disabled) check(e.dataTransfer.files?.[0]) }}
@@ -49,6 +52,7 @@ export default function FileUploader({
         <input
           ref={inputRef}
           type="file"
+          disabled={disabled || progress != null}
           accept={accept}
           className="hidden"
           onChange={(e) => { check(e.target.files?.[0]); e.target.value = "" }}
