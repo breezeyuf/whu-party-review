@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any, Optional
 
 import httpx
+from pydantic import ValidationError
 
 from ai.desensitize import desensitize_text
+from ai.llm_output import ChatCompletionOutput, validate_task_output
 from models import Archive, PromptTemplate
 from security import decrypt_field
 from utils import get_setting
@@ -69,30 +72,52 @@ def chat_json(
     if key:
         headers["Authorization"] = f"Bearer {key}"
     timeout = float(cfg.get("timeout_s") or 60)
-    last_err = None
     t0 = time.time()
-    # 调用方可通过 override 限制重试次数：批量语义核查失败即降级，不让任务长时间挂起
-    for attempt in range(int(cfg.get("max_attempts") or 3)):
+    max_attempts = max(1, int(cfg.get("max_attempts") or 3))
+    # Invalid JSON/schema gets one repair attempt, independently of network retries.
+    last_err = "大模型返回无效 JSON 对象"
+    for _ in range(2):
+        resp, err = _post_chat(base, payload, headers, timeout, max_attempts)
+        if err:
+            return None, err, (time.time() - t0) * 1000
+        try:
+            envelope = ChatCompletionOutput.model_validate(resp.json())
+            content = envelope.choices[0].message.content
+        except (ValueError, ValidationError):
+            last_err = "大模型响应结构无效"
+            continue
+        try:
+            parsed = _parse_json(content)
+            if parsed is None:
+                last_err = "大模型返回无效 JSON 对象"
+                continue
+            validated = validate_task_output(code, parsed)
+        except ValidationError:
+            # Do not echo model output (or Pydantic input values) into report errors.
+            last_err = "大模型内容检查结果结构无效"
+            continue
+        return validated, None, (time.time() - t0) * 1000
+    return None, last_err, (time.time() - t0) * 1000
+
+
+def _post_chat(base, payload, headers, timeout, max_attempts):
+    last_err = "大模型调用失败"
+    for attempt in range(max_attempts):
         try:
             with httpx.Client(timeout=timeout) as client:
                 resp = client.post(f"{base}/chat/completions", json=payload, headers=headers)
-            if resp.status_code >= 500:
-                last_err = f"HTTP {resp.status_code}"
-                time.sleep(0.5 * (2 ** attempt))
-                continue
-            if resp.status_code >= 400:
-                return None, f"HTTP {resp.status_code}: {resp.text[:200]}", (time.time() - t0) * 1000
-            data = resp.json()
-            content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-            parsed = _parse_json(content)
-            if parsed is None and attempt == 0:
-                last_err = "JSON 解析失败"
-                continue
-            return parsed, None, (time.time() - t0) * 1000
-        except Exception as e:
-            last_err = str(e)
+            if resp.status_code < 400:
+                return resp, None
+            last_err = f"大模型接口 HTTP {resp.status_code}"
+            if resp.status_code < 500:
+                return None, last_err
+        except httpx.TimeoutException:
+            last_err = "大模型请求超时"
+        except httpx.RequestError:
+            last_err = "大模型连接失败"
+        if attempt + 1 < max_attempts:
             time.sleep(0.5 * (2 ** attempt))
-    return None, last_err or "调用失败", (time.time() - t0) * 1000
+    return None, last_err
 
 
 def _prepare_variables(value: Any, archive: Optional[Archive], redact: bool) -> Any:
@@ -108,13 +133,16 @@ def _prepare_variables(value: Any, archive: Optional[Archive], redact: bool) -> 
 def _parse_json(content: str) -> Optional[dict]:
     if not content:
         return None
+    fenced = re.fullmatch(r"```(?:json)?\s*\n?(.*?)\n?```", content.strip(), re.DOTALL | re.IGNORECASE)
+    if fenced:
+        content = fenced.group(1)
     try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        start, end = content.find("{"), content.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                return json.loads(content[start : end + 1])
-            except json.JSONDecodeError:
-                return None
+        value = json.loads(content, parse_constant=_reject_json_constant)
+        return value if isinstance(value, dict) else None
+    except ValueError:
+        pass
     return None
+
+
+def _reject_json_constant(value):
+    raise ValueError("JSON 包含非标准数值")
