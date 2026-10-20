@@ -11,8 +11,8 @@ def _applies(rule: CheckRule, type_code: str | None) -> bool:
     return type_code in applies
 
 
-def run_format(db, materials: list, versions: dict, parses: dict[int, ParseResult], types: dict):
-    rules = (
+def run_format(db, materials: list, versions: dict, parses: dict[int, ParseResult], types: dict, *, rule_set=None):
+    rules = [r for r in rule_set.rows("check_rules") if r.category == "FORMAT"] if rule_set else (
         db.query(CheckRule)
         .filter(CheckRule.category == "FORMAT", CheckRule.is_active.is_(True))
         .order_by(CheckRule.sort_order)

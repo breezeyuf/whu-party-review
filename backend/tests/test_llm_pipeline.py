@@ -6,8 +6,9 @@ import pytest
 
 from ai import pipeline
 from ai.types import IssueDraft
-from models import AiReport, Issue, Material, MaterialType, MaterialVersion, ParseResult, RuleVersion, Submission
+from models import AiReport, CheckRule, Issue, Material, MaterialType, MaterialVersion, ParseResult, RuleVersion, Submission
 from tests.test_llm_output import DB, Query, content, endpoint, issue, rule_db, semantic_rule
+from tests.snapshot_fixtures import check_rule, material_type, version
 
 
 class ReportSession(DB):
@@ -43,15 +44,19 @@ class ReportQuery(Query):
 def report_case(monkeypatch):
     def create(texts=("普通正文",), configured=True, rules=None):
         base = rule_db(*(rules if rules is not None else [semantic_rule()]))
-        archive = NS(real_name="虚构学生", student_no="T2026001")
+        archive = NS(real_name="虚构学生", student_no="T2026001", batch=None)
         sub = NS(id=1, archive_id=1, archive=archive, stage_code=1,
                  latest_report_id=None, ai_status="QUEUED")
         materials = [NS(id=i, type_id=1, current_version_id=10, status="ACTIVE", title="样例",
                         type_status="CONFIRMED", type_source="MANUAL", type_confidence=1)
                      for i in range(1, len(texts) + 1)]
         # Each material query uses the same parsed version; distinct texts are used in content tests.
+        rv = version()
+        rv.snapshot["material_types"] = [material_type()]
+        rv.snapshot["check_rules"] = [check_rule(r.code, **{k: v for k, v in vars(r).items() if k != "code"}, id=i)
+                                      for i, r in enumerate(base.rows[CheckRule], 1)]
         base.rows.update({
-            Submission: [sub], RuleVersion: [NS(id=1)], Material: materials,
+            Submission: [sub], RuleVersion: [rv], Material: materials,
             MaterialType: [NS(id=1, code="THOUGHT_REPORT", name="思想汇报")],
             MaterialVersion: [NS(id=10, version_no=1, parse_status="DONE")],
             ParseResult: [NS(corrected_text=None, full_text=texts[0])],
@@ -61,12 +66,12 @@ def report_case(monkeypatch):
                                  description="固定规则缺项", rule_code="COMPLETENESS")
         monkeypatch.setattr(pipeline, "llm_enabled", lambda db: configured)
         monkeypatch.setattr(pipeline, "get_setting", lambda *args: {"model": "test-model"})
-        monkeypatch.setattr(pipeline, "node_map_for_archive", lambda *args: {})
-        monkeypatch.setattr(pipeline, "run_completeness", lambda *args: (
+        monkeypatch.setattr(pipeline, "node_map_for_archive", lambda *args, **kw: {})
+        monkeypatch.setattr(pipeline, "run_completeness", lambda *args, **kw: (
             {"missing_total": 1}, [local_issue], [{"rule_code": "COMPLETENESS", "result": "FAIL"}]))
-        monkeypatch.setattr(pipeline, "run_timeline", lambda *args: ({}, [], []))
-        monkeypatch.setattr(pipeline, "run_format", lambda *args: ([], []))
-        monkeypatch.setattr(pipeline, "fill_suggestions", lambda *args: None)
+        monkeypatch.setattr(pipeline, "run_timeline", lambda *args, **kw: ({}, [], []))
+        monkeypatch.setattr(pipeline, "run_format", lambda *args, **kw: ([], []))
+        monkeypatch.setattr(pipeline, "fill_suggestions", lambda *args, **kw: None)
         return db, sub
 
     return create
