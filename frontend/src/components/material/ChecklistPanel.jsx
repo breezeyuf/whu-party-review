@@ -2,13 +2,19 @@ import { Link } from "react-router-dom"
 import FileUploader from "../common/FileUploader"
 import { fmtDateTime } from "../../utils/format"
 
+function ParseStatus({ code }) {
+  const labels = { PENDING: "等待解析", RUNNING: "解析中", DONE: "解析完成", FAILED: "解析失败" }
+  const styles = { PENDING: "badge-ghost", RUNNING: "badge-info", DONE: "badge-success", FAILED: "badge-error" }
+  return <span className={`badge badge-xs ${styles[code] || "badge-ghost"}`}>{labels[code] || code || "等待解析"}</span>
+}
+
 function MaterialRows({ materials, onPreview }) {
   return <ul className="mt-2 divide-y divide-base-200">{materials.map((material) => <li key={material.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
     <div>
       {onPreview ? <button type="button" className="link" onClick={() => onPreview(material)}>{material.title || `材料 #${material.id}`}</button> : <Link className="link" to={`/materials/${material.id}`}>{material.title || `材料 #${material.id}`}</Link>}
       {["NEEDS_CONFIRM", "PENDING"].includes(material.type_status) && <span className="badge badge-warning badge-xs ml-2">待确认类型</span>}
-      <div className="text-xs text-base-content/50">
-        v{material.current_version?.version_no || 1} · {material.current_version?.parse_status || "待解析"} · {fmtDateTime(material.current_version?.uploaded_at)}
+      <div className="mt-0.5 text-xs text-base-content/50">
+        v{material.current_version?.version_no || 1} · <ParseStatus code={material.current_version?.parse_status} /> · {fmtDateTime(material.current_version?.uploaded_at)}
         {material.open_issue_count ? ` · 问题 ${material.open_issue_count}` : ""}
       </div>
     </div>
@@ -16,7 +22,7 @@ function MaterialRows({ materials, onPreview }) {
   </li>)}</ul>
 }
 
-export default function ChecklistPanel({ groups = [], canUpload, onUpload, onPreview }) {
+export default function ChecklistPanel({ groups = [], canUpload, uploadDisabled, filter = "all", onUpload, onPreview }) {
   if (!groups.length) {
     return <p className="text-sm text-base-content/50">当前阶段还没有材料清单。请先完成档案创建，或联系组织部配置规则。</p>
   }
@@ -92,28 +98,3 @@ export default function ChecklistPanel({ groups = [], canUpload, onUpload, onPre
   )
 }
 
-function ParseStatus({ code }) {
-  const labels = { PENDING: "等待解析", RUNNING: "解析中", DONE: "解析完成", FAILED: "解析失败" }
-  const styles = { PENDING: "badge-ghost", RUNNING: "badge-info", DONE: "badge-success", FAILED: "badge-error" }
-  return <span className={`badge badge-xs ${styles[code] || "badge-ghost"}`}>{labels[code] || code || "等待解析"}</span>
-}
-
-function MaterialRows({ materials, onPreview }) {
-  return (
-    <ul className="divide-y divide-base-200">
-      {materials.map((material) => (
-        <li key={material.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-          <div>
-            <button type="button" className="link" onClick={() => onPreview?.(material)}>
-              {material.title || `材料 #${material.id}`}
-            </button>
-            <div className="text-xs text-base-content/50">
-              {material.type_status === "NEEDS_CONFIRM" ? "类型待确认" : "类型已识别"} · v{material.current_version?.version_no || 1} · <ParseStatus code={material.current_version?.parse_status} /> · {fmtDateTime(material.current_version?.uploaded_at)}
-            </div>
-          </div>
-          <Link className="btn btn-ghost btn-xs" to={`/materials/${material.id}`}>详情</Link>
-        </li>
-      ))}
-    </ul>
-  )
-}
