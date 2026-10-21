@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { ConfirmDialog } from "../common/Modal"
 import { useMeta } from "../../context/MetaContext"
 import { levelName } from "../../utils/format"
 import { passBlockReason, reportBlockReason, sameId } from "../../utils/review"
@@ -16,6 +17,7 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [returning, setReturning] = useState(false)
+  const [pendingAction, setPendingAction] = useState(null)
 
   const confirmed = issues.filter((i) => i.is_active !== false && ["CONFIRMED", "MODIFIED"].includes(i.review_status))
   const handoverIssues = issues.filter((i) => i.is_active !== false && (i.source === "MANUAL" || sameId(i.report_id, submission.latest_report?.id)))
@@ -30,6 +32,15 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
     setBusy(true)
     setError("")
     try { await fn(); return true } catch (e) { setError(e.message || "操作失败"); return false } finally { setBusy(false) }
+  }
+
+  const confirmAction = async () => {
+    if (!pendingAction) return
+    let ok = false
+    if (pendingAction === "pass") ok = await wrap(() => onPass({ level, decision: "pass", comment: comment.trim(), report_id: submission.latest_report?.id }))
+    if (pendingAction === "file") ok = await wrap(() => onFile({ comment: comment.trim() }))
+    if (pendingAction === "handover") ok = await wrap(() => onHandover({ human_decision: decision, handover_reason: reason.trim(), issue_ids: handoverIds }))
+    if (ok) setPendingAction(null)
   }
 
   const toggle = (setter, id) => setter((list) => list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
@@ -52,7 +63,7 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
             {handoverIssues.map((i) => <label key={i.id} className="flex items-center gap-2"><input type="checkbox" className="checkbox checkbox-xs" disabled={busy} checked={handoverIds.includes(i.id)} onChange={() => toggle(setHandoverPicked, i.id)} /><span>{i.title}</span></label>)}
             {!handoverIssues.length && <p>暂无可关联问题。需要改判时可先人工新增问题。</p>}
           </div>
-          <button type="button" className="btn btn-warning btn-sm mt-2" disabled={busy || !!handoverReason} onClick={() => wrap(() => onHandover({ human_decision: decision, handover_reason: reason.trim(), issue_ids: handoverIds }))}>
+          <button type="button" className="btn btn-warning btn-sm mt-2" disabled={busy || !!handoverReason} onClick={() => setPendingAction("handover")}>
             提交接管
           </button>
           {handoverReason && <p className="mt-1 text-xs text-warning">{handoverReason}</p>}
@@ -77,7 +88,7 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
       </label>}
       <div className="flex flex-wrap gap-2">
         {can.review && level !== "ORG" && (
-          <button type="button" className="btn btn-primary btn-sm" disabled={busy || !!passReason} onClick={() => wrap(() => onPass({ level, decision: "pass", comment: comment.trim(), report_id: submission.latest_report?.id }))}>
+          <button type="button" className="btn btn-primary btn-sm" disabled={busy || !!passReason} onClick={() => setPendingAction("pass")}>
             通过
           </button>
         )}
@@ -91,7 +102,7 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
         )}
         {returning && <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setReturning(false)}>取消退回</button>}
         {can.file && (
-          <button type="button" className="btn btn-primary btn-sm" disabled={busy || !!passReason} onClick={() => wrap(() => onFile({ comment: comment.trim() }))}>
+          <button type="button" className="btn btn-primary btn-sm" disabled={busy || !!passReason} onClick={() => setPendingAction("file")}>
             备案归档
           </button>
         )}
@@ -101,6 +112,20 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
       {returning && can.review && returnReason && <p className="text-xs text-base-content/60">{returnReason}</p>}
       {!can.review && !can.file && !can.handover && <p className="text-xs text-base-content/50">当前角色在此状态下没有审核操作。</p>}
       {error && <p className="text-xs text-error">{error}</p>}
+      <ConfirmDialog
+        open={!!pendingAction}
+        title={{ pass: "确认通过审核？", file: "确认备案归档？", handover: "确认提交人工接管？" }[pendingAction] || "确认操作"}
+        message={{
+          pass: "通过后提交包将流转至下一审核层级。请确认已核对材料原文、问题处置和 AI 报告。",
+          file: "备案后本阶段将归档并锁定。请确认审核材料和报告均已核验。",
+          handover: "提交后将记录人工研判结论与理由，请确认选择的问题和说明准确。",
+        }[pendingAction] || "请确认继续此操作。"}
+        confirmText={{ pass: "确认通过", file: "确认备案", handover: "确认接管" }[pendingAction] || "确认"}
+        danger={pendingAction === "file"}
+        busy={busy}
+        onClose={() => { if (!busy) setPendingAction(null) }}
+        onConfirm={confirmAction}
+      />
     </div>
   )
 }
