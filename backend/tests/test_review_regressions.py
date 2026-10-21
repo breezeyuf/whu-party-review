@@ -189,6 +189,42 @@ def test_timeline_updates_during_parsing_are_included(case):
     assert report_is_stale(c.db, c.sub, c.report)
 
 
+def test_formal_review_reads_published_snapshot_and_persists_context(case, as_client):
+    """Real PostgreSQL coverage, enabled with the existing TEST_DATABASE_URL fixture."""
+    from copy import deepcopy
+    from ai.pipeline import run_check
+    from models import ChecklistItem
+    from seed_rules import snapshot_rules
+
+    c = case
+    item = c.db.query(ChecklistItem).filter(ChecklistItem.stage_code == 1, ChecklistItem.is_active.is_(True)).first()
+    m, _ = material(c)
+    m.type_id, m.type_status = item.material_type_id, "CONFIRMED"
+    item.quantity_mode, item.fixed_count = "FIXED", 1
+    c.db.flush()
+    old = snapshot_rules(c.db, "checklists", "UPDATE", "测试 V1：一份")
+    item.fixed_count = 2
+    c.db.flush()
+    new = snapshot_rules(c.db, "checklists", "UPDATE", "测试 V2：两份")
+    old_snapshot = deepcopy(old.snapshot)
+    first = run_check(c.db, c.sub.id, use_llm=False, rule_version_id=old.id)
+    second = run_check(c.db, c.sub.id, use_llm=False)
+    c.db.expire(first)
+    c.db.expire(second)
+    find = lambda report: next(i for i in report.completeness["items"] if i["checklist_item_id"] == item.id)
+    assert find(first)["expected"] == 1 and find(second)["expected"] == 2
+    assert first.rule_version_id == old.id and second.rule_version_id == new.id
+    assert old.snapshot == old_snapshot
+    assert len(first.timeline_snapshot["evaluation_context"]["snapshot_sha256"]) == 64
+    assert "node_inputs" in first.timeline_snapshot
+    client = as_client(c.student)
+    # The fixture's historical report lacks evaluation_context, but remains readable.
+    for report in (c.report, first, second):
+        response = client.get(f"/api/reports/{report.id}")
+        assert response.status_code == 200
+        assert response.json()["data"]["timeline_snapshot"] == report.timeline_snapshot
+
+
 @pytest.mark.parametrize("ai_status", ["QUEUED", "RUNNING", "FAILED"])
 def test_pending_or_failed_check_blocks_pass(case, ai_status):
     c = case

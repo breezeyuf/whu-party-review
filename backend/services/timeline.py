@@ -19,8 +19,8 @@ from models import (
 from utils import as_date, now, stage_name
 
 
-def merge_archive_nodes(db: Session, archive_id: int) -> None:
-    defs = db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
+def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None:
+    defs = node_defs if node_defs is not None else db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
     exs = (
         db.query(TimeNodeExtraction)
         .filter(TimeNodeExtraction.archive_id == archive_id, TimeNodeExtraction.is_current.is_(True))
@@ -78,8 +78,8 @@ def effective_node(n: ArchiveTimeNode) -> dict:
     return {"date": date_v.isoformat() if date_v else None, "end_date": end_v.isoformat() if end_v else None, "hours": hours_v}
 
 
-def node_map_for_archive(db: Session, archive_id: int) -> dict:
-    defs = {d.code: d for d in db.query(TimeNodeDef).all()}
+def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dict:
+    defs = {d.code: d for d in (node_defs if node_defs is not None else db.query(TimeNodeDef).all())}
     nodes = db.query(ArchiveTimeNode).filter(ArchiveTimeNode.archive_id == archive_id).all()
     seqs = db.query(TimeNodeExtraction).filter(
         TimeNodeExtraction.archive_id == archive_id, TimeNodeExtraction.is_current.is_(True)

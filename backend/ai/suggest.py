@@ -6,9 +6,10 @@ from models import SuggestionTemplate
 from ai.types import IssueDraft
 
 
-def fill_suggestions(db, drafts: list[IssueDraft], extra: dict | None = None) -> None:
-    tpls = {t.rule_code: t for t in db.query(SuggestionTemplate).filter(SuggestionTemplate.is_active.is_(True)).all() if t.rule_code}
-    by_code = {t.code: t for t in db.query(SuggestionTemplate).filter(SuggestionTemplate.is_active.is_(True)).all()}
+def fill_suggestions(db, drafts: list[IssueDraft], extra: dict | None = None, *, rule_set=None) -> None:
+    rows = rule_set.rows("suggestion_templates") if rule_set else db.query(SuggestionTemplate).filter(SuggestionTemplate.is_active.is_(True)).all()
+    tpls = {t.rule_code: t for t in rows if t.rule_code}
+    by_code = {t.code: t for t in rows}
     extra = extra or {}
     for d in drafts:
         if d.suggestion:
