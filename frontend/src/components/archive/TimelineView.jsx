@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom"
 import { fmtDate } from "../../utils/format"
 import { SeverityBadge } from "../common/Badges"
+import { timelineSourceLink } from "../../utils/archiveWorkflow"
 
 function valueText(node) {
   const eff = node.effective || {}
@@ -48,9 +49,10 @@ export default function TimelineView({ timeline, onCorrect, onLocate }) {
                   {node.sources.map((s, i) => (
                     <li key={s.extraction_id || i}>
                       {s.material_id ? (
-                        <Link className="link" to={`/materials/${s.material_id}`}>{s.material_title || `材料 ${s.material_id}`}</Link>
+                        <Link className="link" to={timelineSourceLink(s)}>{s.material_title || `材料 ${s.material_id}`}</Link>
                       ) : <span>{s.material_title || "来源"}</span>}
                       <span className="mono ml-2">{fmtDate(s.date)}</span>
+                      {s.version_no && <span className="ml-2">v{s.version_no}</span>}
                       {s.page_no && <span className="ml-2">第 {s.page_no} 页</span>}
                       {s.raw_text && <span className="ml-2 text-base-content/50">“{s.raw_text}”</span>}
                       {onLocate && s.material_id && (

@@ -12,15 +12,19 @@ export default function NodeCorrectionModal({ node, onClose, onSave }) {
   if (!node) return null
 
   const save = async (clear = false) => {
+    if (busy) return
     if (!reason.trim()) { setError("请填写校正原因"); return }
+    if (!clear && !date) { setError("请选择有效日期"); return }
+    if (!clear && endDate && endDate < date) { setError("截止日期不能早于开始日期"); return }
+    if (!clear && hours !== "" && (!Number.isFinite(Number(hours)) || Number(hours) < 0)) { setError("学时应为非负数"); return }
     setBusy(true)
     setError("")
     try {
-      await onSave(clear ? { clear: true, reason } : {
+      await onSave(clear ? { clear: true, reason: reason.trim() } : {
         date: date || null,
         end_date: endDate || null,
         hours: hours === "" ? null : Number(hours),
-        reason,
+        reason: reason.trim(),
       })
       onClose()
     } catch (e) {
@@ -34,11 +38,11 @@ export default function NodeCorrectionModal({ node, onClose, onSave }) {
     <Modal
       open
       title={`校正 ${node.code} ${node.name}`}
-      onClose={onClose}
+      onClose={() => { if (!busy) onClose() }}
       footer={(
         <>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => save(true)} disabled={busy}>撤销校正</button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>取消</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onClose}>取消</button>
           <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => save(false)}>保存</button>
         </>
       )}

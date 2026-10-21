@@ -5,9 +5,10 @@ import { changePassword } from "../api/auth"
 import { useToast } from "../context/ToastContext"
 import { roleName } from "../utils/format"
 import { useMeta } from "../context/MetaContext"
+import { activeOrganization } from "../utils/identity"
 
 export default function ProfilePage() {
-  const { user, logout } = useAuth()
+  const { user, activeRole, logout } = useAuth()
   const meta = useMeta()
   const toast = useToast()
   const [oldPassword, setOld] = useState("")
@@ -36,9 +37,9 @@ export default function ProfilePage() {
           <dl className="grid grid-cols-[6rem_1fr] gap-y-2">
             <dt className="text-base-content/50">姓名</dt><dd>{user?.real_name}</dd>
             <dt className="text-base-content/50">账号</dt><dd className="mono">{user?.username}</dd>
-            <dt className="text-base-content/50">组织</dt><dd>{user?.org_name || "—"}</dd>
-            <dt className="text-base-content/50">角色</dt>
-            <dd>{(user?.roles || []).map((r) => roleName(meta, r.role)).join("、") || "—"}</dd>
+            <dt className="text-base-content/50">当前组织</dt><dd>{activeOrganization(user)}</dd>
+            <dt className="text-base-content/50">当前身份</dt>
+            <dd>{roleName(meta, activeRole?.role) || "—"}</dd>
           </dl>
         </section>
         <form className="surface-card space-y-3 p-4" onSubmit={submit}>

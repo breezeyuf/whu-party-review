@@ -19,6 +19,11 @@ desktop.ini
 __pycache__/
 *.py[cod]
 .venv/
+.venv-desktop/
+desktop/runtime/
+desktop/build/
+data/
+demo-data/
 venv/
 
 # 运行数据：材料原件与预览不入库（启动后可在系统设置初始化演示数据自动生成）
