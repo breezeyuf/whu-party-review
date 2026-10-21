@@ -38,6 +38,7 @@ export default function ReviewTasksPage() {
   const [result, setResult] = useState(null)
   const [jobId, setJobId] = useState(null)
   const [batchMode, setBatchMode] = useState(false)
+  const [confirmBatchPass, setConfirmBatchPass] = useState(false)
 
   useEffect(() => { setSelected([]); setResult(null) }, [queryKey, roleKey])
   useEffect(() => { setJobId(null) }, [roleKey])
@@ -76,6 +77,7 @@ export default function ReviewTasksPage() {
         toast.info(`已排队 ${queued} 份 AI 审核`)
       }
       await req.reload().catch(() => {})
+      return true
     } catch (e) {
       toast.error(e.message || "操作失败")
       return false
@@ -114,7 +116,7 @@ export default function ReviewTasksPage() {
       /></fieldset>
       {batchMode && <div className="service-batch-toolbar" aria-label="批量操作"><span className="mr-auto text-sm">已选 {selected.length} 份</span>
         {activeRole?.role !== "CROSS_REVIEWER" && <><button type="button" className="btn btn-outline btn-sm" disabled={busy || req.loading || !!req.error || !selected.length} onClick={() => run("ai")}>批量 AI 审核</button><button type="button" className="btn btn-outline btn-sm" disabled={busy || req.loading || !!req.error || !selected.length} onClick={() => run("completion")}>发送补全提示</button></>}
-        {level !== "ORG" && <button type="button" className="btn btn-primary btn-sm" disabled={busy || req.loading || !!req.error || !selected.length} onClick={() => run("pass")}>批量通过</button>}
+        {level !== "ORG" && <button type="button" className="btn btn-primary btn-sm" disabled={busy || req.loading || !!req.error || !selected.length} onClick={() => setConfirmBatchPass(true)}>批量通过</button>}
         {selected.length > 0 && <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setSelected([])}>清空选择</button>}
         <p className="w-full text-xs text-base-content/65">批量通过只处理报告有效、无阻断问题且已完成必要人工接管的提交包。</p>
       </div>}
@@ -169,10 +171,7 @@ export default function ReviewTasksPage() {
         busy={busy}
         onClose={() => { if (!busy) setConfirmBatchPass(false) }}
         onConfirm={async () => {
-          const ok = await run(
-            () => batchReview({ level, submission_ids: selected }),
-            (r) => `通过 ${r.passed?.length || 0}，未通过 ${r.failed?.length || 0}`,
-          )
+          const ok = await run("pass")
           if (ok) setConfirmBatchPass(false)
         }}
       />

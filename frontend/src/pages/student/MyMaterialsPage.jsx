@@ -26,6 +26,7 @@ export default function MyMaterialsPage() {
     { immediate: !!archive?.id },
   )
   const [preview, setPreview] = useState(null)
+  const [pendingDelete, setPendingDelete] = useState(null)
   const [jobs, setJobs] = useState([])
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState("")
@@ -62,7 +63,8 @@ export default function MyMaterialsPage() {
       toast.success("已删除")
       setPreview(null)
       refreshStudentRequests(mats, archiveReq)
-    } catch (e) { setError(e.message || "删除失败") }
+      return true
+    } catch (e) { setError(e.message || "删除失败"); return false }
     finally { setDeleting(false); deleteLock.current = false }
   }
 
@@ -97,7 +99,7 @@ export default function MyMaterialsPage() {
         preview && (
           <>
             <Link className="btn btn-ghost btn-sm" to={`/materials/${preview.id}`}>打开详情</Link>
-            {editable && <button type="button" className="btn btn-error btn-sm" disabled={deleting} onClick={() => remove(preview.id)}>{deleting ? "删除中…" : "删除"}</button>}
+            {editable && <button type="button" className="btn btn-error btn-sm" disabled={deleting} onClick={() => setPendingDelete(preview)}>{deleting ? "删除中…" : "删除"}</button>}
           </>
         )
       }>
@@ -112,7 +114,10 @@ export default function MyMaterialsPage() {
         danger
         busy={deleting}
         onClose={() => { if (!deleting) setPendingDelete(null) }}
-        onConfirm={remove}
+        onConfirm={async () => {
+          if (!pendingDelete) return
+          if (await remove(pendingDelete.id)) setPendingDelete(null)
+        }}
       />
     </div>
   )
