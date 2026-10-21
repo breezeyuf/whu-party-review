@@ -10,6 +10,7 @@ import ArchiveDetailPage from "../src/pages/archive/ArchiveDetailPage"
 import SelfCheckPage from "../src/pages/student/SelfCheckPage"
 import RectificationPage from "../src/pages/student/RectificationPage"
 import MyMaterialsPage from "../src/pages/student/MyMaterialsPage"
+import MyProgressPage from "../src/pages/student/MyProgressPage"
 import MaterialDetailPage from "../src/pages/material/MaterialDetailPage"
 import BatchUploadPage from "../src/pages/material/BatchUploadPage"
 import ReviewDecisionPanel from "../src/components/review/ReviewDecisionPanel"
@@ -22,6 +23,7 @@ import { StudentDashboard, ReviewerDashboard } from "../src/pages/dashboard/Dash
 import AppLayout from "../src/components/layout/AppLayout"
 import FilterBar from "../src/components/common/FilterBar"
 import ReviewTasksPage from "../src/pages/review/ReviewTasksPage"
+import CrossReviewConfigPage from "../src/pages/review/CrossReviewConfigPage"
 
 const wait = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms))
 const flush = () => act(async () => { await wait(); await wait() })
@@ -106,6 +108,51 @@ export async function runUiScenarios() {
     try { await run(); results.push({ name, passed: true }) }
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
+
+  await test("学生发展进度页正常加载时间节点与审核轨迹，且不重复展示", async () => {
+    await mount(<MyProgressPage />, {
+      path: "/my/progress",
+      handler: (config) => {
+        if (config.url === "/archives/1/history") return [{ time: "2026-10-20T10:00:00", kind: "REVIEW", title: "PASS", detail: "审核通过", actor_name: "审核员", link_type: "submission", link_id: 101 }]
+        if (config.url === "/archives/1/timeline") return { stages: [], nodes: [{ code: "N1", name: "递交入党申请", effective: { date: "2025-10-10" }, sources: [] }], derived: [] }
+        return undefined
+      },
+    })
+    assert.match(text(), /审核轨迹/)
+    assert.match(text(), /审核通过/)
+    assert.match(text(), /递交入党申请/)
+    assert.equal([...document.querySelectorAll("h2")].filter((node) => node.textContent === "时间节点").length, 1)
+    assert.equal(document.querySelectorAll('[aria-label="阶段进度说明"]').length, 1)
+  })
+
+  await test("互查审核人按角色授权组织显示，且不能重复分配", async () => {
+    await mount(<CrossReviewConfigPage />, {
+      path: "/review/cross-config",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => {
+        if (config.url === "/batches") return { items: [{ id: 1, name: "测试批次" }] }
+        if (config.url === "/orgs") return [
+          { id: 1, name: "学校", org_type: "SCHOOL", parent_id: null },
+          { id: 2, name: "学院", org_type: "COLLEGE", parent_id: 1 },
+          { id: 3, name: "支部甲", org_type: "BRANCH", parent_id: 2 },
+          { id: 4, name: "支部乙", org_type: "BRANCH", parent_id: 2 },
+          { id: 5, name: "支部丙", org_type: "BRANCH", parent_id: 2 },
+        ]
+        if (config.url === "/batches/1/cross-review-pairs") return []
+        if (config.url === "/users") return { items: [{ id: 11, real_name: "互查员甲", org_id: 1, roles: [{ role: "CROSS_REVIEWER", org_id: 5 }] }] }
+        return undefined
+      },
+    })
+    const branchA = document.querySelector('[aria-label="支部甲的互查支部"]')
+    const branchB = document.querySelector('[aria-label="支部乙的互查支部"]')
+    await input(branchA, "5")
+    const reviewerA = document.querySelector('[aria-label="支部甲的指定审核人"]')
+    assert.ok([...reviewerA.options].some((option) => option.value === "11" && option.text.includes("互查员甲")))
+    await input(reviewerA, "11")
+    await input(branchB, "5")
+    const reviewerB = document.querySelector('[aria-label="支部乙的指定审核人"]')
+    assert.equal([...reviewerB.options].some((option) => option.value === "11" && option.disabled), true)
+  })
 
   await test("档案列表缺少阶段名时正常显示，互查角色无新建按钮", async () => {
     await mount(<ArchiveListPage />, { path: "/archives", roleCode: "CROSS_REVIEWER" })

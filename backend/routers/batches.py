@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from deps import Actor, get_current_user
 from errors import conflict, forbidden, not_found, unprocessable
-from models import Archive, Batch, CrossReviewPair, Org, Submission, User
+from models import Archive, Batch, CrossReviewPair, Org, Submission, User, UserRole
 from schemas.common import ok, page_params
 from services.audit import log
 from utils import as_date, now
@@ -142,6 +142,7 @@ def set_pairs(bid: int, body: dict, db: Session = Depends(get_db), actor: Actor 
         raise forbidden()
     pairs = body.get("pairs") or []
     seen = set()
+    seen_reviewers = set()
     for p in pairs:
         t, r = p.get("target_branch_id"), p.get("reviewer_branch_id")
         if t == r:
@@ -153,6 +154,19 @@ def set_pairs(bid: int, body: dict, db: Session = Depends(get_db), actor: Actor 
         if t in seen:
             raise unprocessable("重复配对")
         seen.add(t)
+        reviewer_user_id = p.get("reviewer_user_id")
+        if reviewer_user_id:
+            if reviewer_user_id in seen_reviewers:
+                raise unprocessable("同一名互查审核人不能分配给多个支部")
+            reviewer = db.query(User).filter(User.id == reviewer_user_id, User.is_active.is_(True)).first()
+            has_role = db.query(UserRole.id).filter(
+                UserRole.user_id == reviewer_user_id,
+                UserRole.role == "CROSS_REVIEWER",
+                UserRole.org_id == r,
+            ).first()
+            if not reviewer or not has_role:
+                raise unprocessable("指定审核人必须是所选互查支部的有效互查员")
+            seen_reviewers.add(reviewer_user_id)
     db.query(CrossReviewPair).filter(CrossReviewPair.batch_id == bid, CrossReviewPair.college_id == college_id).delete()
     out = []
     for p in pairs:

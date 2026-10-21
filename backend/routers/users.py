@@ -16,11 +16,18 @@ from services.users import create_user, reset_user_password, update_user, user_t
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-def _scope_users(db, actor, q):
+def _scope_users(db, actor, q, role=None):
     if actor.role in ("SYS_ADMIN", "ORG_ADMIN"):
         return q
     if actor.role == "COLLEGE_REVIEWER":
         ids = [actor.org_id] + [r[0] for r in db.query(Org.id).filter(Org.parent_id == actor.org_id).all()]
+        # A person's default organization may differ from the organization on
+        # their CROSS_REVIEWER grant. Cross-review assignment must be scoped by
+        # that grant, otherwise valid reviewers disappear from the selector.
+        if role == "CROSS_REVIEWER":
+            return q.filter(User.id.in_(db.query(UserRole.user_id).filter(
+                UserRole.role == role, UserRole.org_id.in_(ids),
+            )))
         return q.filter(User.org_id.in_(ids))
     return q.filter(User.id == actor.id)
 
@@ -30,7 +37,7 @@ def list_users(q: str | None = None, org_id: int | None = None, role: str | None
                page: int = 1, page_size: int = 20, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("SYS_ADMIN", "ORG_ADMIN", "COLLEGE_REVIEWER"):
         raise forbidden()
-    query = _scope_users(db, actor, db.query(User).options(selectinload(User.roles).selectinload(UserRole.org), selectinload(User.org)))
+    query = _scope_users(db, actor, db.query(User).options(selectinload(User.roles).selectinload(UserRole.org), selectinload(User.org)), role)
     if q:
         like = f"%{q}%"
         query = query.filter((User.username.ilike(like)) | (User.real_name.ilike(like)))

@@ -1,18 +1,19 @@
 import { Link } from "react-router-dom"
-import { FileText, ListChecks } from "lucide-react"
 import PageHeader from "../../components/layout/PageHeader"
 import StageProgress from "../../components/archive/StageProgress"
 import TimelineView from "../../components/archive/TimelineView"
+import ReviewTrail from "../../components/review/ReviewTrail"
 import { Loading, ErrorState } from "../../components/common/States"
 import { StatusBadge } from "../../components/common/Badges"
 import { useRequest } from "../../hooks/useRequest"
-import { getTimeline, myArchive } from "../../api/archives"
+import { getHistory, getTimeline, myArchive } from "../../api/archives"
 
 export default function MyProgressPage() {
   const archiveReq = useRequest(() => myArchive(), [])
   const archive = archiveReq.data
   const id = archive?.id
   const timelineReq = useRequest(() => (id ? getTimeline(id) : null), [id], { immediate: !!id })
+  const historyReq = useRequest(() => (id ? getHistory(id) : []), [id], { immediate: !!id })
 
   if (archiveReq.loading && !archive) return <Loading />
   if (archiveReq.error) return <ErrorState error={archiveReq.error} onRetry={archiveReq.reload} />
@@ -41,22 +42,11 @@ export default function MyProgressPage() {
           <span className="text-xs text-base-content/50">发展流程共 {timelineReq.data?.stages?.length || 0} 个阶段</span>
         </div>
         <div className="overflow-x-auto px-3 py-4 sm:px-5">
-          <StageProgress current={archive?.current_stage} stages={timelineReq.data?.stages || []} />
+          <StageProgress current={archive?.current_stage} stages={timelineReq.data?.stages || []} submissionBase="/my/self-check" />
         </div>
-        <StageProgress current={archive?.current_stage} stages={timelineReq.data?.stages || []} submissionBase="/my/self-check" />
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
-        <section className="lg:col-span-3">
-          <h2 className="mb-2 text-sm font-medium">时间节点</h2>
-          {timelineReq.loading ? <Loading /> : timelineReq.error ? <ErrorState error={timelineReq.error} onRetry={() => timelineReq.reload().catch(() => {})} /> : <TimelineView timeline={timelineReq.data} />}
-        </section>
-        <section className="lg:col-span-2">
-          <h2 className="mb-2 text-sm font-medium">审核轨迹</h2>
-          {historyReq.loading ? <Loading /> : historyReq.error ? <ErrorState error={historyReq.error} onRetry={() => historyReq.reload().catch(() => {})} /> : <ReviewTrail records={Array.isArray(historyReq.data) ? historyReq.data.filter((record) => record.kind === "REVIEW").map((record, index) => ({ ...record, id: `review-${index}`, action: record.title })) : []} />}
-        </section>
-      </div>
-      <section className="min-w-0">
-        <div className="surface-card p-4 sm:p-5">
+        <section className="surface-card min-w-0 p-4 sm:col-span-3 sm:p-5">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-2 border-b border-base-200 pb-3">
             <div>
               <h2 className="text-base font-semibold">时间节点</h2>
@@ -64,9 +54,13 @@ export default function MyProgressPage() {
             </div>
             {visibleNodeCount > 0 && <span className="text-xs text-base-content/50">{visibleNodeCount} 个已识别节点</span>}
           </div>
-          {timelineReq.loading && !timelineReq.data ? <Loading /> : timelineReq.error ? <ErrorState error={timelineReq.error} onRetry={timelineReq.reload} /> : <TimelineView timeline={timelineReq.data} hidePersonalInfo />}
-        </div>
-      </section>
+          {timelineReq.loading && !timelineReq.data ? <Loading /> : timelineReq.error ? <ErrorState error={timelineReq.error} onRetry={() => timelineReq.reload().catch(() => {})} /> : <TimelineView timeline={timelineReq.data} hidePersonalInfo />}
+        </section>
+        <section className="surface-card min-w-0 p-4 sm:col-span-2 sm:p-5">
+          <h2 className="mb-3 border-b border-base-200 pb-3 text-base font-semibold">审核轨迹</h2>
+          {historyReq.loading ? <Loading /> : historyReq.error ? <ErrorState error={historyReq.error} onRetry={() => historyReq.reload().catch(() => {})} /> : <ReviewTrail records={Array.isArray(historyReq.data) ? historyReq.data.filter((record) => record.kind === "REVIEW").map((record, index) => ({ ...record, id: `review-${index}`, action: record.title, comment: record.detail })) : []} />}
+        </section>
+      </div>
     </div>
   )
 }
