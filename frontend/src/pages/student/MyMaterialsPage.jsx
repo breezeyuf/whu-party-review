@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
+import { Clock3, FileCheck2, ListChecks } from "lucide-react"
 import PageHeader from "../../components/layout/PageHeader"
 import ChecklistPanel from "../../components/material/ChecklistPanel"
 import MaterialViewer from "../../components/material/MaterialViewer"
 import { Loading, ErrorState } from "../../components/common/States"
-import { Modal } from "../../components/common/Modal"
+import { ConfirmDialog, Modal } from "../../components/common/Modal"
+import { StatusBadge } from "../../components/common/Badges"
 import { useRequest } from "../../hooks/useRequest"
 import { myArchive } from "../../api/archives"
 import { deleteMaterial, listMaterials, uploadMaterial } from "../../api/materials"
@@ -74,9 +76,15 @@ export default function MyMaterialsPage() {
     <div>
       <PageHeader
         title="我的材料"
-        extra={sub?.id && <Link className="btn btn-primary btn-sm" to={`/my/self-check/${sub.id}`}>发起 AI 自查</Link>}
+        extra={(
+          <div className="flex flex-wrap gap-2">
+            <Link className="btn btn-ghost btn-sm gap-2" to="/my/progress"><Clock3 size={15} strokeWidth={1.8} />发展进度</Link>
+            {sub?.id && <Link className="btn btn-ghost btn-sm gap-2" to="/my/rectification"><ListChecks size={15} strokeWidth={1.8} />整改中心</Link>}
+            {sub?.id && <Link className="btn btn-primary btn-sm gap-2" to={`/my/self-check/${sub.id}`}><FileCheck2 size={15} strokeWidth={1.8} />AI 自查与提交</Link>}
+          </div>
+        )}
       >
-        按当前阶段清单逐项上传。留空类型时由系统识别。
+        {archive?.stage_name || `阶段 ${archive?.current_stage || "—"}`} · 按清单逐项上传；支持 PDF、JPG、PNG、DOCX，单文件不超过 20 MB。
       </PageHeader>
       {!editable && <div className="alert mb-3 text-sm">材料已提交审核，如需替换请等退回后再上传新版本。</div>}
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
@@ -96,6 +104,16 @@ export default function MyMaterialsPage() {
         {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
         {currentPreview && <MaterialViewer key={`${currentPreview.id}-${currentPreview.current_version?.id}-${currentPreview.current_version?.parse_status}`} materialId={currentPreview.id} versionId={currentPreview.current_version?.id} />}
       </Modal>
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="删除这份材料？"
+        message={`将删除“${pendingDelete?.title || `材料 #${pendingDelete?.id}`}”。删除后它会从当前阶段清单中移除，确定继续吗？`}
+        confirmText="确认删除"
+        danger
+        busy={deleting}
+        onClose={() => { if (!deleting) setPendingDelete(null) }}
+        onConfirm={remove}
+      />
     </div>
   )
 }

@@ -17,7 +17,11 @@ export default function IssueCard({ issue, active, onSelect, actions, footer }) 
         {issue.resolution === "RESOLVED" && <span className="badge badge-success badge-xs">已解决</span>}
         {issue.resolution === "UNRESOLVED" && <span className="badge badge-error badge-xs">未解决</span>}
       </div>
-      <h3 className="mt-2 text-sm font-medium">{issue.title}</h3>
+      {onSelect ? (
+        <button type="button" className="mt-2 text-left text-sm font-medium hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-pressed={Boolean(active)} onClick={() => onSelect(issue)}>
+          {issue.title} <span className="ml-1 text-xs font-normal text-base-content/45">{issue.material_id || issue.location?.material_id ? "定位材料" : "选中问题"}</span>
+        </button>
+      ) : <h3 className="mt-2 text-sm font-medium">{issue.title}</h3>}
       <p className="mt-1 text-xs leading-relaxed text-base-content/75">{issue.description}</p>
       {(issue.actual_value || issue.expected_value || issue.rule_basis || issue.location?.snippet || issue.material_version_id || issue.rule_code) && <details className="service-inline-details mt-2" onClick={(event) => event.stopPropagation()}>
         <summary>查看原文依据与定位</summary>

@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
+import { RefreshCw } from "lucide-react"
 import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
 import { DemoBadge, HandoverBadge, RecoBadge, StatusBadge } from "../../components/common/Badges"
 import { ErrorState } from "../../components/common/States"
+import { ConfirmDialog } from "../../components/common/Modal"
 import { usePagination } from "../../hooks/usePagination"
 import { useRequest } from "../../hooks/useRequest"
 import { listSubmissions, batchReview } from "../../api/submissions"
@@ -42,7 +44,9 @@ export default function ReviewTasksPage() {
 
   const rows = req.data?.items || []
   const toggle = (id, on) => setSelected((s) => on ? [...new Set([...s, id])] : s.filter((x) => x !== id))
-  const toggleAll = (on) => setSelected(on ? rows.map((r) => r.id) : [])
+  const toggleAll = (on) => setSelected((current) => on
+    ? [...new Set([...current, ...rows.map((r) => r.id)])]
+    : current.filter((id) => !rows.some((row) => row.id === id)))
 
   const level = LEVEL_OF[activeRole?.role] || "BRANCH"
 
@@ -74,6 +78,7 @@ export default function ReviewTasksPage() {
       await req.reload().catch(() => {})
     } catch (e) {
       toast.error(e.message || "操作失败")
+      return false
     } finally {
       setBusy(false)
     }
@@ -104,8 +109,7 @@ export default function ReviewTasksPage() {
         advancedFields={[
           { key: "status", label: "状态", type: "select", metaKey: "submission_statuses" },
           { key: "recommendation", label: "AI 结论", type: "select", metaKey: "recommendations" },
-          { key: "has_block", label: "阻断", type: "select", options: [{ code: "true", name: "有阻断" }, { code: "false", name: "无阻断" }] },
-          { key: "due_within_days", label: "截止天数内", placeholder: "如 3" },
+          { key: "has_block", label: "阻断问题", type: "select", options: [{ code: "true", name: "仅看有阻断" }] },
         ]}
       /></fieldset>
       {batchMode && <div className="service-batch-toolbar" aria-label="批量操作"><span className="mr-auto text-sm">已选 {selected.length} 份</span>
@@ -157,6 +161,21 @@ export default function ReviewTasksPage() {
         </fieldset>
         <div className="px-2 pb-2"><Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} /></div>
       </div>
+      <ConfirmDialog
+        open={confirmBatchPass}
+        title="确认批量通过？"
+        message={`将尝试通过已选择的 ${selected.length} 份提交包。系统仍会逐份检查审核状态、最新 AI 报告和阻断问题；不符合规则的提交包不会通过。`}
+        confirmText="确认批量通过"
+        busy={busy}
+        onClose={() => { if (!busy) setConfirmBatchPass(false) }}
+        onConfirm={async () => {
+          const ok = await run(
+            () => batchReview({ level, submission_ids: selected }),
+            (r) => `通过 ${r.passed?.length || 0}，未通过 ${r.failed?.length || 0}`,
+          )
+          if (ok) setConfirmBatchPass(false)
+        }}
+      />
     </div>
   )
 }

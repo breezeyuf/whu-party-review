@@ -1,4 +1,5 @@
 import { useRef, useState } from "react"
+import { Upload } from "lucide-react"
 
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,.docx,.zip"
 
@@ -25,6 +26,10 @@ export default function FileUploader({
       setError(`不支持的格式 ${ext}，允许 ${accept}`)
       return
     }
+    if (!file.size) {
+      setError("文件为空，请重新选择")
+      return
+    }
     if (file.size > maxMb * 1024 * 1024) {
       setError(`文件超过 ${maxMb} MB`)
       return
@@ -46,7 +51,8 @@ export default function FileUploader({
         onDrop={(e) => { e.preventDefault(); setDrag(false); if (!disabled) check(e.dataTransfer.files?.[0]) }}
       >
         <p className="text-sm">{hint || "拖拽文件到此处，或点击选择"}</p>
-        <button type="button" className="btn btn-primary btn-sm mt-3" disabled={disabled || progress != null} onClick={() => inputRef.current?.click()}>
+        <button type="button" className="btn btn-primary btn-sm mt-3 gap-2" disabled={disabled || progress != null} onClick={() => inputRef.current?.click()}>
+          <Upload size={15} strokeWidth={1.8} />
           {label}
         </button>
         <input
@@ -55,10 +61,14 @@ export default function FileUploader({
           disabled={disabled || progress != null}
           accept={accept}
           className="hidden"
+          aria-label={label}
           onChange={(e) => { check(e.target.files?.[0]); e.target.value = "" }}
         />
         {progress != null && (
-          <progress className="progress progress-primary mt-3 w-full" value={progress} max="100" />
+          <div aria-live="polite">
+            <progress className="progress progress-primary mt-3 w-full" value={progress} max="100" />
+            <p className="mt-1 text-xs text-base-content/60">正在上传：{progress}%</p>
+          </div>
         )}
       </div>
       {error && <p className="mt-2 text-xs text-error">{error}</p>}

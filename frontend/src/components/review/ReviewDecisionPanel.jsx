@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { ConfirmDialog } from "../common/Modal"
 import { useMeta } from "../../context/MetaContext"
 import { levelName } from "../../utils/format"
 import { passBlockReason, reportBlockReason, sameId } from "../../utils/review"
@@ -29,7 +30,17 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
   const wrap = async (fn) => {
     setBusy(true)
     setError("")
-    try { await fn() } catch (e) { setError(e.message || "操作失败") } finally { setBusy(false) }
+    try { await fn(); return true } catch (e) { setError(e.message || "操作失败"); return false } finally { setBusy(false) }
+  }
+
+  const confirmAction = async () => {
+    if (!pendingAction) return
+    let ok = false
+    if (pendingAction === "pass") ok = await wrap(() => onPass({ level, decision: "pass", comment, report_id: submission.latest_report?.id }))
+    if (pendingAction === "return") ok = await wrap(() => onReturn({ level, decision: "return", comment, issue_ids: picked, deadline: deadline || undefined, report_id: submission.latest_report?.id }))
+    if (pendingAction === "file") ok = await wrap(() => onFile({ comment }))
+    if (pendingAction === "handover") ok = await wrap(() => onHandover({ human_decision: decision, handover_reason: reason, issue_ids: picked }))
+    if (ok) setPendingAction(null)
   }
 
   const toggle = (setter, id) => setter((list) => list.includes(id) ? list.filter((x) => x !== id) : [...list, id])
@@ -101,6 +112,21 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
       {returning && can.review && returnReason && <p className="text-xs text-base-content/60">{returnReason}</p>}
       {!can.review && !can.file && !can.handover && <p className="text-xs text-base-content/50">当前角色在此状态下没有审核操作。</p>}
       {error && <p className="text-xs text-error">{error}</p>}
+      <ConfirmDialog
+        open={!!pendingAction}
+        title={{ pass: "确认通过审核？", return: "确认退回整改？", file: "确认备案归档？", handover: "确认提交人工接管？" }[pendingAction] || "确认操作"}
+        message={{
+          pass: "通过后提交包将流转到下一审核层级。请确认已核对材料原文、问题处置和 AI 报告。",
+          return: "退回后学生将收到整改通知，提交包会进入整改状态。请确认退回原因和关联问题。",
+          file: "备案后本阶段将归档并锁定，无法继续修改。请确认审核材料和报告均已核验。",
+          handover: "提交后将记录人工研判结论与理由，请确认选择的问题和说明准确。",
+        }[pendingAction] || "请确认继续此操作。"}
+        confirmText={{ pass: "确认通过", return: "确认退回", file: "确认备案", handover: "确认接管" }[pendingAction] || "确认"}
+        danger={pendingAction === "return" || pendingAction === "file"}
+        busy={busy}
+        onClose={() => { if (!busy) setPendingAction(null) }}
+        onConfirm={confirmAction}
+      />
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
+import { ArrowRight, FileText, ListChecks, RefreshCw, Send } from "lucide-react"
 import PageHeader from "../../components/layout/PageHeader"
 import ReportSummary from "../../components/review/ReportSummary"
 import CompletenessTable from "../../components/review/CompletenessTable"
@@ -27,6 +28,8 @@ export default function SelfCheckPage() {
   const [finishedJobId, setFinishedJobId] = useState(null)
   const [busy, setBusy] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [confirmSubmit, setConfirmSubmit] = useState(false)
+  const [tab, setTab] = useState("overview")
   const [error, setError] = useState("")
   const [replyWork, setReplyWork] = useState({})
   const actionLock = useRef(false)
