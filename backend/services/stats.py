@@ -1,17 +1,47 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import timedelta
+from datetime import datetime, date, time, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from models import AiReport, Archive, Issue, Material, ReviewRecord, Submission
+from errors import unprocessable
+from models import AiReport, Archive, Issue, Material, MaterialType, ReviewRecord, Submission
 from services.scope import scoped_archives, scoped_submissions
-from utils import as_date
+from utils import TZ8
+
+
+FILTER_KEYS = ("batch_id", "college_id", "branch_id", "stage_code", "date_from", "date_to")
+
+
+def normalize_filters(filters: dict) -> dict:
+    """Validate once at the API boundary and again when a queued export runs."""
+    out = {}
+    for key in FILTER_KEYS:
+        value = filters.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            if key.startswith("date_"):
+                value = date.fromisoformat(str(value))
+            else:
+                if isinstance(value, bool) or str(value) != str(int(value)):
+                    raise ValueError()
+                value = int(value)
+                if value < 1 or (key == "stage_code" and value not in range(1, 6)):
+                    raise ValueError()
+        except (ValueError, TypeError):
+            raise unprocessable(f"筛选条件 {key} 格式无效")
+        out[key] = value
+    if out.get("date_from") and out.get("date_to") and out["date_from"] > out["date_to"]:
+        raise unprocessable("开始日期不得晚于结束日期")
+    return out
 
 
 def apply_filters(q, model, batch_id=None, college_id=None, branch_id=None, stage_code=None, date_from=None, date_to=None):
+    values = normalize_filters(dict(batch_id=batch_id, college_id=college_id, branch_id=branch_id,
+                                   stage_code=stage_code, date_from=date_from, date_to=date_to))
     if batch_id:
         q = q.filter(model.batch_id == int(batch_id))
     if college_id and hasattr(model, "college_id"):
@@ -24,13 +54,9 @@ def apply_filters(q, model, batch_id=None, college_id=None, branch_id=None, stag
         q = q.filter(Archive.current_stage == int(stage_code))
     if hasattr(model, "submitted_at"):
         if date_from:
-            d1 = as_date(date_from)
-            if d1:
-                q = q.filter(model.submitted_at >= d1)
+            q = q.filter(model.submitted_at >= datetime.combine(values["date_from"], time.min, TZ8))
         if date_to:
-            d2 = as_date(date_to)
-            if d2:
-                q = q.filter(model.submitted_at < d2 + timedelta(days=1))
+            q = q.filter(model.submitted_at < datetime.combine(values["date_to"] + timedelta(days=1), time.min, TZ8))
     return q
 
 
@@ -38,6 +64,8 @@ def overview(db: Session, actor, **filters) -> dict:
     fkeys = ("batch_id", "college_id", "branch_id", "stage_code", "date_from", "date_to")
     aq = apply_filters(scoped_archives(db.query(Archive), actor, db), Archive, **{k: filters.get(k) for k in fkeys})
     sq = apply_filters(scoped_submissions(db.query(Submission), actor, db), Submission, **{k: filters.get(k) for k in fkeys})
+    if filters.get("date_from") or filters.get("date_to"):
+        aq = aq.filter(Archive.id.in_(sq.with_entities(Submission.archive_id)))
     archives = aq.count()
     rows = sq.all()
     submissions = len(rows)
@@ -129,19 +157,23 @@ def _review_flow(db: Session, sub_ids: list) -> tuple[list, dict]:
 
 
 def top_issues(db, actor, limit=10, group_by="rule", **filters) -> list:
+    if group_by not in ("rule", "category", "material_type"):
+        raise unprocessable("不支持的问题分组方式")
+    if not 1 <= int(limit) <= 100:
+        raise unprocessable("limit 必须在 1 到 100 之间")
     sq = apply_filters(scoped_submissions(db.query(Submission.id), actor, db), Submission,
                        **{k: filters.get(k) for k in ("batch_id", "college_id", "branch_id", "stage_code", "date_from", "date_to")})
     ids = [x[0] for x in sq.all()]
     q = db.query(Issue).filter(Issue.submission_id.in_(ids) if ids else Issue.id == -1, Issue.is_active.is_(True))
     items = q.all()
+    material_types = _issue_material_types(db, items)
     groups = defaultdict(lambda: {"count": 0, "confirmed": 0, "name": "", "category": ""})
     for i in items:
         if group_by == "category":
             key = i.category
             name = i.category
         elif group_by == "material_type":
-            key = str(i.material_id)
-            name = str(i.material_id)
+            key, name = material_types.get(i.material_id, ("UNASSIGNED", "未关联材料类型"))
         else:
             key = i.rule_code or i.title
             name = i.title
@@ -160,34 +192,56 @@ def top_issues(db, actor, limit=10, group_by="rule", **filters) -> list:
     return out[: int(limit or 10)]
 
 
+def _issue_material_types(db, issues) -> dict:
+    ids = {i.material_id for i in issues if i.material_id is not None}
+    if not ids:
+        return {}
+    rows = (db.query(Material.id, MaterialType.code, MaterialType.name)
+            .outerjoin(MaterialType, Material.type_id == MaterialType.id).filter(Material.id.in_(ids)).all())
+    return {mid: (code or "UNCLASSIFIED", name or "未分类材料") for mid, code, name in rows}
+
+
+def _quality_groups(issues, key_and_name, key_field):
+    groups = defaultdict(lambda: {"total": 0, "confirmed": 0, "rejected": 0, "modified": 0, "name": ""})
+    for issue in issues:
+        key, name = key_and_name(issue)
+        group = groups[key]
+        group["total"] += 1
+        group["name"] = name
+        status = issue.review_status.lower()
+        if status in ("confirmed", "rejected", "modified"):
+            group[status] += 1
+    out = []
+    for key, group in sorted(groups.items()):
+        reviewed = group["confirmed"] + group["rejected"] + group["modified"]
+        out.append({key_field: key, **group, "reviewed": reviewed,
+                    "precision": group["confirmed"] / reviewed if reviewed else None})
+    return out
+
+
 def ai_quality(db, actor, **filters) -> dict:
     sq = apply_filters(scoped_submissions(db.query(Submission.id), actor, db), Submission,
-                       **{k: filters.get(k) for k in ("batch_id", "college_id", "branch_id", "stage_code")})
+                       **{k: filters.get(k) for k in FILTER_KEYS})
     ids = [x[0] for x in sq.all()]
     reports = db.query(AiReport).filter(AiReport.submission_id.in_(ids) if ids else AiReport.id == -1, AiReport.status == "DONE").all()
     issues = db.query(Issue).filter(Issue.submission_id.in_(ids) if ids else Issue.id == -1, Issue.source != "MANUAL").all()
-    reviewed = [i for i in issues if i.review_status != "PENDING"]
+    reviewed = [i for i in issues if i.review_status in ("CONFIRMED", "REJECTED", "MODIFIED")]
     confirmed = [i for i in issues if i.review_status == "CONFIRMED"]
     rejected = [i for i in issues if i.review_status == "REJECTED"]
     modified = [i for i in issues if i.review_status == "MODIFIED"]
     manual = db.query(Issue).filter(Issue.submission_id.in_(ids) if ids else Issue.id == -1, Issue.source == "MANUAL").count()
-    by_rule = defaultdict(lambda: {"total": 0, "confirmed": 0, "rejected": 0, "modified": 0, "name": ""})
-    for i in issues:
-        g = by_rule[i.rule_code or ""]
-        g["total"] += 1
-        g["name"] = i.title
-        if i.review_status == "CONFIRMED":
-            g["confirmed"] += 1
-        if i.review_status == "REJECTED":
-            g["rejected"] += 1
-        if i.review_status == "MODIFIED":
-            g["modified"] += 1
-    by_rule_out = []
-    for code, g in by_rule.items():
-        prec = g["confirmed"] / g["total"] if g["total"] else 0
-        by_rule_out.append({"rule_code": code, "name": g["name"], **g, "precision": prec})
+    by_rule_out = _quality_groups(issues, lambda i: (i.rule_code or "", i.title), "rule_code")
+    material_types = _issue_material_types(db, issues)
+    by_material_type = _quality_groups(issues, lambda i: material_types.get(
+        i.material_id, ("UNASSIGNED", "未关联材料类型")), "material_type_code")
+    # Only filed packages have completed the entire review process. Pending
+    # packages cannot yet be called first-pass successes or failures.
+    completed = db.query(Submission).filter(Submission.id.in_(ids), Submission.status == "FILED").all()
+    returned_ids = {r[0] for r in db.query(ReviewRecord.submission_id).filter(
+        ReviewRecord.submission_id.in_(ids), ReviewRecord.action == "RETURN").distinct().all()}
+    first_pass = sum(1 for s in completed if (s.round_no or 1) == 1 and s.id not in returned_ids)
     modes = Counter(r.mode for r in reports)
-    dur = [r.duration_ms for r in reports if r.duration_ms]
+    dur = [r.duration_ms for r in reports if r.duration_ms is not None]
     return {
         "reports": len(reports),
         "materials_checked": sum((r.summary or {}).get("materials_checked") or 0 for r in reports),
@@ -202,8 +256,11 @@ def ai_quality(db, actor, **filters) -> dict:
         "false_positive_rate": (len(rejected) / len(reviewed)) if reviewed else 0,
         "manual_added": manual,
         "miss_ratio": (manual / (len(issues) + manual)) if (issues or manual) else 0,
-        "first_pass_rate": 0,
+        "first_pass_rate": first_pass / len(completed) if completed else None,
+        "first_pass_count": first_pass,
+        "completed_submissions": len(completed),
+        "first_pass_definition": "已备案且未经退回、仅一轮的提交包数 / 已备案提交包数",
         "by_rule": by_rule_out,
-        "by_material_type": [],
+        "by_material_type": by_material_type,
         "by_category": dict(Counter(i.category for i in issues)),
     }

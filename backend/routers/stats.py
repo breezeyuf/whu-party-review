@@ -11,7 +11,8 @@ from schemas.common import ok
 from services.audit import log
 from services.dashboard import dashboard as dash
 from services.materials import enqueue_job
-from services.stats import ai_quality, overview, top_issues
+from services.stats import ai_quality, overview, top_issues, normalize_filters
+from errors import unprocessable
 from services.storage import read_bytes
 from fastapi.responses import Response
 from urllib.parse import quote
@@ -48,19 +49,27 @@ def get_top(batch_id: int | None = None, college_id: int | None = None, branch_i
 
 @router.get("/stats/ai-quality")
 def get_aiq(batch_id: int | None = None, college_id: int | None = None, branch_id: int | None = None,
-            stage_code: int | None = None, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+            stage_code: int | None = None, date_from: str | None = None, date_to: str | None = None,
+            db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role == "STUDENT":
         raise forbidden()
-    return ok(ai_quality(db, actor, batch_id=batch_id, college_id=college_id, branch_id=branch_id, stage_code=stage_code))
+    return ok(ai_quality(db, actor, batch_id=batch_id, college_id=college_id, branch_id=branch_id,
+                         stage_code=stage_code, date_from=date_from, date_to=date_to))
 
 
 @router.post("/stats/export")
 def post_export(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("ORG_ADMIN", "COLLEGE_REVIEWER"):
         raise forbidden()
+    export_type = body.get("export_type") or "STATS_REPORT"
+    if export_type not in ("STATS_REPORT", "DESENSITIZED_DATA", "AI_QUALITY"):
+        raise unprocessable("不支持的导出类型")
+    if not isinstance(body.get("filters") or {}, dict):
+        raise unprocessable("filters 必须为对象")
+    filters = normalize_filters(body.get("filters") or {})
     job = enqueue_job(db, "EXPORT", actor.id, "export", None, {
-        "export_type": body.get("export_type") or "STATS_REPORT",
-        "filters": body.get("filters") or {},
+        "export_type": export_type,
+        "filters": {k: str(v) if k.startswith("date_") else v for k, v in filters.items()},
         "scope_college_id": actor.org_id if actor.role == "COLLEGE_REVIEWER" else None,
     })
     log(db, actor, "EXPORT", "export", job.id, body)
