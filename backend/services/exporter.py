@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import quote
 
 from fastapi.responses import Response
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from models import ExportFile, Issue, Notice
 from services import storage as store
+from services.stats import FILTER_KEYS, ai_quality, apply_filters, normalize_filters, overview
+from errors import unprocessable
 from utils import now, get_setting
 from datetime import timedelta
 
@@ -17,57 +20,81 @@ from datetime import timedelta
 def run_export_job(db: Session, job) -> None:
     params = job.params or {}
     export_type = params.get("export_type") or "STATS_REPORT"
-    filters = params.get("filters") or {}
+    filters = normalize_filters(params.get("filters") or {})
     # 服务端注入的作用域优先于客户端 filters，防止越权导出
     scope_college = params.get("scope_college_id")
-    target_college = scope_college or filters.get("college_id")
+    if scope_college is not None:
+        filters["college_id"] = int(scope_college)
+    if export_type not in ("AI_QUALITY", "DESENSITIZED_DATA", "STATS_REPORT"):
+        raise unprocessable("不支持的导出类型")
+    from models import Archive, Submission
+    actor = SimpleNamespace(role="ORG_ADMIN", org_id=None)
     from openpyxl import Workbook
-    wb = Workbook()
-    ws = wb.active
-    ws.title = export_type[:20]
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet(export_type[:20])
     row_count = 0
+    q = apply_filters(db.query(Submission), Submission, **filters)
+
+    def append_detail(values):
+        nonlocal ws, row_count
+        # A worksheet has 1,048,576 rows including its header. Start another
+        # sheet instead of silently dropping packages or emitting invalid XLSX.
+        if row_count and row_count % 1_048_575 == 0:
+            ws = wb.create_sheet(f"{export_type[:16]}_{row_count // 1_048_575 + 1}")
+            ws.append(headers)
+        ws.append([_safe_cell(v) for v in values])
+        row_count += 1
+
     if export_type == "AI_QUALITY":
-        from models import Submission
-        ws.append(["rule_code", "title", "confirmed", "rejected", "modified"])
-        q = (
-            db.query(Issue.rule_code, Issue.review_status)
-            .join(Submission, Submission.id == Issue.submission_id)
-            .filter(Issue.source != "MANUAL")
-        )
-        if target_college:
-            q = q.filter(Submission.college_id == int(target_college))
-        if filters.get("batch_id"):
-            q = q.filter(Submission.batch_id == int(filters["batch_id"]))
-        rows = q.all()
-        from collections import Counter, defaultdict
-        c = defaultdict(Counter)
-        for code, st in rows:
-            c[code or ""][st] += 1
-        for code, ct in c.items():
-            ws.append([_safe_cell(code), "", ct.get("CONFIRMED", 0), ct.get("REJECTED", 0), ct.get("MODIFIED", 0)])
-            row_count += 1
+        quality = ai_quality(db, actor, **filters)
+        headers = ["rule_code", "title", "total", "reviewed", "confirmed", "rejected", "modified", "precision"]
+        ws.append(headers)
+        for group in quality["by_rule"]:
+            append_detail([group["rule_code"], group["name"], group["total"], group["reviewed"],
+                           group["confirmed"], group["rejected"], group["modified"], group["precision"]])
+        summary = wb.create_sheet("AI效能汇总")
+        summary.append(["metric", "value"])
+        for key, value in quality.items():
+            if not isinstance(value, (dict, list)):
+                summary.append([key, _safe_cell(value)])
+        types = wb.create_sheet("按材料类型")
+        types.append(["material_type_code", "name", "total", "reviewed", "confirmed", "rejected", "modified", "precision"])
+        for group in quality["by_material_type"]:
+            types.append([_safe_cell(group.get(k)) for k in ("material_type_code", "name", "total", "reviewed", "confirmed", "rejected", "modified", "precision")])
     elif export_type == "DESENSITIZED_DATA":
-        from models import Archive
-        ws.append(["anon_code", "stage", "status", "is_demo"])
-        q = db.query(Archive)
-        if filters.get("batch_id"):
-            q = q.filter(Archive.batch_id == int(filters["batch_id"]))
-        if target_college:
-            q = q.filter(Archive.college_id == int(target_college))
-        for a in q.all():
-            ws.append([a.anon_code, a.current_stage, a.status, a.is_demo])
-            row_count += 1
+        headers = ["anon_code", "stage", "status", "is_demo"]
+        ws.append(headers)
+        # Use matching submissions: filtering on Archive.current_stage would
+        # lose historical stages and archives have no submitted_at column.
+        rows = (q.join(Archive, Archive.id == Submission.archive_id)
+                .with_entities(Archive.anon_code, Submission.stage_code, Submission.status, Archive.is_demo)
+                .order_by(Submission.id))
+        for row in rows.yield_per(1000):
+            append_detail(row)
     else:
-        from models import Submission
-        ws.append(["submission_id", "stage", "status", "round_no"])
-        q = db.query(Submission)
-        if target_college:
-            q = q.filter(Submission.college_id == int(target_college))
-        if filters.get("batch_id"):
-            q = q.filter(Submission.batch_id == int(filters["batch_id"]))
-        for s in q.limit(5000).all():
-            ws.append([s.id, s.stage_code, s.status, s.round_no])
-            row_count += 1
+        headers = ["submission_id", "stage", "status", "round_no"]
+        ws.append(headers)
+        for s in q.order_by(Submission.id).yield_per(1000):
+            append_detail([s.id, s.stage_code, s.status, s.round_no])
+        metrics = overview(db, actor, **filters)
+        summary = wb.create_sheet("统计汇总")
+        summary.append(["metric", "value"])
+        for key, value in metrics.items():
+            if not isinstance(value, (dict, list)):
+                summary.append([key, value])
+        for name, rows in (("按阶段", metrics["by_stage"]), ("按支部", metrics["by_branch"]), ("审核趋势", metrics["trend"])):
+            sheet = wb.create_sheet(name)
+            if rows:
+                keys = list(rows[0])
+                sheet.append(keys)
+                for row in rows:
+                    sheet.append([_safe_cell(row.get(k)) for k in keys])
+    criteria = wb.create_sheet("筛选说明")
+    criteria.append(["filter", "value"])
+    criteria.append(["date_basis", "提交时间，Asia/Shanghai，含起止日期"])
+    criteria.append(["row_count", row_count])
+    for key in FILTER_KEYS:
+        criteria.append([key, _safe_cell(str(filters[key])) if key in filters else ""])
     buf = BytesIO()
     wb.save(buf)
     data = buf.getvalue()
@@ -77,7 +104,7 @@ def run_export_job(db: Session, job) -> None:
     path.write_bytes(data)
     days = int(get_setting(db, "retention", {}).get("export_days") or 7)
     ef = ExportFile(
-        export_type=export_type, params=filters, file_name=f"{export_type}.xlsx",
+        export_type=export_type, params={k: str(v) if k.startswith("date_") else v for k, v in filters.items()}, file_name=f"{export_type}.xlsx",
         stored_path=rel, row_count=row_count, created_by=job.created_by,
         created_at=now(), expires_at=now() + timedelta(days=days),
     )
