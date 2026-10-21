@@ -46,7 +46,7 @@ export function menusFor(active) {
       group: "我的",
       items: [
         item("/", "工作台"),
-        item("/my/progress", "我的发展进度"),
+        item("/my/progress", "发展进度"),
         item("/my/materials", "我的材料"),
         item("/my/rectification", "整改中心"),
         item("/messages", "消息"),

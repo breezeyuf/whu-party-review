@@ -6,12 +6,15 @@ import { Loading } from "../common/States"
 export default function MaterialViewer({ materialId, versionId, page, onPage, highlights = [], activeId }) {
   const [scale, setScale] = useState(1.2)
   const [pageNo, setPageNo] = useState(page || 1)
+  const [previewAttempt, setPreviewAttempt] = useState(0)
+  const [imageError, setImageError] = useState(false)
 
   useEffect(() => { if (page) setPageNo(page) }, [page])
+  useEffect(() => { setImageError(false) }, [materialId, versionId, pageNo, scale])
 
   const { url, meta, loading, error } = useBlobUrl(
     () => materialPage(materialId, pageNo, { version_id: versionId, scale }),
-    [materialId, versionId, pageNo, scale],
+    [materialId, versionId, pageNo, scale, previewAttempt],
   )
 
   const boxes = useMemo(() => {
@@ -41,10 +44,15 @@ export default function MaterialViewer({ materialId, versionId, page, onPage, hi
         <button type="button" className="btn btn-ghost btn-xs" onClick={() => setScale((s) => Math.min(2.4, +(s + 0.2).toFixed(1)))}>放大</button>
       </div>
       {loading && <Loading label="渲染页面" />}
-      {error && <p className="text-xs text-error">{error.message}</p>}
-      {url && (
+      {(error || imageError) && (
+        <div className="alert alert-error mb-2 py-2 text-xs" role="alert">
+          <span>{imageError ? "材料预览图片无法显示。" : `材料预览失败：${error.message || "请稍后重试"}`}</span>
+          <button type="button" className="btn btn-xs" disabled={loading} onClick={() => { setImageError(false); setPreviewAttempt((n) => n + 1) }}>重试</button>
+        </div>
+      )}
+      {url && !imageError && (
         <div className="relative inline-block max-w-full overflow-auto rounded border border-base-300 bg-base-200">
-          <img src={url} alt={`第 ${pageNo} 页`} className="block max-w-full" />
+          <img src={url} alt={`第 ${pageNo} 页`} className="block max-w-full" onError={() => setImageError(true)} />
           <div className="pointer-events-none absolute inset-0">
             {boxes.map((h) => {
               const [x1, y1, x2, y2] = h.bbox

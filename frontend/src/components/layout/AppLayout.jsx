@@ -59,7 +59,7 @@ export default function AppLayout({ children }) {
             )}
             <button type="button" className="btn btn-ghost btn-sm btn-circle" aria-label="消息" onClick={() => navigate("/messages")}>
               <div className="indicator">
-                <Bell size={16} />
+                <Bell size={16} strokeWidth={1.8} />
                 {unread > 0 && <span className="indicator-item badge badge-primary badge-xs">{unread > 99 ? "99+" : unread}</span>}
               </div>
             </button>

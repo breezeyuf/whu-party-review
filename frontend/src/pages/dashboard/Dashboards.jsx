@@ -44,16 +44,6 @@ export function StudentDashboard({ data }) {
       <div className="surface-card overflow-x-auto p-4">
         <StageProgress current={data.current_stage} stages={[]} />
       </div>
-      {(data.timeline_preview || []).length > 0 && (
-        <div className="surface-card p-4">
-          <div className="mb-2 text-sm font-medium">关键节点</div>
-          <div className="flex flex-wrap gap-3 text-xs">
-            {data.timeline_preview.map((n) => (
-              <span key={n.code} className="mono">{n.code} {fmtDate(n.date)}</span>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

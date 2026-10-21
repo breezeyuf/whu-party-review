@@ -3,8 +3,7 @@ import { SeverityBadge, CategoryBadge, ReviewStatusBadge } from "../common/Badge
 export default function IssueCard({ issue, active, onSelect, actions, footer }) {
   return (
     <article
-      className={`surface-card cursor-pointer p-3 ${active ? "border-primary" : ""}`}
-      onClick={() => onSelect?.(issue)}
+      className={`surface-card p-3 ${active ? "border-primary bg-primary/5" : ""}`}
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <SeverityBadge code={issue.severity} />
@@ -16,8 +15,18 @@ export default function IssueCard({ issue, active, onSelect, actions, footer }) 
         {issue.resolution === "UNRESOLVED" && <span className="badge badge-error badge-xs">未解决</span>}
         {issue.rule_code && <span className="mono text-[11px] text-base-content/45">{issue.rule_code}</span>}
       </div>
-      <h3 className="mt-2 text-sm font-medium">{issue.title}</h3>
+      {onSelect ? (
+        <button type="button" className="mt-2 text-left text-sm font-medium hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-pressed={Boolean(active)} onClick={() => onSelect(issue)}>
+          {issue.title} <span className="ml-1 text-xs font-normal text-base-content/45">{issue.material_id || issue.location?.material_id ? "定位材料" : "选中问题"}</span>
+        </button>
+      ) : <h3 className="mt-2 text-sm font-medium">{issue.title}</h3>}
       <p className="mt-1 text-xs leading-relaxed text-base-content/75">{issue.description}</p>
+      {(issue.location?.page_no || issue.location?.material_id || issue.material_id) && (
+        <p className="mt-1 text-xs text-base-content/50">
+          {issue.location?.material_title || issue.material_title || "相关材料"}
+          {issue.location?.page_no ? ` · 第 ${issue.location.page_no} 页` : ""}
+        </p>
+      )}
       {(issue.actual_value || issue.expected_value) && (
         <p className="mt-1 text-xs">
           <span className="text-base-content/50">实际 </span>{issue.actual_value || "—"}
