@@ -57,6 +57,7 @@ export default function ReviewWorkspacePage() {
   const locateSequence = useRef(0)
   const [page, setPage] = useState(1)
   const [adding, setAdding] = useState(false)
+  const [newIssueLocation, setNewIssueLocation] = useState(null)
   const [correcting, setCorrecting] = useState(null)
   const [jobId, setJobId] = useState(null)
   const [noticeId, setNoticeId] = useState(null)
@@ -65,7 +66,7 @@ export default function ReviewWorkspacePage() {
     locateSequence.current += 1
     setActiveIssueId(null); setMaterialSelection(null); setPage(1)
     setJobId(null); setNoticeId(null); setLocationNote(""); setTimelineHighlight(null)
-    setAdding(false); setCorrecting(null); setTab("issues")
+    setAdding(false); setNewIssueLocation(null); setCorrecting(null); setTab("issues")
     return () => { locateSequence.current += 1 }
   }, [id, roleKey])
 
@@ -146,7 +147,7 @@ export default function ReviewWorkspacePage() {
             {sub.can?.ai_check && !needsAiCheck && (
               <button type="button" className="btn btn-outline btn-sm" disabled={aiBusy || ["QUEUED", "RUNNING"].includes(sub.ai_status)} onClick={startAiCheck}>{aiBusy ? "发起中…" : ["QUEUED", "RUNNING"].includes(sub.ai_status) ? "AI 检查中…" : sub.ai_status === "FAILED" ? "重新 AI 审核" : "AI 审核"}</button>
             )}
-            {sub.can?.add_issue && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAdding(true)}>新增问题</button>}
+            {sub.can?.add_issue && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setNewIssueLocation(null); setAdding(true) }}>新增问题</button>}
             <Link className="btn btn-ghost btn-sm" to={`/archives/${sub.archive?.id}`}>查看档案</Link>
             <button type="button" className="btn btn-ghost btn-sm" disabled={subReq.loading} onClick={refreshAll}>刷新</button>
             </div></details>
@@ -181,6 +182,7 @@ export default function ReviewWorkspacePage() {
               onPage={setPage}
               highlights={highlights}
               activeId={activeIssue?.id || timelineHighlight?.id}
+              onSelectRegion={sub.can?.add_issue && sameId(currentVersion, currentMat.current_version_id) ? (location) => { setNewIssueLocation(location); setAdding(true) } : undefined}
             />
           ) : <p className="text-sm text-base-content/50">{materials.length ? "请选择当前提交包中的材料。" : "该提交包还没有材料。"}</p>}
         </div></section>
@@ -235,7 +237,8 @@ export default function ReviewWorkspacePage() {
       {adding && <AddIssueModal
         open={adding}
         materials={materials}
-        onClose={() => setAdding(false)}
+        initialLocation={newIssueLocation}
+        onClose={() => { setAdding(false); setNewIssueLocation(null) }}
         onCreate={async (body) => { await addIssue(id, body); toast.success("已新增人工问题并确认"); await refreshAll() }}
       />}
       {correcting && archiveId && (

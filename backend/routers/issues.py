@@ -11,7 +11,7 @@ from errors import forbidden, not_found, unprocessable
 from models import Issue, Material, Submission
 from schemas.common import ok
 from services.audit import log
-from services.issues import act_issue, respond_issue, serialize_issue
+from services.issues import act_issue, manual_location, respond_issue, serialize_issue
 from services.scope import REVIEWER_ROLES, can_review, current_level, ensure_submission_access
 from utils import now
 
@@ -70,15 +70,20 @@ def add_issue(sid: int, body: dict, request: Request, db: Session = Depends(get_
         raise unprocessable("缺少必填字段：category、severity、title、description")
     if category not in ("COMPLETENESS", "TIME", "FORMAT", "CONTENT") or severity not in ("BLOCK", "WARN", "INFO"):
         raise unprocessable("问题类别或级别无效")
-    if body.get("material_id") and not db.query(Material.id).filter(
-        Material.id == body["material_id"], Material.submission_id == sid, Material.status == "ACTIVE",
-    ).first():
-        raise unprocessable("材料不属于当前提交包")
+    material = None
+    mid = body.get("material_id")
+    if mid is not None:
+        if type(mid) is not int or mid <= 0:
+            raise unprocessable("材料编号无效")
+        material = db.query(Material).filter(Material.id == mid, Material.submission_id == sid, Material.status == "ACTIVE").first()
+        if not material:
+            raise unprocessable("材料不属于当前提交包")
+    location, version_id = manual_location(db, material, body.get("location") or {})
     iss = Issue(
-        submission_id=sid, report_id=None, material_id=body.get("material_id"),
+        submission_id=sid, report_id=None, material_id=mid, material_version_id=version_id,
         source="MANUAL", category=category, severity=severity,
         rule_code=body.get("rule_code"), title=title, description=description,
-        location=body.get("location") or {}, suggestion=body.get("suggestion"),
+        location=location, suggestion=body.get("suggestion"),
         review_status="CONFIRMED", created_by=actor.id, created_level=level,
         is_active=True, created_at=now(), updated_at=now(),
     )

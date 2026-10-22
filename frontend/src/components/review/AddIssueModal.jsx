@@ -1,21 +1,27 @@
 import { useState } from "react"
 import { Modal } from "../common/Modal"
 import { useMeta } from "../../context/MetaContext"
+import { validBbox } from "../../utils/materialWorkflow"
 
 const EMPTY = { category: "CONTENT", severity: "WARN", title: "", description: "", suggestion: "", material_id: "", page_no: "", snippet: "" }
 
-export default function AddIssueModal({ open, materials = [], onClose, onCreate }) {
+export default function AddIssueModal({ open, materials = [], initialLocation, onClose, onCreate }) {
   const meta = useMeta()
-  const [form, setForm] = useState(EMPTY)
+  const [form, setForm] = useState(() => ({ ...EMPTY, material_id: initialLocation?.material_id || "", page_no: initialLocation?.page_no || "" }))
+  const [region, setRegion] = useState(initialLocation?.bbox ? initialLocation : null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+  const set = (k, v) => {
+    if (k === "material_id" || k === "page_no") setRegion(null)
+    setForm((f) => ({ ...f, [k]: v, ...(k === "material_id" ? { page_no: "" } : {}) }))
+  }
 
   const save = async () => {
     if (!form.title.trim() || !form.description.trim()) { setError("请填写标题和描述"); return }
     const material = materials.find((item) => String(item.id) === String(form.material_id))
     if (form.page_no && (!material || !Number.isInteger(Number(form.page_no)) || Number(form.page_no) < 1)) { setError("填写页码时须选择材料，且页码须为正整数"); return }
     if (form.page_no && material.page_count && Number(form.page_no) > material.page_count) { setError(`页码不能超过该材料的 ${material.page_count} 页`); return }
+    if (region && (!validBbox(region.bbox) || String(region.version_id) !== String(material?.current_version_id))) { setError("框选所用版本已更新，请关闭后在当前版本重新框选"); return }
     setBusy(true)
     setError("")
     try {
@@ -31,6 +37,7 @@ export default function AddIssueModal({ open, materials = [], onClose, onCreate 
           version_id: material?.current_version_id,
           page_no: form.page_no ? Number(form.page_no) : undefined,
           snippet: form.snippet.trim() || undefined,
+          ...(region ? { bbox: region.bbox } : {}),
         } : undefined,
       })
       setForm(EMPTY)
@@ -54,6 +61,7 @@ export default function AddIssueModal({ open, materials = [], onClose, onCreate 
         </>
       )}
     >
+      {region && <div className="mb-3 flex items-center justify-between gap-2 rounded bg-primary/10 p-2 text-xs" role="status"><span>已框选第 {region.page_no} 页区域，将随问题保存。</span><button type="button" className="btn btn-ghost btn-xs" disabled={busy} onClick={() => setRegion(null)}>清除框选</button></div>}
       <fieldset disabled={busy} className="grid gap-2 sm:grid-cols-2">
         <select className="select select-bordered select-sm" value={form.category} onChange={(e) => set("category", e.target.value)}>
           {(meta.issue_categories || []).map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}

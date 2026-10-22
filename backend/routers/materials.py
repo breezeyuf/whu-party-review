@@ -23,6 +23,7 @@ from models import (
 )
 from schemas.common import ok
 from services.audit import log
+from services.extractions import correct_extractions
 from services.importer import assign_batch_items
 from services.materials import add_version, create_material_with_file, enqueue_job, file_response, text_diff
 from services.scope import can_review, ensure_archive_access, ensure_submission_access, scoped_archives
@@ -278,7 +279,7 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
     if vid and not ver:
         raise not_found("材料版本不存在")
     pr = db.query(ParseResult).filter(ParseResult.version_id == vid).first() if vid else None
-    exs = db.query(TimeNodeExtraction).filter(TimeNodeExtraction.material_version_id == vid, TimeNodeExtraction.is_current.is_(True)).all() if vid else []
+    exs = db.query(TimeNodeExtraction).filter(TimeNodeExtraction.material_version_id == vid, TimeNodeExtraction.is_current.is_(True)).order_by(TimeNodeExtraction.id).all() if vid else []
     return ok({
         "material_id": mid, "version_id": vid, "version_no": ver.version_no if ver else None,
         "parser": pr.parser if pr else None, "ocr_engine": pr.ocr_engine if pr else None,
@@ -309,7 +310,7 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
     vid = body.get("version_id") or m.current_version_id
     if vid != m.current_version_id:
         raise conflict("历史材料版本只读")
-    if body.get("extractions") and not (body.get("reason") or "").strip():
+    if body.get("extractions") and (not isinstance(body.get("reason"), str) or not body["reason"].strip()):
         raise unprocessable("时间节点校正须填写原因")
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == vid, MaterialVersion.material_id == mid).first() if vid else None
     if vid and not ver:
@@ -317,6 +318,9 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
     pr = db.query(ParseResult).filter(ParseResult.version_id == vid).first()
     if not pr:
         raise not_found()
+    if ver.parse_status != "DONE":
+        raise conflict("材料完成解析后才能校正")
+    corrections = correct_extractions(db, m, ver, body.get("extractions", []))
     if "corrected_text" in body:
         pr.corrected_text = body.get("corrected_text")
     if "corrected_fields" in body:
@@ -324,33 +328,8 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
     pr.corrected_by = actor.id
     pr.corrected_at = now()
     pr.updated_at = now()
-    for ex in body.get("extractions") or []:
-        if ex.get("delete") and ex.get("extraction_id"):
-            row = db.query(TimeNodeExtraction).filter(
-                TimeNodeExtraction.id == ex["extraction_id"], TimeNodeExtraction.material_version_id == vid
-            ).first()
-            if row:
-                row.is_current = False
-            continue
-        from utils import as_date
-        if ex.get("extraction_id"):
-            row = db.query(TimeNodeExtraction).filter(
-                TimeNodeExtraction.id == ex["extraction_id"], TimeNodeExtraction.material_version_id == vid
-            ).first()
-            if row:
-                row.value_date = as_date(ex.get("date"))
-                row.value_end_date = as_date(ex.get("end_date"))
-                row.hours = ex.get("hours")
-                row.method = "MANUAL"
-        else:
-            db.add(TimeNodeExtraction(
-                archive_id=m.archive_id, node_code=ex["node_code"], material_id=m.id, material_version_id=vid,
-                seq_index=ex.get("seq_index") or 0, value_date=as_date(ex.get("date")),
-                value_end_date=as_date(ex.get("end_date")), hours=ex.get("hours"), method="MANUAL",
-                is_current=True, created_at=now(),
-            ))
     merge_archive_nodes(db, m.archive_id)
-    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid})
+    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid, "extractions": corrections})
     job_id = None
     if body.get("recheck"):
         job = enqueue_job(db, "AI_CHECK", actor.id, "submission", m.submission_id,
