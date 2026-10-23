@@ -24,14 +24,14 @@ def nodes_from_map(node_map: dict) -> dict[str, NodeVal]:
     return out
 
 
-def run_timeline(db, submission, node_map: dict, upload_date: date | None = None):
-    cal = get_setting(db, "calendar", {})
+def run_timeline(db, submission, node_map: dict, upload_date: date | None = None, *, rule_set=None, context=None):
+    cal = context.calendar if context else get_setting(db, "calendar", {})
     holidays = {as_date(x) for x in (cal.get("holidays") or []) if as_date(x)}
     extra = {as_date(x) for x in (cal.get("extra_workdays") or []) if as_date(x)}
     nodes = nodes_from_map(node_map)
-    today = date.today()
+    today = context.today if context else date.today()
     ctx = DSLContext(nodes, today, upload_date or today, holidays, extra)
-    rules = db.query(TimeRule).filter(TimeRule.is_active.is_(True)).order_by(TimeRule.sort_order).all()
+    rules = rule_set.rows("time_rules") if rule_set else db.query(TimeRule).filter(TimeRule.is_active.is_(True)).order_by(TimeRule.sort_order).all()
     drafts: list[IssueDraft] = []
     results = []
     derived = {}

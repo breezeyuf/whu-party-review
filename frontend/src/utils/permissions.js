@@ -15,6 +15,8 @@ export function isReviewer(active) {
 export function can(active, key) {
   const r = roleCode(active)
   const map = {
+    student: ["STUDENT"],
+    materialRead: ["STUDENT", ...REVIEW_ROLES],
     review: REVIEW_ROLES,
     rulesRead: REVIEW_ROLES,
     rulesWrite: ["ORG_ADMIN"],
@@ -46,7 +48,7 @@ export function menusFor(active) {
       group: "我的",
       items: [
         item("/", "工作台"),
-        item("/my/progress", "我的发展进度"),
+        item("/my/progress", "发展进度"),
         item("/my/materials", "我的材料"),
         item("/my/rectification", "整改中心"),
         item("/messages", "消息"),
@@ -54,19 +56,26 @@ export function menusFor(active) {
     }]
   }
   const groups = []
+  const adminIdentity = ["SYS_ADMIN", "ORG_ADMIN"].includes(r)
   const work = [item("/", "工作台")]
-  if (can(active, "review")) work.push(item("/review/tasks", "审核待办"))
-  if (can(active, "archives")) work.push(item("/archives", "发展档案"))
-  if (can(active, "batchUpload")) work.push(item("/materials/batch-upload", "批量上传"))
-  if (can(active, "notices")) work.push(item("/notices", "通知与补全"))
-  if (can(active, "cross")) work.push(item("/cross-review", "交叉互查配置"))
-  if (can(active, "jobs")) work.push(item("/tasks/jobs", "任务进度"))
+  if (!adminIdentity && can(active, "review")) work.push(item("/review/tasks", "审核待办"))
+  if (!adminIdentity && can(active, "archives")) work.push(item("/archives", "发展档案"))
   work.push(item("/messages", "消息"))
-  groups.push({ group: "工作", items: work })
+  groups.push({ group: adminIdentity ? "工作台" : "日常办理", items: work })
+
+  const tools = []
+  if (adminIdentity && can(active, "review")) tools.push(item("/review/tasks", "备案待办"))
+  if (adminIdentity && can(active, "archives")) tools.push(item("/archives", "发展档案"))
+  if (can(active, "batchUpload")) tools.push(item("/materials/batch-upload", "批量上传"))
+  if (can(active, "notices")) tools.push(item("/notices", "通知与补全"))
+  if (can(active, "cross")) tools.push(item("/cross-review", "交叉互查配置"))
+  if (can(active, "jobs")) tools.push(item("/tasks/jobs", "任务进度"))
+  if (tools.length) groups.push({ group: "更多业务", collapsible: true, items: tools })
 
   if (can(active, "rulesRead")) {
     groups.push({
       group: "规则库",
+      collapsible: true,
       items: [
         item("/rules/checklists", "材料清单"),
         item("/rules/material-types", "材料类型"),
@@ -85,7 +94,7 @@ export function menusFor(active) {
       item("/stats/ai-quality", "AI 效能"),
     ]
     if (can(active, "export")) stats.push(item("/stats/export", "数据导出"))
-    groups.push({ group: "统计", items: stats })
+    groups.push({ group: "统计", collapsible: true, items: stats })
   }
   const admin = []
   if (can(active, "batches")) admin.push(item("/admin/batches", "发展批次"))
@@ -93,6 +102,6 @@ export function menusFor(active) {
   if (can(active, "users")) admin.push(item("/admin/users", "用户管理"))
   if (can(active, "settings")) admin.push(item("/admin/settings", "系统配置"))
   if (can(active, "audit")) admin.push(item("/admin/audit-logs", "审计日志"))
-  if (admin.length) groups.push({ group: "管理", items: admin })
+  if (admin.length) groups.push({ group: "管理", collapsible: !adminIdentity, items: admin })
   return groups
 }

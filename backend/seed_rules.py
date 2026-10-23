@@ -21,10 +21,10 @@ from models import (
 )
 from security import hash_password
 from utils import now
-from config import ADMIN_PASSWORD, ADMIN_USERNAME
+from config import ADMIN_PASSWORD, ADMIN_USERNAME, BACKEND_DIR
 import secrets
 
-SEED_DIR = Path(__file__).resolve().parent / "seed_data"
+SEED_DIR = BACKEND_DIR / "seed_data"
 
 
 def _load(name: str) -> Any:

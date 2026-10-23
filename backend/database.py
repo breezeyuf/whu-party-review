@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-from config import DATABASE_URL
+from config import BACKEND_DIR, DATABASE_URL
 
 engine = create_engine(
     DATABASE_URL,
@@ -66,7 +66,7 @@ CREATE INDEX IF NOT EXISTS ix_handover_records_report ON handover_records(report
 
 def _schema_paths() -> list[Path]:
     here = Path(__file__).resolve().parent
-    candidates = [here / "schema.sql", here.parent.parent / "schema.sql"]
+    candidates = [BACKEND_DIR / "schema.sql", here / "schema.sql", here.parent.parent / "schema.sql"]
     return [p for p in candidates if p.is_file()]
 
 

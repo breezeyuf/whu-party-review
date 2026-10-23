@@ -121,7 +121,7 @@ app.include_router(audit.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 
 _here = os.path.dirname(os.path.abspath(__file__))
-_fe = os.path.normpath(os.path.join(_here, "..", "frontend"))
+_fe = os.environ.get("PARTY_REVIEW_FRONTEND_DIR") or os.path.normpath(os.path.join(_here, "..", "frontend"))
 _dist = os.path.join(_fe, "dist")
 _FRONT = _dist if os.path.isdir(_dist) else _fe
 

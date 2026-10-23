@@ -37,11 +37,13 @@ def expected_count(item: ChecklistItem, nodes: dict, batch_end: date | None, tod
     return n
 
 
-def run_completeness(db, submission, materials: list[Material], nodes: dict) -> tuple[dict, list[IssueDraft], list[dict]]:
-    today = date.today()
-    batch_end = submission.archive.batch.end_date if submission.archive and submission.archive.batch else None
-    min_tail = int(get_setting(db, "calendar", {}).get("period_min_tail_days", 30))
-    items = (
+def run_completeness(db, submission, materials: list[Material], nodes: dict, *,
+                     rule_set=None, context=None, versions=None) -> tuple[dict, list[IssueDraft], list[dict]]:
+    today = context.today if context else date.today()
+    batch_end = context.batch_end if context else (submission.archive.batch.end_date if submission.archive and submission.archive.batch else None)
+    calendar = context.calendar if context else get_setting(db, "calendar", {})
+    min_tail = int(calendar.get("period_min_tail_days", 30))
+    items = [it for it in rule_set.rows("checklist_items") if it.stage_code == submission.stage_code] if rule_set else (
         db.query(ChecklistItem)
         .filter(ChecklistItem.stage_code == submission.stage_code, ChecklistItem.is_active.is_(True))
         .order_by(ChecklistItem.sort_order)
@@ -54,7 +56,7 @@ def run_completeness(db, submission, materials: list[Material], nodes: dict) -> 
     extra = []
     unclassified = []
     for it in items:
-        mt: MaterialType = it.material_type
+        mt: MaterialType = rule_set.types[it.material_type_id] if rule_set else it.material_type
         matched = [m for m in active if m.type_id == it.material_type_id]
         used_ids.update(m.id for m in matched)
         expected = expected_count(it, nodes, batch_end, today, min_tail)
@@ -102,7 +104,7 @@ def run_completeness(db, submission, materials: list[Material], nodes: dict) -> 
         elif m.id not in used_ids:
             extra.append({"material_id": m.id, "title": m.title, "reason": "不在本阶段清单"})
         if m.current_version_id:
-            ver = db.query(MaterialVersion).filter(MaterialVersion.id == m.current_version_id).first()
+            ver = versions.get(m.id) if versions is not None else db.query(MaterialVersion).filter(MaterialVersion.id == m.current_version_id).first()
             if ver:
                 shas.setdefault(ver.sha256, []).append(m.id)
     for sha, ids in shas.items():

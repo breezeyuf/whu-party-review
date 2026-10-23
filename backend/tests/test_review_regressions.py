@@ -155,6 +155,19 @@ def test_cross_scope_requires_assignee(case):
     assert scoped_submissions(c.db.query(Submission), c.cross, c.db).count() == 0
 
 
+def test_cross_pair_api_rejects_assigning_one_reviewer_to_multiple_branches(case, as_client):
+    c = case
+    response = as_client(c.org).put(f"/api/batches/{c.batches[0].id}/cross-review-pairs", json={
+        "college_id": c.college.id,
+        "pairs": [
+            {"target_branch_id": c.branches[0].id, "reviewer_branch_id": c.branches[1].id, "reviewer_user_id": c.cross.id},
+            {"target_branch_id": c.branches[1].id, "reviewer_branch_id": c.branches[0].id, "reviewer_user_id": c.cross.id},
+        ],
+    })
+    assert response.status_code == 422
+    assert "不能分配给多个支部" in response.json()["message"]
+
+
 def test_role_header_must_be_explicit_and_valid(case):
     with pytest.raises(AppError):
         _pick_role(case.student.roles, "ORG_ADMIN")
@@ -187,6 +200,42 @@ def test_timeline_updates_during_parsing_are_included(case):
     assert not report_is_stale(c.db, c.sub, c.report)
     c.arch.timeline_updated_at = c.report.finished_at + timedelta(seconds=1)
     assert report_is_stale(c.db, c.sub, c.report)
+
+
+def test_formal_review_reads_published_snapshot_and_persists_context(case, as_client):
+    """Real PostgreSQL coverage, enabled with the existing TEST_DATABASE_URL fixture."""
+    from copy import deepcopy
+    from ai.pipeline import run_check
+    from models import ChecklistItem
+    from seed_rules import snapshot_rules
+
+    c = case
+    item = c.db.query(ChecklistItem).filter(ChecklistItem.stage_code == 1, ChecklistItem.is_active.is_(True)).first()
+    m, _ = material(c)
+    m.type_id, m.type_status = item.material_type_id, "CONFIRMED"
+    item.quantity_mode, item.fixed_count = "FIXED", 1
+    c.db.flush()
+    old = snapshot_rules(c.db, "checklists", "UPDATE", "测试 V1：一份")
+    item.fixed_count = 2
+    c.db.flush()
+    new = snapshot_rules(c.db, "checklists", "UPDATE", "测试 V2：两份")
+    old_snapshot = deepcopy(old.snapshot)
+    first = run_check(c.db, c.sub.id, use_llm=False, rule_version_id=old.id)
+    second = run_check(c.db, c.sub.id, use_llm=False)
+    c.db.expire(first)
+    c.db.expire(second)
+    find = lambda report: next(i for i in report.completeness["items"] if i["checklist_item_id"] == item.id)
+    assert find(first)["expected"] == 1 and find(second)["expected"] == 2
+    assert first.rule_version_id == old.id and second.rule_version_id == new.id
+    assert old.snapshot == old_snapshot
+    assert len(first.timeline_snapshot["evaluation_context"]["snapshot_sha256"]) == 64
+    assert "node_inputs" in first.timeline_snapshot
+    client = as_client(c.student)
+    # The fixture's historical report lacks evaluation_context, but remains readable.
+    for report in (c.report, first, second):
+        response = client.get(f"/api/reports/{report.id}")
+        assert response.status_code == 200
+        assert response.json()["data"]["timeline_snapshot"] == report.timeline_snapshot
 
 
 @pytest.mark.parametrize("ai_status", ["QUEUED", "RUNNING", "FAILED"])

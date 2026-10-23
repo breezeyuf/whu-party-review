@@ -7,15 +7,15 @@ from ai.types import IssueDraft, loc
 from models import CheckRule, ParseResult, PoliticalTerm, SensitivePhrase
 
 
-def run_content(db, submission, materials, versions, parses: dict[int, ParseResult], types, llm_enabled: bool):
-    rules = (
+def run_content(db, submission, materials, versions, parses: dict[int, ParseResult], types, llm_enabled: bool, *, rule_set=None):
+    rules = [r for r in rule_set.rows("check_rules") if r.category == "CONTENT"] if rule_set else (
         db.query(CheckRule)
         .filter(CheckRule.category == "CONTENT", CheckRule.is_active.is_(True))
         .order_by(CheckRule.sort_order)
         .all()
     )
-    terms = db.query(PoliticalTerm).filter(PoliticalTerm.is_active.is_(True)).all()
-    phrases = db.query(SensitivePhrase).filter(SensitivePhrase.is_active.is_(True)).all()
+    terms = rule_set.rows("political_terms") if rule_set else db.query(PoliticalTerm).filter(PoliticalTerm.is_active.is_(True)).all()
+    phrases = rule_set.rows("sensitive_phrases") if rule_set else db.query(SensitivePhrase).filter(SensitivePhrase.is_active.is_(True)).all()
     drafts: list[IssueDraft] = []
     results = []
     texts = {}
@@ -51,7 +51,7 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
                 if llm_error:
                     found = []
                 else:
-                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text, submission.archive)
+                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text, submission.archive, rule_set=rule_set)
                     checked = True
             else:
                 found = _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types)
@@ -80,7 +80,7 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
     return drafts, results
 
 
-def _apply_llm_rule(db, rule, m, ver, text: str, archive=None) -> tuple[list[IssueDraft], "str | None"]:
+def _apply_llm_rule(db, rule, m, ver, text: str, archive=None, *, rule_set=None) -> tuple[list[IssueDraft], "str | None"]:
     """按 CONTENT_CHECK 模板做语义核查。返回为空表示未发现或不可用。"""
     text = (text or "").strip()
     if not text:
@@ -93,7 +93,7 @@ def _apply_llm_rule(db, rule, m, ver, text: str, archive=None) -> tuple[list[Iss
     }
     try:
         parsed, err, _ms = chat_json(
-            db, "CONTENT_CHECK", variables, override={"max_attempts": 1}, archive=archive,
+            db, "CONTENT_CHECK", variables, override={"max_attempts": 1}, archive=archive, rule_set=rule_set,
         )
     except Exception:  # 大模型异常不得中断检查，也不回传可能包含敏感信息的异常原文
         return [], "大模型调用异常"

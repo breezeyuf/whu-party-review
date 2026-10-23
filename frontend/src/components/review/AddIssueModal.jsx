@@ -13,6 +13,9 @@ export default function AddIssueModal({ open, materials = [], onClose, onCreate 
 
   const save = async () => {
     if (!form.title.trim() || !form.description.trim()) { setError("请填写标题和描述"); return }
+    const material = materials.find((item) => String(item.id) === String(form.material_id))
+    if (form.page_no && (!material || !Number.isInteger(Number(form.page_no)) || Number(form.page_no) < 1)) { setError("填写页码时须选择材料，且页码须为正整数"); return }
+    if (form.page_no && material.page_count && Number(form.page_no) > material.page_count) { setError(`页码不能超过该材料的 ${material.page_count} 页`); return }
     setBusy(true)
     setError("")
     try {
@@ -23,7 +26,12 @@ export default function AddIssueModal({ open, materials = [], onClose, onCreate 
         description: form.description.trim(),
         suggestion: form.suggestion || undefined,
         material_id: form.material_id ? Number(form.material_id) : undefined,
-        location: form.page_no ? { page_no: Number(form.page_no), snippet: form.snippet || undefined } : undefined,
+        location: material || form.snippet.trim() ? {
+          material_id: material?.id,
+          version_id: material?.current_version_id,
+          page_no: form.page_no ? Number(form.page_no) : undefined,
+          snippet: form.snippet.trim() || undefined,
+        } : undefined,
       })
       setForm(EMPTY)
       onClose()
@@ -41,12 +49,12 @@ export default function AddIssueModal({ open, materials = [], onClose, onCreate 
       onClose={onClose}
       footer={(
         <>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>取消</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={onClose}>取消</button>
           <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={save}>保存</button>
         </>
       )}
     >
-      <div className="grid gap-2 sm:grid-cols-2">
+      <fieldset disabled={busy} className="grid gap-2 sm:grid-cols-2">
         <select className="select select-bordered select-sm" value={form.category} onChange={(e) => set("category", e.target.value)}>
           {(meta.issue_categories || []).map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
         </select>
@@ -60,9 +68,9 @@ export default function AddIssueModal({ open, materials = [], onClose, onCreate 
           <option value="">关联材料（可选）</option>
           {materials.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
         </select>
-        <input className="input input-bordered input-sm" type="number" min="1" placeholder="页码" value={form.page_no} onChange={(e) => set("page_no", e.target.value)} />
+        <input className="input input-bordered input-sm" type="number" min="1" step="1" placeholder="页码（关联材料后填写）" value={form.page_no} onChange={(e) => set("page_no", e.target.value)} />
         <input className="input input-bordered input-sm sm:col-span-2" placeholder="原文片段" value={form.snippet} onChange={(e) => set("snippet", e.target.value)} />
-      </div>
+      </fieldset>
       {error && <p className="mt-2 text-xs text-error">{error}</p>}
     </Modal>
   )

@@ -36,6 +36,7 @@ def llm_api_key(db) -> str:
 def chat_json(
     db, code: str, variables: dict, override: Optional[dict] = None, *,
     archive: Optional[Archive] = None,
+    rule_set=None,
 ) -> tuple[Optional[dict], Optional[str], float]:
     cfg = dict(llm_config(db))
     if override:
@@ -48,7 +49,8 @@ def chat_json(
     redact = cfg.get("desensitize") is not False
     # 先替换完整变量中的身份信息，再截取长度，避免截断后留下身份信息片段。
     safe_variables = _prepare_variables(variables, archive, redact)
-    tpl = db.query(PromptTemplate).filter(PromptTemplate.code == code, PromptTemplate.is_active.is_(True)).first()
+    tpl = (next((t for t in rule_set.rows("prompt_templates") if t.code == code), None)
+           if rule_set else db.query(PromptTemplate).filter(PromptTemplate.code == code, PromptTemplate.is_active.is_(True)).first())
     if not tpl:
         sys_p, user_p = "只输出 JSON。", json.dumps(safe_variables, ensure_ascii=False)
     else:

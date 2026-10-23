@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom"
 import { fmtDate } from "../../utils/format"
 import { SeverityBadge } from "../common/Badges"
+import { timelineSourceLink } from "../../utils/archiveWorkflow"
 
 function valueText(node) {
   const eff = node.effective || {}
@@ -14,43 +15,55 @@ function valueText(node) {
   return fmtDate(eff.date)
 }
 
-export default function TimelineView({ timeline, onCorrect, onLocate }) {
-  const nodes = timeline?.nodes || []
+export default function TimelineView({ timeline, onCorrect, onLocate, hidePersonalInfo = false }) {
+  const allNodes = timeline?.nodes || []
+  const nodes = hidePersonalInfo
+    ? allNodes.filter((node) => node.code !== "T01" && !/出生日期|出生年月/.test(node.name || ""))
+    : allNodes
   const derived = timeline?.derived || []
   if (!nodes.length && !derived.length) {
     return <p className="text-sm text-base-content/50">尚未提取时间节点。上传材料并完成解析后会显示在这里。</p>
   }
+  const conflictCount = nodes.filter((node) => node.has_conflict || (node.anomalies || []).some((a) => a.severity === "BLOCK")).length
   return (
-    <ol className="relative space-y-3 border-l border-base-300 pl-4">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 text-xs text-base-content/65">
+        <span>共 {nodes.length + derived.length} 个时间节点</span>
+        {conflictCount > 0
+          ? <span className="badge badge-error badge-sm">{conflictCount} 项需关注</span>
+          : <span className="badge badge-success badge-sm">暂未发现阻断异常</span>}
+      </div>
+      <ol className="relative space-y-3 border-l-2 border-base-300/80 pl-4 sm:pl-5">
       {nodes.map((node) => {
         const bad = node.has_conflict || (node.anomalies || []).some((a) => a.severity === "BLOCK")
         return (
           <li key={node.code} className="relative">
-            <span className={`absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full ${bad ? "bg-error" : "bg-primary"}`} />
-            <div className={`surface-card p-3 ${bad ? "border-error/40" : ""}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <span className="mono text-xs text-base-content/50">{node.code}</span>
-                  <span className="ml-2 text-sm font-medium">{node.name}</span>
-                  {node.locked && <span className="badge badge-ghost badge-xs ml-2">已锁定</span>}
-                  {node.has_conflict && <span className="badge badge-error badge-xs ml-2">取值冲突</span>}
-                  {node.corrected && <span className="badge badge-outline badge-xs ml-2">已校正</span>}
+            <span className={`absolute -left-[1.42rem] top-4 h-3 w-3 rounded-full border-2 border-base-100 ring-2 ${bad ? "bg-error ring-error/20" : "bg-primary ring-primary/15"}`} />
+            <div className={`surface-card overflow-hidden ${bad ? "border-error/40" : ""}`}>
+              <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="mono text-[11px] text-base-content/45">{node.code}</span>
+                    <span className="text-sm font-semibold">{node.name}</span>
+                    {node.locked && <span className="badge badge-ghost badge-xs">已锁定</span>}
+                    {node.has_conflict && <span className="badge badge-error badge-xs">取值冲突</span>}
+                    {node.corrected && <span className="badge badge-outline badge-xs">已校正</span>}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={`mono text-sm ${bad ? "text-error" : ""}`}>{valueText(node)}</span>
-                  {onCorrect && !node.locked && (
-                    <button type="button" className="btn btn-ghost btn-xs" onClick={() => onCorrect(node)}>校正</button>
-                  )}
+                <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
+                  <span className={`mono rounded-lg px-2.5 py-1 text-sm font-medium ${bad ? "bg-error/10 text-error" : "bg-base-200 text-base-content"}`}>{valueText(node)}</span>
+                  {onCorrect && !node.locked && <button type="button" className="btn btn-ghost btn-xs" onClick={() => onCorrect(node)}>校正</button>}
                 </div>
               </div>
               {(node.sources || []).length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs text-base-content/70">
+                <ul className="space-y-1 border-t border-base-200 bg-base-200/35 px-3 py-2 text-xs text-base-content/70 sm:px-4">
                   {node.sources.map((s, i) => (
-                    <li key={s.extraction_id || i}>
+                    <li key={s.extraction_id || i} className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                       {s.material_id ? (
-                        <Link className="link" to={`/materials/${s.material_id}`}>{s.material_title || `材料 ${s.material_id}`}</Link>
+                        <Link className="link" to={timelineSourceLink(s)}>{s.material_title || `材料 ${s.material_id}`}</Link>
                       ) : <span>{s.material_title || "来源"}</span>}
                       <span className="mono ml-2">{fmtDate(s.date)}</span>
+                      {s.version_no && <span className="ml-2">v{s.version_no}</span>}
                       {s.page_no && <span className="ml-2">第 {s.page_no} 页</span>}
                       {s.raw_text && <span className="ml-2 text-base-content/50">“{s.raw_text}”</span>}
                       {onLocate && s.material_id && (
@@ -61,7 +74,7 @@ export default function TimelineView({ timeline, onCorrect, onLocate }) {
                 </ul>
               )}
               {(node.anomalies || []).map((a) => (
-                <div key={a.issue_id || a.rule_code} className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                <div key={a.issue_id || a.rule_code} className="flex flex-wrap items-center gap-2 border-t border-error/15 bg-error/5 px-3 py-2 text-xs sm:px-4">
                   <SeverityBadge code={a.severity} />
                   <span className="mono text-base-content/50">{a.rule_code}</span>
                   <span>{a.message}</span>
@@ -73,16 +86,17 @@ export default function TimelineView({ timeline, onCorrect, onLocate }) {
       })}
       {derived.map((d) => (
         <li key={d.code} className="relative">
-          <span className="absolute -left-[1.35rem] top-1.5 h-2.5 w-2.5 rounded-full bg-base-300" />
-          <div className="surface-card bg-base-200/60 p-3">
-            <span className="mono text-xs text-base-content/50">{d.code}</span>
-            <span className="ml-2 text-sm">{d.name}</span>
-            <span className="badge badge-ghost badge-xs ml-2">派生</span>
-            <span className="mono ml-3 text-sm">{fmtDate(d.date)}</span>
-            {d.base && <span className="ml-2 text-xs text-base-content/50">由 {d.base} 计算</span>}
+          <span className="absolute -left-[1.42rem] top-4 h-3 w-3 rounded-full border-2 border-base-100 bg-base-300 ring-2 ring-base-300/30" />
+          <div className="surface-card flex flex-wrap items-center gap-x-2 gap-y-1 bg-base-200/45 p-3">
+            <span className="mono text-[11px] text-base-content/45">{d.code}</span>
+            <span className="text-sm font-medium">{d.name}</span>
+            <span className="badge badge-ghost badge-xs">派生</span>
+            <span className="mono rounded-lg bg-base-100 px-2 py-1 text-sm">{fmtDate(d.date)}</span>
+            {d.base && <span className="text-xs text-base-content/55">由 {d.base} 计算</span>}
           </div>
         </li>
       ))}
-    </ol>
+      </ol>
+    </div>
   )
 }
