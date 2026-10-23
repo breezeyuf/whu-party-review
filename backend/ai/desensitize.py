@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from models import Archive
+if TYPE_CHECKING:
+    from models import Archive
 
 
 def desensitize_text(text: str, archive: Optional[Archive] = None) -> str:

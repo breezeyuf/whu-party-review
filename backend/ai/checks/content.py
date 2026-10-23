@@ -28,10 +28,11 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
     llm_error = None
     for rule in rules:
         if rule.engine == "LLM" and not llm_enabled:
-            results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "需大模型，当前为仅规则模式"})
+            results.append({"rule_code": rule.code, "engine": "LLM", "result": "SKIPPED", "reason": "需大模型，当前为仅规则模式"})
             continue
         hit = False
         is_llm = (rule.engine or "RULE") == "LLM"
+        checked = False
         applies = rule.applies_to or []
         for m in materials:
             if m.status != "ACTIVE":
@@ -44,11 +45,14 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
             pr = parses.get(ver.id) if ver else None
             text = texts.get(m.id) or ""
             if is_llm:
+                if not text.strip():
+                    continue
                 # 首次调用失败后本份报告不再重复调用，避免任务长时间挂起
                 if llm_error:
                     found = []
                 else:
-                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text)
+                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text, submission.archive)
+                    checked = True
             else:
                 found = _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types)
             for d in found:
@@ -56,13 +60,27 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
                 hit = True
         if is_llm and llm_error:
             # 大模型不可用时降级为跳过，不产生语义结论，也不中断整份报告
-            results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": f"大模型调用失败：{llm_error}"})
+            results.append({"rule_code": rule.code, "engine": "LLM", "result": "SKIPPED",
+                            "reason": f"大模型调用失败：{llm_error}", "error": llm_error})
+        elif is_llm and not checked:
+            results.append({"rule_code": rule.code, "engine": "LLM", "result": "SKIPPED",
+                            "reason": "无适用材料或可检查文本"})
         else:
-            results.append({"rule_code": rule.code, "result": "FAIL" if hit else "PASS"})
+            result = {"rule_code": rule.code, "result": "FAIL" if hit else "PASS"}
+            if is_llm:
+                result["engine"] = "LLM"
+            results.append(result)
+    if llm_error:
+        # A RULE_ONLY report must not retain partial semantic findings or claim they passed.
+        drafts = [d for d in drafts if d.source != "AI_LLM"]
+        for result in results:
+            if result.get("engine") == "LLM":
+                result.update(result="SKIPPED", error=llm_error,
+                              reason=f"大模型检查未完成，本报告仅保留规则结果：{llm_error}")
     return drafts, results
 
 
-def _apply_llm_rule(db, rule, m, ver, text: str) -> tuple[list[IssueDraft], "str | None"]:
+def _apply_llm_rule(db, rule, m, ver, text: str, archive=None) -> tuple[list[IssueDraft], "str | None"]:
     """按 CONTENT_CHECK 模板做语义核查。返回为空表示未发现或不可用。"""
     text = (text or "").strip()
     if not text:
@@ -71,27 +89,25 @@ def _apply_llm_rule(db, rule, m, ver, text: str) -> tuple[list[IssueDraft], "str
 
     variables = {
         "rules": f"{rule.code} {rule.name}：{rule.basis or rule.message_template or ''}",
-        "text": text[:6000],
+        "text": text,
     }
     try:
-        parsed, err, _ms = chat_json(db, "CONTENT_CHECK", variables, override={"max_attempts": 1})
-    except Exception as exc:  # 大模型异常不得中断检查
-        return [], str(exc)[:200]
+        parsed, err, _ms = chat_json(
+            db, "CONTENT_CHECK", variables, override={"max_attempts": 1}, archive=archive,
+        )
+    except Exception:  # 大模型异常不得中断检查，也不回传可能包含敏感信息的异常原文
+        return [], "大模型调用异常"
     if err:
         return [], err
-    if not isinstance(parsed, dict):
-        return [], None
     out = []
-    for item in (parsed.get("issues") or [])[:10]:
-        if not isinstance(item, dict):
+    for item in parsed["issues"]:
+        if item.get("rule_code") and item["rule_code"] != rule.code:
+            return [], "大模型返回的问题规则编号不匹配"
+        conf = item["confidence"]
+        if conf < 0.5:
             continue
-        snippet = str(item.get("snippet") or "")[:80]
-        reason = str(item.get("reason") or rule.message_template or "疑似不规范表述")[:200]
-        try:
-            conf = float(item.get("confidence") or 0.6)
-        except (TypeError, ValueError):
-            conf = 0.6
-        conf = min(1.0, max(0.0, conf))
+        snippet = item["snippet"][:80]
+        reason = item["reason"][:200]
         out.append(IssueDraft(
             category="CONTENT", severity=rule.severity, title=rule.name, description=reason,
             rule_code=rule.code, rule_basis=rule.basis, material_id=m.id,
@@ -103,6 +119,8 @@ def _apply_llm_rule(db, rule, m, ver, text: str) -> tuple[list[IssueDraft], "str
             confidence=conf, source="AI_LLM",
             fingerprint_parts=(rule.code, m.id, snippet, reason),
         ))
+        if len(out) >= 10:
+            break
     return out, None
 
 

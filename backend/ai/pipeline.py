@@ -140,8 +140,8 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
     report_no = (last_no[0] + 1) if last_no else 1
     enabled = bool(use_llm) and llm_enabled(db)
     mode = "RULE_LLM" if enabled else "RULE_ONLY"
-    degrade = None if enabled else "未配置大模型"
-    # 记录实际使用的模型，保证报告可追溯（仅规则模式为空）
+    degrade = None if enabled else ("本次未启用大模型" if not use_llm else "未配置大模型")
+    # 保留尝试使用的模型名称；mode 表示最终报告采用的结果来源。
     model_name = (get_setting(db, "ai", {}) or {}).get("model") if enabled else None
     report = AiReport(
         submission_id=submission_id,
@@ -194,6 +194,17 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         snapshot, d2, r2 = run_timeline(db, sub, node_map)
         d3, r3 = run_format(db, materials, versions, parses, types)
         d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled)
+        if enabled:
+            errors = list(dict.fromkeys(r["error"] for r in r4 if r.get("engine") == "LLM" and r.get("error")))
+            if errors:
+                mode = "RULE_ONLY"
+                degrade = "大模型检查失败，已降级为仅规则模式：" + "；".join(errors)
+            elif not any(r.get("engine") == "LLM" and r.get("result") in ("PASS", "FAIL") for r in r4):
+                mode = "RULE_ONLY"
+                degrade = "无适用材料或语义规则，未执行大模型检查"
+                report.llm_model = None
+        report.mode = mode
+        report.degrade_reason = degrade
         drafts = d1 + d2 + d3 + d4
         fill_suggestions(db, drafts)
         rule_results = r1 + r2 + r3 + r4
@@ -272,16 +283,25 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
                 )
                 db.add(issue)
             if prev:
-                resolved = unresolved = newc = 0
+                resolved = unresolved = newc = not_rechecked = 0
                 for fp, old in old_by_fp.items():
                     if fp in new_fps:
                         unresolved += 1
+                    elif (old.source == "AI_LLM" and mode == "RULE_ONLY"
+                          and old.review_status != "REJECTED" and old.resolution not in ("RESOLVED", "WAIVED")):
+                        # A skipped/failed model check is not evidence that an old issue was fixed.
+                        old.resolution = "OPEN"
+                        old.resolved_by_report_id = None
+                        unresolved += 1
+                        not_rechecked += 1
                     else:
                         old.resolution = "RESOLVED"
                         old.resolved_by_report_id = report.id
                         resolved += 1
                 newc = sum(1 for d in drafts if issue_fp(d) not in old_by_fp)
                 report.recheck_summary = {"resolved": resolved, "unresolved": unresolved, "new": newc}
+                if not_rechecked:
+                    report.recheck_summary["not_rechecked"] = not_rechecked
             db.flush()
             # fill issue ids into rule_results loosely
             sub.latest_report_id = report.id
