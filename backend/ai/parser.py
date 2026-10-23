@@ -182,16 +182,21 @@ def _parse_docx(path: Path) -> dict:
     try:
         from docx import Document
         from docx.oxml.ns import qn
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
     except ImportError:
         return _empty("NONE", warnings=["未安装 python-docx"])
     try:
         doc = Document(str(path))
     except Exception as e:
         return _empty("NONE", warnings=[f"DOCX 无法打开：{e}"])
-    paras = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
-    for table in doc.tables:
-        for row in table.rows:
-            paras.append("\t".join(c.text.strip() for c in row.cells))
+    paras = []
+    for block in doc.iter_inner_content():
+        if isinstance(block, Paragraph) and block.text.strip():
+            paras.append(block.text)
+        elif isinstance(block, Table):
+            for row in block.rows:
+                paras.append("\t".join(c.text.strip() for c in row.cells))
     full = "\n".join(paras)
     fonts, sizes, spacings = [], [], []
     for p in doc.paragraphs:
@@ -215,15 +220,7 @@ def _parse_docx(path: Path) -> dict:
         "converted_from": "docx",
     }
     rel = _docx_to_preview_pdf(path, full)
-    pages = [{
-        "page_no": 1,
-        "width": 595.3,
-        "height": 841.9,
-        "text": full,
-        "source": "docx",
-        "blocks": [{"text": t, "bbox": None, "conf": 1.0} for t in paras[:80]],
-        "quality": {"dpi": None, "blur_score": None, "is_blurry": False},
-    }]
+    pages = _docx_preview_pages(STORAGE_DIR / rel)
     return {
         "parser": "DOCX",
         "ocr_engine": None,
@@ -234,31 +231,47 @@ def _parse_docx(path: Path) -> dict:
         "visual_marks": {"seals": [], "signatures": []},
         "extracted_fields": {},
         "format_features": features,
-        "warnings": ["由 DOCX 转换预览，坐标为文本版估算"],
-        "page_count": 1,
+        "warnings": ["由 DOCX 重排生成文本预览，版式与原文件可能不同；坐标对应预览 PDF"],
+        "page_count": len(pages),
     }
 
 
 def _docx_to_preview_pdf(path: Path, text: str) -> str:
+    from html import escape
+    import fitz
+
     rel = f"previews/{path.stem}.pdf"
     out = STORAGE_DIR / rel
     out.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        import fitz
-        doc = fitz.open()
-        page = doc.new_page()
-        html = "<div style='font-size:11pt;line-height:1.6;font-family:sans-serif'>"
-        html += "<p style='color:#666'>由 DOCX 转换</p>"
-        for line in text.splitlines()[:80]:
-            esc = (line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-            html += f"<p>{esc or '&nbsp;'}</p>"
-        html += "</div>"
-        page.insert_htmlbox(page.rect + (36, 36, -36, -36), html)
-        doc.save(out)
-        doc.close()
-    except Exception:
-        out.write_bytes(b"%PDF-1.4\n% converted\n")
+    html = "<p>由 DOCX 转换</p>" + "".join(f"<p>{escape(line) or '&nbsp;'}</p>" for line in text.splitlines())
+    story = fitz.Story(html=html, em=11, user_css="body { margin: 0; font-size: 11pt; line-height: 1.5; } p { margin: 0 0 8pt; }")
+    page_rect = fitz.paper_rect("a4")
+    buf = io.BytesIO()
+    with fitz.DocumentWriter(buf) as writer:
+        story.write(writer, lambda _index, _filled: (page_rect, page_rect + (36, 36, -36, -36), None))
+    # 仅在转换成功后写入完整 PDF；失败交给解析任务报告，不伪造可用预览。
+    out.write_bytes(buf.getvalue())
     return rel
+
+
+def _docx_preview_pages(path: Path) -> list[dict]:
+    import fitz
+
+    pages = []
+    with fitz.open(path) as preview:
+        for page in preview:
+            blocks = []
+            for block in page.get_text("dict").get("blocks", []):
+                for line in block.get("lines", []):
+                    text = "".join(span.get("text", "") for span in line.get("spans", []))
+                    if text.strip():
+                        blocks.append({"text": text, "bbox": list(line["bbox"]), "conf": 1.0})
+            pages.append({
+                "page_no": page.number + 1, "width": float(page.rect.width), "height": float(page.rect.height),
+                "text": "\n".join(block["text"] for block in blocks), "source": "docx", "blocks": blocks,
+                "quality": {"dpi": None, "blur_score": None, "is_blurry": False},
+            })
+    return pages
 
 
 def _ocr_page(page) -> tuple[str, list, Optional[str], Optional[str]]:
