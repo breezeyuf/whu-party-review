@@ -306,11 +306,12 @@ def assign_batch_items(db, job: Job, actor, stage_code, assignments: list, skip_
                     raise _ItemFailure("暂存文件已清理，请重新上传 ZIP")
                 data = store.read_bytes(item.temp_path)
                 sha = sha256_bytes(data)
+                mt_id = entry.get("material_type_id") or item.material_type_id
                 duplicate = _duplicate_material(db, sub, sha)
                 if duplicate is None:
                     material, ver, _job = create_material_with_file(
                         db, arch, sub, actor, Path(item.entry_path).name, data,
-                        material_type_id=entry.get("material_type_id") or item.material_type_id,
+                        material_type_id=mt_id,
                         title=Path(item.entry_path).stem, stage_code=stage,
                     )
                     stored_rel = ver.stored_path
@@ -319,6 +320,8 @@ def assign_batch_items(db, job: Job, actor, stage_code, assignments: list, skip_
                         "archive_id": arch.id, "submission_id": sub.id, "stage_code": stage,
                     })
                 target_id = material.id if material is not None else duplicate.id
+                # 条目回写实际使用的材料类型：确认响应和刷新后的 job.result 都靠它显示
+                item.material_type_id = mt_id or (duplicate.type_id if duplicate is not None else material.type_id)
                 item.status = "IMPORTED"
                 item.material_id = target_id
                 item.matched_archive_id = arch.id
