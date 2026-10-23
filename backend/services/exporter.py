@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
@@ -134,19 +135,40 @@ def export_notice_file(notice: Notice, fmt: str = "pdf") -> Response:
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
         )
     import fitz
-    doc = fitz.open()
-    page = doc.new_page()
-    html = f"<h2>{title}</h2><p>{(notice.content or {}).get('intro') or ''}</p>"
+
+    def html_text(value):
+        # 问题原文中的标签和换行属于正文，不能作为排版 HTML 执行。
+        text = "" if value is None else str(value)
+        return escape(text).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br/>")
+
+    parts = [f"<h2>{html_text(title)}</h2>", f"<p>{html_text((notice.content or {}).get('intro'))}</p>"]
     for it in items:
-        html += f"<p>{it.get('no')}. [{it.get('severity')}] {it.get('problem')}<br/>建议：{it.get('suggestion') or ''}</p>"
+        parts.append(
+            f"<p>{html_text(it.get('no'))}. [{html_text(it.get('severity'))}] "
+            f"{html_text(it.get('problem'))}<br/>建议：{html_text(it.get('suggestion'))}</p>"
+        )
     for it in comps:
-        html += f"<p>缺项：{it.get('material')} 缺 {it.get('missing')} 份</p>"
+        parts.append(f"<p>缺项：{html_text(it.get('material'))} 缺 {html_text(it.get('missing'))} 份</p>")
     if note:
-        from html import escape
-        html += f"<p>审核意见：{escape(note)}</p>"
-    page.insert_htmlbox(page.rect + (36, 36, -36, -36), html)
-    data = doc.tobytes()
-    doc.close()
+        parts.append(f"<p>审核意见：{html_text(note)}</p>")
+
+    # Story 将未排完的正文续写到下一页，保持字号，避免单页缩放到无法阅读。
+    story = fitz.Story(
+        html="".join(parts), em=11,
+        user_css="body { font-size: 11pt; line-height: 1.5; margin: 0; } "
+                 "h2 { font-size: 16pt; margin: 0 0 14pt; } p { margin: 0 0 10pt; }",
+    )
+    page_rect = fitz.paper_rect("a4")
+    content_rect = page_rect + (42, 42, -42, -48)
+    buf = BytesIO()
+    with fitz.DocumentWriter(buf) as writer:
+        story.write(writer, lambda _index, _filled: (page_rect, content_rect, None))
+    with fitz.open(stream=buf.getvalue(), filetype="pdf") as doc:
+        for page in doc:
+            label = f"{page.number + 1} / {len(doc)}"
+            label_width = fitz.get_text_length(label, fontname="helv", fontsize=9)
+            page.insert_text(((page.rect.width - label_width) / 2, page.rect.height - 24), label, fontsize=9)
+        data = doc.tobytes(garbage=4, deflate=True)
     name = f"整改通知_{anon}_第{notice.round_no}轮.pdf"
     return Response(
         content=data, media_type="application/pdf",
