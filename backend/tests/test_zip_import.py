@@ -5,8 +5,9 @@ job.result 回写、识别范围与识别重试。
 """
 from __future__ import annotations
 
-from models import AuditLog, BatchUploadItem, Job, Material
-from services.importer import process_batch_upload
+from models import AuditLog, BatchUploadItem, Job, Material, MaterialType, User, UserRole
+from services import storage as store
+from services.importer import _actor_identity, process_batch_upload
 from tests.pg_fixtures import (  # noqa: F401  夹具由 import 引入
     add_archive,
     add_job,
@@ -20,6 +21,7 @@ from tests.pg_fixtures import (  # noqa: F401  夹具由 import 引入
     storage_tmp,
     zip_bytes,
 )
+from utils import now
 
 
 def upload(case, client, entries, *, stage_code=None, batch_id=None):
@@ -340,3 +342,48 @@ def test_unmatched_item_can_still_be_assigned(case, as_client, storage_tmp):
     assert data["imported"] == 1
     assert data["items"][0]["status"] == "IMPORTED"
     assert data["items"][0]["matched_archive"]["id"] == arch.id
+
+
+def test_recognition_identity_uses_recorded_role(case):
+    job = add_job(case.db, created_by=case.reviewer.id,
+                  params={"actor_role": "COLLEGE_REVIEWER", "actor_org_id": case.college.id})
+    identity = _actor_identity(case.db, job)
+    assert (identity.role, identity.org_id) == ("COLLEGE_REVIEWER", case.college.id)
+
+
+def test_legacy_job_identity_falls_back_to_upload_capable_role(case):
+    """旧任务没记录身份，且账号兼任 SYS_ADMIN：只按可上传 ZIP 的角色取默认身份，不能按全校范围。"""
+    user = case.add(User, username="dual_role", password_hash="unused", real_name="双角色",
+                    org_id=case.branches[0].id, is_active=True, must_change_password=False,
+                    created_at=now(), updated_at=now())
+    case.add(UserRole, user_id=user.id, role="SYS_ADMIN", org_id=case.school.id, created_at=now())
+    case.add(UserRole, user_id=user.id, role="BRANCH_REVIEWER", org_id=case.branches[0].id, created_at=now())
+    case.db.flush()
+    job = add_job(case.db, created_by=user.id, params={"zip_path": "tmp/legacy.zip"})
+    identity = _actor_identity(case.db, job)
+    assert (identity.role, identity.org_id) == ("BRANCH_REVIEWER", case.branches[0].id)
+
+
+def test_legacy_job_without_upload_role_matches_nothing(case, as_client, storage_tmp):
+    """只有 SYS_ADMIN 的创建人：不做自动匹配，条目全部记为待指定归属。"""
+    rel = store.save_tmp(zip_bytes({"2026001001_申请书.pdf": pdf_bytes("a")}), "legacy.zip")
+    job = add_job(case.db, created_by=case.sys_admin.id, status="QUEUED", params={"zip_path": rel})
+    process_batch_upload(case.db, job)
+    case.db.flush()
+    row = job.result["items"][0]
+    assert row["status"] == "UNMATCHED"
+    assert row["matched_archive"] is None
+
+
+def test_assign_accepts_explicit_material_type(case, as_client, storage_tmp):
+    material_type = case.add(MaterialType, code="TEST_TYPE", name="测试材料", stage_codes=[2],
+                             title_keywords=[], created_at=now(), updated_at=now())
+    client = as_client(case.reviewer)
+    job = upload_and_recognize(case, client, {"2026001001_申请书.pdf": pdf_bytes("a")})
+    row = job.result["items"][0]
+    data = assign(case, client, job, {"assignments": [{
+        "item_id": row["item_id"], "archive_id": case.arch_a.id, "material_type_id": material_type.id,
+    }]}).json()["data"]
+    assert data["items"][0]["material_type"] == "TEST_TYPE"
+    material = case.db.query(Material).filter(Material.id == data["items"][0]["material_id"]).one()
+    assert material.type_id == material_type.id

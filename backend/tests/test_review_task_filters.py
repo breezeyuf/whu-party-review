@@ -123,6 +123,28 @@ def test_filters_combine_with_recommendation_and_query(case, as_client):
     assert data["total"] == len(data["items"])
 
 
+def test_due_filter_uses_the_deadline_of_the_current_status(case, as_client):
+    """同一批次里 self/branch 截止日不同：草稿看 self_deadline，支部初审看 branch_deadline。"""
+    today = now().date()
+    batch = case.add(
+        Batch, name="批次-状态截止", year=2026, start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        self_deadline=today + timedelta(days=1), branch_deadline=today + timedelta(days=10),
+        created_at=now(), updated_at=now(),
+    )
+    arch_draft = add_archive(case.db, case, student_no="2026004001", branch=0, current_stage=1)
+    arch_draft.batch_id = batch.id
+    case.db.flush()
+    draft = add_submission(case.db, arch_draft, 1, "DRAFT", report=True)
+    arch_review = add_archive(case.db, case, student_no="2026004002", branch=0, current_stage=1)
+    arch_review.batch_id = batch.id
+    case.db.flush()
+    review = add_submission(case.db, arch_review, 1, "BRANCH_REVIEW", report=True)
+
+    ids = {row["id"] for row in listing(as_client(case.reviewer), due_within_days=2, page_size=200)["items"]}
+    assert draft.id in ids      # 1 天后到期
+    assert review.id not in ids  # 10 天后到期
+
+
 def test_student_query_does_not_duplicate_or_fail(case, as_client):
     response = as_client(case.student).get("/api/submissions", params={"q": "学生", "page_size": 200})
     assert response.status_code == 200, response.text
