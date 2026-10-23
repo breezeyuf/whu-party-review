@@ -137,6 +137,125 @@ def pair(c, batch=0, user=None):
                  reviewer_user_id=user, created_at=now())
 
 
+def parsed_material(c):
+    m, v = material(c)
+    v.page_count = 2
+    c.add(ParseResult, version_id=v.id, parser="PDF_TEXT", full_text="原始文本", pages=[
+        {"page_no": 1, "width": 595, "height": 842}, {"page_no": 2, "width": 595, "height": 842}],
+        created_at=now(), updated_at=now())
+    return m, v
+
+
+def test_manual_issue_region_keeps_exact_version_and_coordinates(case, as_client):
+    c = case
+    m, v = parsed_material(c)
+    body = {"category": "FORMAT", "severity": "WARN", "title": "签名缺失", "description": "请核对签名栏",
+            "material_id": m.id, "location": {"material_id": m.id, "version_id": v.id, "page_no": 2,
+                                                "bbox": [40.5, 120, 230, 160.25]}}
+    client = as_client(c.reviewer)
+    response = client.post(f"/api/submissions/{c.sub.id}/issues", json=body)
+    assert response.status_code == 200, response.text
+    issue = response.json()["data"]
+    assert issue["material_version_id"] == v.id
+    assert issue["location"]["bbox"] == body["location"]["bbox"]
+    fresh = client.get(f"/api/submissions/{c.sub.id}/issues").json()["data"]["items"]
+    assert next(row for row in fresh if row["id"] == issue["id"])["location"]["page_no"] == 2
+
+
+@pytest.mark.parametrize("location", [
+    {"page_no": 3, "bbox": [1, 2, 3, 4]},
+    {"page_no": 1, "bbox": [1, 2, 900, 30]},
+    {"page_no": 1, "bbox": [30, 2, 1, 40]},
+    {"page_no": 1, "bbox": [1, 2, "30", 40]},
+    {"bbox": [1, 2, 30, 40]},
+])
+def test_manual_issue_rejects_invalid_region(case, as_client, location):
+    c = case
+    m, _ = parsed_material(c)
+    response = as_client(c.reviewer).post(f"/api/submissions/{c.sub.id}/issues", json={
+        "category": "FORMAT", "severity": "WARN", "title": "核对", "description": "核对原文",
+        "material_id": m.id, "location": location})
+    assert response.status_code == 422, response.text
+    assert c.db.query(Issue).filter(Issue.source == "MANUAL").count() == 0
+
+
+def test_manual_issue_rejects_old_version_and_nonreviewer(case, as_client):
+    c = case
+    m, v = parsed_material(c)
+    body = {"category": "FORMAT", "severity": "WARN", "title": "核对", "description": "核对原文",
+            "material_id": m.id, "location": {"version_id": v.id + 100, "page_no": 1, "bbox": [1, 2, 30, 40]}}
+    assert as_client(c.reviewer).post(f"/api/submissions/{c.sub.id}/issues", json=body).status_code == 409
+    assert as_client(c.student).post(f"/api/submissions/{c.sub.id}/issues", json=body).status_code == 403
+
+
+def test_material_node_crud_updates_timeline_and_audit(case, as_client):
+    from models import ArchiveTimeNode, AuditLog
+    c = case
+    m, v = parsed_material(c)
+    ex = c.add(TimeNodeExtraction, archive_id=c.arch.id, node_code="T02", material_id=m.id,
+               material_version_id=v.id, value_date=None, invalid_reason="日期缺失", method="RULE",
+               is_current=True, created_at=now())
+    removed = c.add(TimeNodeExtraction, archive_id=c.arch.id, node_code="T06", material_id=m.id,
+                    material_version_id=v.id, value_date=date(2026, 1, 3), method="RULE", is_current=True, created_at=now())
+    body = {"version_id": v.id, "reason": "已对照原件核实并补录培训", "extractions": [
+        {"extraction_id": ex.id, "node_code": "T02", "date": "2026-01-02"},
+        {"extraction_id": removed.id, "delete": True},
+        {"node_code": "T10", "date": "2026-03-01", "end_date": "2026-03-03", "hours": 24},
+    ]}
+    client = as_client(c.reviewer)
+    response = client.put(f"/api/materials/{m.id}/parsed", json=body)
+    assert response.status_code == 200, response.text
+    records = client.get(f"/api/materials/{m.id}/parsed").json()["data"]["extractions"]
+    assert {row["node_code"] for row in records} == {"T02", "T10"}
+    c.db.refresh(ex)
+    assert ex.invalid_reason is None and ex.method == "MANUAL" and ex.confidence == 1
+    c.db.refresh(removed)
+    assert not removed.is_current
+    assert c.db.query(ArchiveTimeNode).filter_by(archive_id=c.arch.id, node_code="T10").one().hours == 24
+    assert report_is_stale(c.db, c.sub, c.report)
+    audit = c.db.query(AuditLog).filter_by(action="PARSE_CORRECT", object_id=str(m.id)).one()
+    assert audit.detail["reason"] == body["reason"]
+    assert [row["action"] for row in audit.detail["extractions"]] == ["UPDATE", "DELETE", "CREATE"]
+
+
+@pytest.mark.parametrize("change", [
+    {"node_code": "T02", "date": "2026-02-30"},
+    {"node_code": "T10", "date": "2026-03-03", "end_date": "2026-03-01"},
+    {"node_code": "T10", "date": "2026-03-01", "hours": -1},
+    {"node_code": "D01", "date": "2026-03-01"},
+    {"node_code": "T06", "date": "2026-03-01", "seq_index": 0.5},
+    {"node_code": "MISSING", "date": "2026-03-01"},
+])
+def test_node_changes_are_validated_before_any_write(case, as_client, change):
+    c = case
+    m, v = parsed_material(c)
+    ex = c.add(TimeNodeExtraction, archive_id=c.arch.id, node_code="T02", material_id=m.id,
+               material_version_id=v.id, value_date=date(2026, 1, 1), method="RULE", is_current=True, created_at=now())
+    response = as_client(c.reviewer).put(f"/api/materials/{m.id}/parsed", json={
+        "version_id": v.id, "reason": "核对原件", "extractions": [
+            {"extraction_id": ex.id, "date": "2026-01-02"}, change]})
+    assert response.status_code == 422, response.text
+    c.db.refresh(ex)
+    assert ex.value_date == date(2026, 1, 1) and ex.method == "RULE"
+
+
+def test_node_edits_require_reason_and_own_current_version(case, as_client):
+    c = case
+    m, v = parsed_material(c)
+    other, ov = parsed_material(c)
+    ex = c.add(TimeNodeExtraction, archive_id=c.arch.id, node_code="T02", material_id=other.id,
+               material_version_id=ov.id, value_date=date(2026, 1, 1), method="RULE", is_current=True, created_at=now())
+    client = as_client(c.reviewer)
+    assert client.put(f"/api/materials/{m.id}/parsed", json={"version_id": v.id, "extractions": [
+        {"node_code": "T02", "date": "2026-01-02"}]}).status_code == 422
+    assert client.put(f"/api/materials/{m.id}/parsed", json={"version_id": v.id, "reason": "核对原件", "extractions": [
+        {"extraction_id": ex.id, "delete": True}]}).status_code == 422
+    assert as_client(c.student).put(f"/api/materials/{m.id}/parsed", json={"version_id": v.id}).status_code == 403
+    c.sub.status = "FILED"
+    c.db.flush()
+    assert as_client(c.org).put(f"/api/materials/{m.id}/parsed", json={"version_id": v.id}).status_code == 403
+
+
 def test_cross_scope_requires_matching_batch(case):
     c = case
     pair(c, batch=1)

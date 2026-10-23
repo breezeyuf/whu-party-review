@@ -1,10 +1,44 @@
 from __future__ import annotations
 
+import math
 from sqlalchemy.orm import Session
 
-from errors import forbidden, unprocessable
-from models import Issue
+from errors import conflict, forbidden, unprocessable
+from models import Issue, MaterialVersion, ParseResult
 from utils import now
+
+
+def manual_location(db, material, location):
+    if not isinstance(location, dict):
+        raise unprocessable("问题位置格式无效")
+    if not material:
+        if any(location.get(key) is not None for key in ("material_id", "version_id", "page_no", "bbox")):
+            raise unprocessable("指定问题位置前须选择材料")
+        return location, None
+    if location.get("material_id", material.id) != material.id:
+        raise unprocessable("位置与关联材料不一致")
+    vid = location.get("version_id") or material.current_version_id
+    if type(vid) is not int or vid != material.current_version_id:
+        raise conflict("材料版本已更新，请在当前版本重新定位问题")
+    ver = db.query(MaterialVersion).filter(MaterialVersion.id == vid, MaterialVersion.material_id == material.id).first()
+    if not ver:
+        raise unprocessable("材料版本不存在")
+    result = {**location, "material_id": material.id, "version_id": ver.id}
+    page = location.get("page_no")
+    if page is not None and (type(page) is not int or page < 1 or (ver.page_count and page > ver.page_count)):
+        raise unprocessable("页码须为材料范围内的正整数")
+    box = location.get("bbox")
+    if box is not None:
+        if page is None or not isinstance(box, list) or len(box) != 4 or any(
+            isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) for x in box
+        ) or not (0 <= box[0] < box[2] and 0 <= box[1] < box[3]):
+            raise unprocessable("框选坐标无效，须包含页码和有效矩形")
+        parsed = db.query(ParseResult).filter(ParseResult.version_id == ver.id).first()
+        dims = next((p for p in (parsed.pages or []) if p.get("page_no") == page), {}) if parsed else {}
+        if (dims.get("width") and box[2] > dims["width"] + 0.01) or (dims.get("height") and box[3] > dims["height"] + 0.01):
+            raise unprocessable("框选区域超出页面范围")
+        result["bbox"] = box
+    return result, ver.id
 
 
 def act_issue(db: Session, issue: Issue, actor, action: str, note=None, patch=None) -> Issue:

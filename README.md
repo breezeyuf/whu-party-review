@@ -4,6 +4,8 @@
 
 已增加 Windows 本地程序：解压完整 `PartyReview` 文件夹到英文路径后，双击 `PartyReview.exe`，无需单独安装 Python、Node.js 或 PostgreSQL。首次登录、演示入口、数据备份和源码构建见 [本地程序说明](docs/Windows本地程序使用说明.md)。
 
+审核端已补齐原文预览拖框新增问题，以及时间节点抽取记录逐条新增、修改、删除，使用方法和验证结果见 [原文框选与节点抽取校正](docs/原文框选与节点抽取校正.md)。
+
 ![登录页](screenshots/01-登录页.png)
 
 ## 技术栈

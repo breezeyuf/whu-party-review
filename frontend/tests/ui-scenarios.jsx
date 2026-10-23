@@ -18,6 +18,9 @@ import ReviewDecisionPanel from "../src/components/review/ReviewDecisionPanel"
 import IssueActions from "../src/components/review/IssueActions"
 import FileUploader from "../src/components/common/FileUploader"
 import MaterialViewer from "../src/components/material/MaterialViewer"
+import ParsedTextPanel from "../src/components/material/ParsedTextPanel"
+import AddIssueModal from "../src/components/review/AddIssueModal"
+import ReviewWorkspacePage from "../src/pages/review/ReviewWorkspacePage"
 import IssueResponseForm from "../src/components/student/IssueResponseForm"
 import ReviewJobStatus from "../src/components/review/ReviewJobStatus"
 import { StudentDashboard, ReviewerDashboard } from "../src/pages/dashboard/Dashboards"
@@ -36,6 +39,7 @@ const groups = [{ stage_code: 1, checklist: [], unclassified: [], extra: [] }]
 const oldVersion = { id: 401, version_no: 1, parse_status: "DONE", file_size: 100, page_count: 3 }
 const currentVersion = { id: 402, version_no: 2, parse_status: "DONE", file_size: 120, page_count: 3, is_current: true }
 const baseMaterial = { id: 12, archive_id: 1, submission_id: 101, title: "思想汇报.pdf", editable: true, current_version: currentVersion, type: { id: 1, name: "思想汇报" }, type_status: "CONFIRMED" }
+const nodeDefinitions = [{ code: "T02", name: "申请日期", value_kind: "DATE", is_active: true }, { code: "T06", name: "思想汇报日期", value_kind: "DATE_SEQ", is_active: true }, { code: "T10", name: "集中培训", value_kind: "DATE_RANGE", has_hours: true, is_active: true }]
 
 let root, router, requests, fixture, role
 const text = () => document.getElementById("root").textContent
@@ -77,6 +81,7 @@ function defaultFixture(config) {
   if (url === "/batches") return { items: [{ id: 1, name: "测试批次" }] }
   if (url === "/orgs") return [{ id: 2, org_type: "BRANCH", parent_id: 1, name: "测试支部" }]
   if (url === "/notices") return { items: [] }
+  if (url === "/rules/time-nodes") return nodeDefinitions
   if (url === "/messages/unread-count") return { count: 0 }
   if (url === "/submissions") return { items: [{ id: 101, student_name: "测试学生", stage_code: 1, status: "BRANCH_REVIEW", issue_counts: {} }], total: 1, page: 1, page_size: 20 }
   throw new Error(`测试缺少接口样例：${config.method} ${url}`)
@@ -441,6 +446,106 @@ export async function runUiScenarios() {
     await input(document.querySelector('[aria-label="审核意见"]'), "请补充完整签名后重新提交")
     await click(button("确认退回"))
     assert.equal(returned, 1)
+  })
+
+  await test("框选按显示比例保存页码与坐标，单击不创建区域，Esc 取消", async () => {
+    const selections = []
+    await mount(<MaterialViewer materialId={12} versionId={402} page={2} onSelectRegion={(location) => selections.push(location)} />)
+    await click(button("框选新增问题"))
+    const area = document.querySelector('[aria-label="框选问题区域"]')
+    area.getBoundingClientRect = () => ({ left: 100, top: 50, width: 300, height: 400 })
+    const pointer = async (type, x, y) => act(async () => { const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }); Object.defineProperty(event, "pointerId", { value: 1 }); area.dispatchEvent(event) })
+    await pointer("pointerdown", 250, 250)
+    await pointer("pointerup", 250, 250)
+    assert.equal(selections.length, 0)
+    await pointer("pointerdown", 250, 250)
+    await pointer("pointermove", 130, 90)
+    await pointer("pointerup", 130, 90)
+    assert.deepEqual(selections[0], { material_id: 12, version_id: 402, page_no: 2, bbox: [59.5, 84.2, 297.5, 421] })
+    await click(button("框选新增问题"))
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })))
+    assert.equal(document.querySelector('[aria-label="框选问题区域"]'), null)
+  })
+
+  await test("审核工作区框选后填问题，提交包含精确当前版本与区域", async () => {
+    const material = { ...baseMaterial, current_version_id: 402, version_no: 2, page_count: 3 }
+    let saved
+    await mount(<ReviewWorkspacePage />, { path: "/review/submissions/101", pattern: "/review/submissions/:id", roleCode: "BRANCH_REVIEWER", handler: (config) => {
+      if (config.url === "/submissions/101") return { ...baseSubmission, status: "BRANCH_REVIEW", materials: [material], can: { add_issue: true } }
+      if (config.url === "/submissions/101/issues" && config.method === "post") { saved = JSON.parse(config.data); return { id: 60, ...saved } }
+    } })
+    await click(button("框选新增问题"))
+    const area = document.querySelector('[aria-label="框选问题区域"]')
+    area.getBoundingClientRect = () => ({ left: 0, top: 0, width: 595, height: 842 })
+    for (const [type, x, y] of [["pointerdown", 40, 60], ["pointerup", 200, 100]]) await act(async () => { const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }); Object.defineProperty(event, "pointerId", { value: 1 }); area.dispatchEvent(event) })
+    assert.match(text(), /已框选第 1 页区域/)
+    await input(document.querySelector('input[placeholder="标题"]'), "落款缺失")
+    await input(document.querySelector('textarea[placeholder="问题描述"]'), "请核对落款日期")
+    await click(button("保存"))
+    assert.deepEqual(saved.location.bbox, [40, 60, 200, 100])
+    assert.equal(saved.location.version_id, 402)
+    assert.equal(saved.location.page_no, 1)
+    assert.equal(saved.material_id, 12)
+  })
+
+  await test("新增问题更换材料时清除原框选，防止坐标串用", async () => {
+    let saved
+    await mount(<AddIssueModal open materials={[{ id: 12, current_version_id: 402 }, { id: 13, current_version_id: 403 }]} initialLocation={{ material_id: 12, version_id: 402, page_no: 1, bbox: [1, 2, 30, 40] }} onClose={() => {}} onCreate={(body) => { saved = body }} />)
+    await input(document.querySelector('select option[value="13"]').parentElement, "13")
+    assert.doesNotMatch(text(), /已框选/)
+    await input(document.querySelector('input[placeholder="标题"]'), "核对")
+    await input(document.querySelector('textarea[placeholder="问题描述"]'), "检查另一份材料")
+    await click(button("保存"))
+    assert.equal(saved.location.bbox, undefined)
+    assert.equal(saved.location.version_id, 403)
+  })
+
+  await test("节点新增修改删除只提交增量，并要求填写校正原因", async () => {
+    let saved
+    const parsed = { version_id: 402, extractions: [{ id: 1, node_code: "T02", date: "2026-01-01" }, { id: 2, node_code: "T06", date: "2026-02-01", seq_index: 0 }] }
+    await mount(<ParsedTextPanel parsed={parsed} editable onSave={(body) => { saved = body }} />, { roleCode: "BRANCH_REVIEWER" })
+    await input(document.querySelector('[aria-label="记录 1 日期"]'), "2026-01-02")
+    await click([...document.querySelectorAll("button")].filter((item) => item.textContent === "删除记录")[1])
+    await click(button("新增节点记录"))
+    await input(document.querySelector('[aria-label="记录 3 节点"]'), "T10")
+    await input(document.querySelector('[aria-label="记录 3 日期"]'), "2026-03-01")
+    await input(document.querySelector('[aria-label="记录 3 结束日期"]'), "2026-03-03")
+    await input(document.querySelector('[aria-label="记录 3 学时"]'), "24")
+    await click(button("保存校正"))
+    assert.equal(saved, undefined)
+    assert.match(text(), /请填写时间节点校正原因/)
+    await input(document.querySelector('[aria-label="时间节点校正原因"]'), "已核对原件，修正日期并补录培训")
+    await click(button("保存并重新校验"))
+    assert.equal(saved.extractions.length, 3)
+    assert.deepEqual(saved.extractions[1], { extraction_id: 2, delete: true })
+    assert.equal(saved.extractions[2].hours, 24)
+    assert.equal(saved.recheck, true)
+    assert.match(saved.reason, /核对原件/)
+  })
+
+  await test("节点校正失败保留输入，撤销删除后不把未改记录变为人工记录", async () => {
+    let saved
+    let fail = true
+    const parsed = { version_id: 402, extractions: [{ id: 1, node_code: "T02", date: "2026-01-01" }] }
+    await mount(<ParsedTextPanel parsed={parsed} editable onSave={(body) => { if (fail) throw new Error("保存连接失败"); saved = body }} />, { roleCode: "BRANCH_REVIEWER" })
+    await click(button("删除记录"))
+    await click(button("撤销删除"))
+    await input(document.querySelector("textarea"), "校正后的全文")
+    await click(button("保存校正"))
+    assert.match(text(), /保存连接失败/)
+    assert.equal(document.querySelector("textarea").value, "校正后的全文")
+    fail = false
+    await click(button("保存校正"))
+    assert.equal(saved.extractions, undefined)
+    assert.equal(saved.corrected_text, "校正后的全文")
+  })
+
+  await test("学生或历史材料只读面板不提供节点编辑按钮", async () => {
+    await mount(<ParsedTextPanel parsed={{ version_id: 401, extractions: [{ id: 1, node_code: "T02", date: "2026-01-01" }] }} editable={false} />)
+    assert.equal(button("新增节点记录"), undefined)
+    assert.equal(button("删除记录"), undefined)
+    assert.equal(requests.some((request) => request.url === "/rules/time-nodes"), false)
+    assert.equal(document.querySelector("textarea").readOnly, true)
   })
 
   if (root) await act(async () => root.unmount())
