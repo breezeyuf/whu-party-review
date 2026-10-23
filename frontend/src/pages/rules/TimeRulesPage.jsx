@@ -69,7 +69,7 @@ export default function TimeRulesPage() {
       </div>
       {tab === "nodes" ? (
         <div className="surface-card p-2">
-          <DataTable loading={nodes.loading} rows={nodeRows} columns={[
+          <DataTable loading={nodes.loading} error={nodes.error} onRetry={nodes.reload} rows={nodeRows} empty="还没有时间节点定义" columns={[
             {
               key: "name",
               title: "名称",
@@ -87,7 +87,7 @@ export default function TimeRulesPage() {
         </div>
       ) : (
         <div className="surface-card p-2">
-          <DataTable loading={rules.loading} rows={ruleRows} columns={[
+          <DataTable loading={rules.loading} error={rules.error} onRetry={rules.reload} rows={ruleRows} empty="还没有时间规则" columns={[
             {
               key: "name",
               title: "名称",

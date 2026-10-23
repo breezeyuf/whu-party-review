@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { Mail, MailOpen } from "lucide-react"
 import PageHeader from "../components/layout/PageHeader"
 import DataTable, { Pager } from "../components/common/DataTable"
-import { Loading, ErrorState } from "../components/common/States"
+import { Loading } from "../components/common/States"
 import { useRequest } from "../hooks/useRequest"
 import { usePagination } from "../hooks/usePagination"
 import { listMessages, markAllRead, markRead } from "../api/messages"
@@ -79,10 +79,11 @@ export default function MessagesPage() {
           <button key={label} type="button" className={`btn btn-xs ${filter === v ? "btn-primary" : "btn-ghost"}`} onClick={() => setFilter(v)}>{label}</button>
         ))}
       </div>
-      {error && <ErrorState error={error} onRetry={reload} />}
-      {loading && !data ? <Loading /> : (
+      {loading && !data ? <Loading label="消息" /> : (
         <div className="surface-card p-2">
           <DataTable
+            error={error}
+            onRetry={reload}
             columns={[
               { key: "title", title: "标题", render: (r) => (
                 <button type="button" className={`flex items-center gap-2 text-left ${r.is_read ? "text-base-content/60" : "font-medium"}`} onClick={() => open(r)}>
@@ -95,9 +96,9 @@ export default function MessagesPage() {
               { key: "time", title: "时间", render: (r) => <span className="mono text-xs">{fmtDateTime(r.created_at)}</span> },
             ]}
             rows={data?.items || []}
-            empty="没有消息"
+            empty={filter === "false" ? "没有未读消息" : filter === "true" ? "没有已读消息" : "没有消息"}
           />
-          <div className="px-2 pb-2"><Pager page={data?.page} pageSize={data?.page_size} total={data?.total} onPage={setPage} /></div>
+          {!error && <div className="px-2 pb-2"><Pager page={data?.page} pageSize={data?.page_size} total={data?.total} onPage={setPage} /></div>}
         </div>
       )}
     </div>

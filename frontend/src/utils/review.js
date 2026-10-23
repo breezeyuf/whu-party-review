@@ -1,28 +1,27 @@
 export const sameId = (a, b) => a != null && b != null && String(a) === String(b)
 
-// The current submissions endpoint accepts these filters but does not apply
-// has_block=false or due_within_days. Filter the complete result, then paginate.
+// 通过规则的统一说明：单份通过、批量通过与备案共用后端同一个校验（services/workflow.ensure_passable）
+export const PASS_RULE_TEXT = "仍有待处理的阻断问题时不能通过；已确认、修改或驳回的阻断问题不拦截，单份与批量一致。"
+
+// 待办的筛选、计数和分页全部由 GET /api/submissions 完成；这里只去掉空值，其余参数
+// （含 has_block=false、due_within_days）原样交给后端，取值是否合法也由后端判断（422）
+export function reviewTaskQuery(query = {}) {
+  return Object.fromEntries(Object.entries(query).filter(([, value]) => value != null && value !== ""))
+}
+
+// 每次查询只发一个列表请求，列表、总数和页码都取服务端结果
 export async function loadReviewTasks(fetchPage, query) {
-  const noBlocks = query.has_block === "false" || query.has_block === false
-  const hasDue = query.due_within_days != null && query.due_within_days !== ""
-  if (hasDue && !/^\d+$/.test(String(query.due_within_days))) throw new Error("截止天数须为 0 或正整数")
-  if (!noBlocks && !hasDue) return fetchPage(query)
-  const params = { ...query, page: 1, page_size: 200 }
-  delete params.due_within_days
-  if (noBlocks) delete params.has_block
-  const first = await fetchPage(params)
-  const all = [...(first.items || [])]
-  const size = first.page_size || 200
-  for (let page = 2; all.length < first.total; page += 1) {
-    const next = await fetchPage({ ...params, page, page_size: size })
-    if (!next.items?.length) throw new Error("待办数据未完整加载，请重试")
-    all.push(...next.items)
-  }
-  const items = all.filter((row) => (!noBlocks || !(row.issue_counts?.BLOCK > 0))
-    && (!hasDue || (row.days_left != null && row.days_left <= Number(query.due_within_days))))
-  const pageSize = Math.min(200, Math.max(1, Number(query.page_size) || 20))
-  const page = Math.min(Math.max(1, Number(query.page) || 1), Math.max(1, Math.ceil(items.length / pageSize)))
-  return { ...first, items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, page_size: pageSize }
+  return fetchPage(reviewTaskQuery(query))
+}
+
+const QUERY_FIELD_NAME = { due_within_days: "截止天数", has_block: "阻断问题", stage_code: "阶段", batch_id: "批次", branch_id: "支部", min_issues: "问题数", todo: "任务范围" }
+
+// 后端参数校验失败（422）时指出是哪个筛选条件，其他错误原样显示
+export function reviewQueryErrorText(error) {
+  const fields = (error?.data?.errors || []).map((item) => item?.loc?.[item.loc.length - 1]).filter(Boolean)
+  if (error?.status !== 422 || !fields.length) return error?.message
+  const names = [...new Set(fields)].map((field) => QUERY_FIELD_NAME[field] || field).join("、")
+  return `${error.message || "参数校验失败"}：${names}的取值无效，请调整或清除筛选条件。`
 }
 
 export async function loadAllReviewIssues(fetchPage) {

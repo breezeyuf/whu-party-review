@@ -40,7 +40,7 @@ export default function BatchesPage() {
     <div>
       <PageHeader title="发展批次" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => setEdit({ ...EMPTY })}>新建批次</button>} />
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={rows} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={rows} empty="还没有发展批次" emptyHint="点击右上角“新建批次”开始配置。" columns={[
           { key: "name", title: "名称", render: (r) => <>{r.name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</> },
           { key: "year", title: "年度", render: (r) => `${r.year} ${TERM_NAME[r.term] || r.term || ""}` },
           { key: "span", title: "起止", render: (r) => <span className="text-xs">{fmtDate(r.start_date)} ~ {fmtDate(r.end_date)}</span> },

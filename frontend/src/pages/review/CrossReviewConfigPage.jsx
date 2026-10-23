@@ -22,8 +22,11 @@ export default function CrossReviewConfigPage() {
   const [usersError, setUsersError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
+    setLoading(true)
+    setError(null)
     Promise.all([listBatches({ page_size: 50 }), listOrgs({ flat: true })])
       .then(([b, o]) => {
         const bl = b.items || b || []
@@ -36,7 +39,7 @@ export default function CrossReviewConfigPage() {
       })
       .catch(setError)
       .finally(() => setLoading(false))
-  }, [])
+  }, [attempt])
 
   const colleges = orgs.filter((o) => o.org_type === "COLLEGE")
   const branches = orgs.filter((o) => o.org_type === "BRANCH" && (!collegeId || String(o.parent_id) === String(collegeId)))
@@ -105,8 +108,8 @@ export default function CrossReviewConfigPage() {
     }
   }
 
-  if (loading) return <Loading />
-  if (error) return <ErrorState error={error} />
+  if (loading) return <Loading label="互查配置" />
+  if (error) return <ErrorState error={error} onRetry={() => setAttempt((value) => value + 1)} />
 
   return (
     <div>

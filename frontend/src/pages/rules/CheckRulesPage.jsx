@@ -49,7 +49,7 @@ export default function CheckRulesPage() {
         ))}
       </div>
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={rows} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={rows} empty={cat === "FORMAT" ? "还没有形式规范规则" : "还没有内容规范规则"} columns={[
           {
             key: "name",
             title: "规则名称",

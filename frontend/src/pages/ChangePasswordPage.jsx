@@ -53,7 +53,7 @@ export default function ChangePasswordPage() {
           <span className="label-text text-xs">确认新密码</span>
           <input type="password" className="input input-bordered" value={again} onChange={(e) => setAgain(e.target.value)} required />
         </label>
-        {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
+        {error && <div role="alert" className="alert alert-error py-2 text-sm">{error}</div>}
         <button className="btn btn-primary w-full" disabled={busy} type="submit">保存并重新登录</button>
       </form>
     </div>

@@ -2,7 +2,7 @@ import { useState } from "react"
 import { ConfirmDialog } from "../common/Modal"
 import { useMeta } from "../../context/MetaContext"
 import { levelName } from "../../utils/format"
-import { passBlockReason, reportBlockReason, sameId } from "../../utils/review"
+import { PASS_RULE_TEXT, passBlockReason, reportBlockReason, sameId } from "../../utils/review"
 
 export default function ReviewDecisionPanel({ submission, issues = [], issuesReady = true, onPass, onReturn, onFile, onHandover }) {
   const meta = useMeta()
@@ -107,11 +107,11 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
           </button>
         )}
       </div>
-      {(can.review || can.file) && confirmed.some((issue) => issue.severity === "BLOCK") && <p className="text-xs text-warning">仍有已确认的阻断问题，请核实处理情况后作出最终审核决定。批量通过会拒绝此类提交包。</p>}
+      {(can.review || can.file) && confirmed.some((issue) => issue.severity === "BLOCK") && <p className="text-xs text-warning">仍有已确认的阻断问题，请核实处理情况后作出最终审核决定。{PASS_RULE_TEXT}</p>}
       {(can.review || can.file || can.handover) && passReason && <p className="text-xs text-warning">{passReason}</p>}
       {returning && can.review && returnReason && <p className="text-xs text-base-content/60">{returnReason}</p>}
       {!can.review && !can.file && !can.handover && <p className="text-xs text-base-content/50">当前角色在此状态下没有审核操作。</p>}
-      {error && <p className="text-xs text-error">{error}</p>}
+      {error && <p role="alert" className="text-xs text-error">{error}</p>}
       <ConfirmDialog
         open={!!pendingAction}
         title={{ pass: "确认通过审核？", file: "确认备案归档？", handover: "确认提交人工接管？" }[pendingAction] || "确认操作"}

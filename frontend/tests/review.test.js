@@ -1,49 +1,52 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { batchReviewResult, issueHighlights, issueLocation, loadAllReviewIssues, loadReviewTasks, passBlockReason, reportBlockReason, reviewHistoryLink } from "../src/utils/review.js"
+import { batchReviewResult, issueHighlights, issueLocation, loadAllReviewIssues, loadReviewTasks, passBlockReason, reportBlockReason, reviewHistoryLink, reviewQueryErrorText, reviewTaskQuery } from "../src/utils/review.js"
 
 const current = () => ({ ai_status: "DONE", latest_report: { id: 7, is_stale: false, handover_status: "NOT_REQUIRED" } })
 
-test("no-block and due filters inspect every server page before calculating totals and paging", async () => {
+// 以下 5 条原先断言“浏览器端全量拉取后补做筛选”；该行为已删除，改为断言新契约：
+// 参数原样交给后端、每次查询只请求一次、列表和总数取服务端结果
+test("no-block and due filters are passed to the server in a single request", async () => {
   const calls = []
-  const pages = [
-    [{ id: 1, issue_counts: { BLOCK: 1 }, days_left: 1 }, { id: 2, issue_counts: { BLOCK: 0 }, days_left: 8 }],
-    [{ id: 3, issue_counts: { BLOCK: 0 }, days_left: -2 }, { id: 4, issue_counts: { BLOCK: 0 }, days_left: 2 }],
-    [{ id: 5, issue_counts: { BLOCK: 0 }, days_left: null }],
-  ]
-  const result = await loadReviewTasks(async (params) => {
-    calls.push(params)
-    return { items: pages[params.page - 1], total: 5, page_size: 2, page: params.page }
-  }, { page: 2, page_size: 1, has_block: "false", due_within_days: "3", todo: "false", q: "李" })
-  assert.equal(result.total, 2)
-  assert.equal(result.page, 2)
-  assert.deepEqual(result.items.map((r) => r.id), [4])
-  assert.equal(calls.length, 3)
-  assert.ok(calls.every((params) => params.has_block == null && params.due_within_days == null && params.q === "李" && params.todo === "false"))
+  const server = { items: [{ id: 4, issue_counts: { BLOCK: 0 }, days_left: 2 }], total: 2, page: 2, page_size: 1 }
+  const result = await loadReviewTasks(async (params) => { calls.push(params); return server }, { page: 2, page_size: 1, has_block: "false", due_within_days: "3", todo: "false", q: "李" })
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0], { page: 2, page_size: 1, has_block: "false", due_within_days: "3", todo: "false", q: "李" })
+  assert.equal(result, server)
 })
 
-test("due=0 includes overdue and today, excluding unset deadlines", async () => {
-  const result = await loadReviewTasks(async () => ({ items: [{ days_left: -1 }, { days_left: 0 }, { days_left: 1 }, { days_left: null }], total: 4 }), { due_within_days: "0" })
+test("due=0 is sent as is and the server decides overdue, today and unset deadlines", async () => {
+  let seen
+  const server = { items: [{ days_left: -1 }, { days_left: 0 }], total: 2, page: 1, page_size: 20 }
+  const result = await loadReviewTasks(async (params) => { seen = params; return server }, { due_within_days: "0" })
+  assert.deepEqual(seen, { due_within_days: "0" })
   assert.deepEqual(result.items.map((r) => r.days_left), [-1, 0])
+  assert.equal(result.total, 2)
 })
 
-test("server-supported filtering and sorting preserve normal server pagination", async () => {
+test("server filtering, sorting and pagination results are returned unchanged", async () => {
   const query = { page: 3, has_block: "true", sort: "-issue_count" }
   let seen
   const expected = { items: [{ id: 8 }], total: 50, page: 3, page_size: 20 }
   const result = await loadReviewTasks(async (params) => { seen = params; return expected }, query)
-  assert.equal(seen, query)
+  assert.deepEqual(seen, query)
   assert.equal(result, expected)
 })
 
-test("invalid due values cannot silently produce unfiltered results", async () => {
+test("empty filters are not sent, and invalid due values are left for the server to reject", async () => {
+  assert.deepEqual(reviewTaskQuery({ q: "", status: null, has_block: "false", due_within_days: "", todo: "true", page: 1 }), { has_block: "false", todo: "true", page: 1 })
   for (const due of ["-1", "2.5", "abc"]) {
-    await assert.rejects(() => loadReviewTasks(() => { throw new Error("should not fetch") }, { due_within_days: due }), /截止天数/)
+    let seen
+    await loadReviewTasks(async (params) => { seen = params; return { items: [], total: 0 } }, { due_within_days: due })
+    assert.equal(seen.due_within_days, due)
   }
 })
 
-test("incomplete fallback fetches fail visibly instead of under-counting", async () => {
-  await assert.rejects(() => loadReviewTasks(async ({ page }) => ({ items: page === 1 ? [{ id: 1 }] : [], total: 3, page_size: 1 }), { has_block: "false" }), /未完整加载/)
+test("server validation errors reach the page unchanged and name the invalid filter", async () => {
+  const invalid = Object.assign(new Error("参数校验失败"), { status: 422, code: 42200, data: { errors: [{ loc: ["query", "due_within_days"], msg: "Input should be less than or equal to 3650" }] } })
+  await assert.rejects(() => loadReviewTasks(async () => { throw invalid }, { due_within_days: "9999" }), (error) => error === invalid)
+  assert.match(reviewQueryErrorText(invalid), /参数校验失败.*截止天数/)
+  assert.equal(reviewQueryErrorText(new Error("网络错误")), "网络错误")
 })
 
 test("issue loading supports the current unpaginated API and paginated deployments", async () => {

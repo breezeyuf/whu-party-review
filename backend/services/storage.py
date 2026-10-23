@@ -88,5 +88,19 @@ def read_bytes(rel: str) -> bytes:
     return abs_path(rel).read_bytes()
 
 
+def remove(rel: str | None) -> None:
+    """删除 storage 内的一个文件；路径校验同 abs_path，文件不存在时忽略。
+
+    用于导入失败时清理已写出的材料文件（数据库事务已回滚，文件不该留下）。
+    """
+    if not rel:
+        return
+    try:
+        abs_path(rel).unlink(missing_ok=True)
+    except (OSError, ValueError):
+        # 路径非法或删除失败都不应让主流程失败：文件属派生数据，最差只是残留
+        pass
+
+
 def exists(rel: str | None) -> bool:
     return bool(rel) and abs_path(rel).is_file()

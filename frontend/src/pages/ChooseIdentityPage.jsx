@@ -2,9 +2,7 @@ import { useState } from "react"
 import { Navigate, useNavigate } from "react-router-dom"
 import { ArrowRight, GraduationCap, ShieldCheck, ClipboardCheck } from "lucide-react"
 import { useAuth } from "../context/AuthContext"
-import { identityFor, loginDestination, roleKey } from "../utils/identity"
-import { roleName } from "../utils/format"
-import { FALLBACK_META } from "../utils/constants"
+import { identityFor, loginDestination, roleKey, roleLabel } from "../utils/identity"
 
 const icons = { student: GraduationCap, admin: ShieldCheck, reviewer: ClipboardCheck }
 
@@ -31,7 +29,7 @@ export default function ChooseIdentityPage() {
       const identity = identityFor(role)
       const Icon = icons[identity.kind]
       return <button key={roleKey(role)} type="button" className="identity-choice" disabled={!!busy} onClick={() => choose(role)}>
-        <Icon size={25} aria-hidden="true" /><span><strong>{roleName(FALLBACK_META, role.role)}</strong><small>{role.org_name || user?.org_name || "所属组织"}{role.org_name ? "" : role.org_id != null ? ` · 组织 ${role.org_id}` : ""}</small><span>{identity.description}</span></span>{busy === roleKey(role) ? <span className="loading loading-spinner loading-sm" /> : <ArrowRight size={19} aria-hidden="true" />}
+        <Icon size={25} aria-hidden="true" /><span><strong>{roleLabel(role.role)}</strong><small>{role.org_name || user?.org_name || "所属组织"}{role.org_name ? "" : role.org_id != null ? ` · 组织 ${role.org_id}` : ""}</small><span>{identity.description}</span></span>{busy === roleKey(role) ? <span className="loading loading-spinner loading-sm" /> : <ArrowRight size={19} aria-hidden="true" />}
       </button>
     })}</div>
     {!choices.length && <p className="alert">该账号暂无可用身份，请联系管理员开通权限。</p>}

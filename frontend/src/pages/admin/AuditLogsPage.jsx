@@ -15,11 +15,12 @@ const ACTION_NAME = {
   ARCHIVE_UPDATE: "更新档案",
   BATCH_CREATE: "新建批次",
   BATCH_DELETE: "删除批次",
-  BATCH_REVIEW: "批次审核",
+  BATCH_IMPORT: "批量导入材料",
+  BATCH_REVIEW: "批量审核通过",
   BATCH_UPDATE: "修改批次",
   CROSS_PAIRS: "配置交叉互查",
   EXPORT: "导出数据",
-  FILE: "下载文件",
+  FILE: "备案归档",
   HANDOVER: "材料移交",
   ISSUE_ADD: "手工添加问题",
   LOGIN: "登录",
@@ -32,6 +33,7 @@ const ACTION_NAME = {
   ORG_UPDATE: "修改组织",
   PARSE_CORRECT: "解析结果修正",
   REVIEW_PASS: "审核通过",
+  REVIEW_RETURN: "审核退回",
   SEED_DEMO: "初始化演示数据",
   SETTINGS_UPDATE: "修改系统配置",
   SUBMIT: "提交材料",
@@ -71,7 +73,7 @@ export default function AuditLogsPage() {
         { key: "date_to", label: "结束", placeholder: "YYYY-MM-DD" },
       ]} />
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={req.data?.items || []} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="没有符合条件的审计记录" emptyHint="可以调整账号、动作或日期范围后再查询。" columns={[
           { key: "time", title: "时间", render: (r) => <span className="mono text-xs">{fmtDateTime(r.created_at)}</span> },
           { key: "who", title: "操作人", render: (r) => <span className="text-xs">{r.username}<br /><span className="text-base-content/50">{roleName(meta, r.role)}</span></span> },
           { key: "act", title: "动作", render: (r) => (
@@ -81,7 +83,7 @@ export default function AuditLogsPage() {
           { key: "ip", title: "IP", render: (r) => <span className="mono text-xs">{r.ip}</span> },
           { key: "detail", title: "详情", render: (r) => <span className="line-clamp-2 text-xs">{typeof r.detail === "string" ? r.detail : JSON.stringify(r.detail || {})}</span> },
         ]} />
-        <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />
+        {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
       </div>
     </div>
   )

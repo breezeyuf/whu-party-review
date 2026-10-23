@@ -24,9 +24,9 @@ from models import (
 from schemas.common import ok
 from services.audit import log
 from services.extractions import correct_extractions
-from services.importer import assign_batch_items
+from services.importer import assign_batch_items, parse_assign_body, rebuild_job_result
 from services.materials import add_version, create_material_with_file, enqueue_job, file_response, text_diff
-from services.scope import can_review, ensure_archive_access, ensure_submission_access, scoped_archives
+from services.scope import can_review, ensure_archive_access, ensure_submission_access, scoped_archives, scoped_jobs
 from services.storage import save_tmp
 from services.timeline import merge_archive_nodes
 from ai.checks.completeness import expected_count, run_completeness
@@ -387,23 +387,68 @@ async def batch_upload(file: UploadFile = File(...), batch_id: str | None = Form
                        db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("BRANCH_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN"):
         raise forbidden()
+    # 表单参数先校验再读文件：非法请求不会在 storage/tmp 留下文件
+    stage = _stage_param(stage_code)
+    batch = _batch_param(batch_id)
     data = await file.read()
     cfg = get_setting(db, "upload", {"max_zip_mb": 500})
     if len(data) > int(cfg.get("max_zip_mb") or 500) * 1024 * 1024:
         from errors import too_large
         raise too_large("ZIP 超过上限")
     rel = save_tmp(data, file.filename or "batch.zip")
-    job = enqueue_job(db, "BATCH_UPLOAD", actor.id, "batch", int(batch_id) if batch_id else None,
-                      {"zip_path": rel, "batch_id": int(batch_id) if batch_id else None, "stage_code": int(stage_code) if stage_code else None})
+    job = enqueue_job(db, "BATCH_UPLOAD", actor.id, "batch", batch, {
+        "zip_path": rel, "batch_id": batch, "stage_code": stage,
+        # 记录上传人当时的激活身份，识别时据此计算数据范围
+        "actor_role": actor.role, "actor_org_id": actor.org_id,
+    })
     return ok({"job_id": job.id})
+
+
+def _stage_param(value: str | None) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        stage = int(value)
+    except (TypeError, ValueError):
+        raise unprocessable("阶段参数无效") from None
+    if stage < 1 or stage > 5:
+        raise unprocessable("阶段参数无效")
+    return stage
+
+
+def _batch_param(value: str | None) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        batch = int(value)
+    except (TypeError, ValueError):
+        raise unprocessable("批次参数无效") from None
+    if batch <= 0:
+        raise unprocessable("批次参数无效")
+    return batch
 
 
 @router.put("/materials/batch-upload/{job_id}/assign")
 def assign(job_id: int, body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("BRANCH_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN"):
         raise forbidden()
-    job = db.query(Job).filter(Job.id == job_id).first()
+    stage_code, assignments, skip_ids = parse_assign_body(body)
+    # 任务行锁：同一任务的并发确认串行执行，第二个请求读到的是已提交的导入结果
+    job = (
+        scoped_jobs(db, actor)
+        .filter(Job.id == job_id, Job.job_type == "BATCH_UPLOAD")
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
     if not job:
-        raise not_found()
-    result = assign_batch_items(db, job, actor, body.get("assignments") or [], body.get("skip_item_ids") or [])
+        # 不存在、不可见或类型不符一律 404，不区分原因，避免泄露其他人的任务
+        raise not_found("任务不存在")
+    if job.status != "SUCCEEDED":
+        raise conflict("文件归属识别尚未完成，请稍后再确认")
+    result = assign_batch_items(db, job, actor, stage_code, assignments, skip_ids)
+    # note 不落库：把本次确认产生的说明带进重建后的 job.result，刷新后仍能看到
+    notes = {row["item_id"]: row["note"] for row in result["items"] if row.get("note")}
+    job.result = rebuild_job_result(db, job, notes)
+    db.flush()
     return ok(result)

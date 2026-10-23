@@ -19,6 +19,10 @@ from services.notices import create_rectification_notice
 from services.timeline import lock_stage_nodes
 from utils import STATUS_BY_RETURN_LEVEL, now, stage_name
 
+# 通过前校验的唯一口径：有效（is_active）、severity=BLOCK 且 review_status 在此集合内的问题
+# 视为未处理。单份通过、批量通过、组织部备案都只调用 ensure_passable()，改口径只改这里。
+BLOCKING_REVIEW_STATUSES = ("PENDING",)
+
 
 def _latest_report(db: Session, sub: Submission) -> Optional[AiReport]:
     if sub.latest_report_id:
@@ -151,6 +155,29 @@ def _handover_ok(report: Optional[AiReport]) -> bool:
     return False
 
 
+def pending_block_count(db: Session, submission_id: int) -> int:
+    """有效、BLOCK、且审核状态仍在 BLOCKING_REVIEW_STATUSES 内的问题数。"""
+    return (
+        db.query(Issue)
+        .filter(
+            Issue.submission_id == submission_id,
+            Issue.is_active.is_(True),
+            Issue.severity == "BLOCK",
+            Issue.review_status.in_(BLOCKING_REVIEW_STATUSES),
+        )
+        .count()
+    )
+
+
+def ensure_passable(db: Session, sub: Submission, report: Optional[AiReport]) -> None:
+    """通过前校验：报告有效 → 无未处理阻断 → 人工接管已完成。失败抛 40901/40903/40904。"""
+    require_current_report(db, sub, report)
+    if pending_block_count(db, sub.id):
+        raise conflict("仍有未处理的阻断问题", code=40903)
+    if not _handover_ok(report):
+        raise conflict("待人工审核", code=40904)
+
+
 def review_package(db: Session, sub: Submission, actor, level: str, decision: str, comment=None, issue_ids=None, deadline=None, is_batch=False, report_id=None):
     from services.scope import can_review, current_level
 
@@ -169,19 +196,10 @@ def review_package(db: Session, sub: Submission, actor, level: str, decision: st
     if report_id is not None and (not report or report.id != report_id):
         raise conflict("审核报告已更新，请刷新工作区", code=40901)
     if decision == "pass":
-        require_current_report(db, sub, report)
+        # ORG 层级检查先于报告校验：组织部误调本接口时直接提示改用备案接口
         if level == "ORG":
             raise conflict("组织部通过请调用备案接口")
-        pending_block = (
-            db.query(Issue)
-            .filter(Issue.submission_id == sub.id, Issue.is_active.is_(True), Issue.severity == "BLOCK",
-                    Issue.review_status == "PENDING")
-            .count()
-        )
-        if pending_block:
-            raise conflict("仍有未处理的阻断问题", code=40903)
-        if not _handover_ok(report):
-            raise conflict("待人工审核", code=40904)
+        ensure_passable(db, sub, report)
         from_s = sub.status
         if sub.status == "BRANCH_REVIEW":
             from models import CrossReviewPair
@@ -250,14 +268,7 @@ def file_package(db: Session, sub: Submission, actor, comment=None):
     if actor.role != "ORG_ADMIN":
         raise forbidden()
     report = _latest_report(db, sub)
-    require_current_report(db, sub, report)
-    if db.query(Issue.id).filter(
-        Issue.submission_id == sub.id, Issue.is_active.is_(True),
-        Issue.severity == "BLOCK", Issue.review_status == "PENDING",
-    ).first():
-        raise conflict("仍有未处理的阻断问题", code=40903)
-    if not _handover_ok(report):
-        raise conflict("待人工审核", code=40904)
+    ensure_passable(db, sub, report)
     from_s = sub.status
     sub.status = "FILED"
     sub.filed_at = now()

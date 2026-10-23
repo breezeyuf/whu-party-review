@@ -103,7 +103,7 @@ export default function RectificationPage() {
       {!returned && <div className="alert mb-3 text-sm">{sub?.status === "DRAFT" ? <>当前为草稿，请完成自查后从<Link className="link" to={`/my/self-check/${subId}`}>自查页提交审核</Link>。</> : "材料已进入审核，当前可查看整改回复与复核结果。"}</div>}
       {jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
       {reportReq.error && <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} />}
-      {reportReq.loading && !reportReq.data && <Loading label="正在加载复核报告" />}
+      {reportReq.loading && !reportReq.data && <Loading label="复核报告" />}
       {reportReq.data?.recheck_summary && <div className="mb-4"><RecheckSummary summary={reportReq.data.recheck_summary} /></div>}
       <div className="grid gap-4 lg:grid-cols-5">
         <section className="lg:col-span-3">
@@ -119,7 +119,7 @@ export default function RectificationPage() {
             {!(noticeReq.data?.items || []).length && <p className="text-sm text-base-content/60">暂无整改通知。</p>}
             <ul className="space-y-2">{(noticeReq.data?.items || []).map((n) => <li key={n.id}><button type="button" className="btn btn-ghost btn-sm h-auto w-full justify-start py-2 text-left" onClick={() => openNotice(n.id)}><span><span className="block">{n.title}</span><span className="text-xs text-base-content/50">{n.item_count} 条 · {n.status}</span></span></button></li>)}</ul>
           </>}
-          {noticeLoading && <Loading label="正在加载通知" />}
+          {noticeLoading && <Loading label="通知" />}
           {noticeError && <div className="alert alert-error text-sm">{noticeError}</div>}
           <NoticePreview notice={notice} />
         </aside>

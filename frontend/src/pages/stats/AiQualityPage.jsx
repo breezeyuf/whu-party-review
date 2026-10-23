@@ -1,7 +1,7 @@
 import { useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
-import { BarChart } from "../../components/charts/BarChart"
-import { Loading, ErrorState } from "../../components/common/States"
+import { BarChart } from "../../components/charts/LazyCharts"
+import { Loading, ErrorState, EmptyState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
 import { aiQuality } from "../../api/stats"
 import { categoryName } from "../../utils/format"
@@ -50,7 +50,7 @@ export default function AiQualityPage() {
             </section>
           </div>
           <section className="surface-card mt-4 overflow-x-auto p-2">
-            <table className="table table-sm">
+            {!(d.by_rule || []).length ? <EmptyState title="所选范围内没有 AI 问题记录" /> : <table className="table table-sm">
               <thead><tr><th>规则</th><th>总数</th><th>确认</th><th>驳回</th><th>修改</th><th>准确度</th></tr></thead>
               <tbody>
                 {(d.by_rule || []).map((r) => (
@@ -64,7 +64,7 @@ export default function AiQualityPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table>}
           </section>
         </>
       )}

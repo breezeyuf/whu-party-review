@@ -35,3 +35,10 @@ backend/storage/
 # Node
 node_modules/
 dist/
+
+# 构建分析产物
+*.map
+
+# 临时 PostgreSQL 数据目录（run_db_tests.py / pg_run.py）
+_tmp/
+pgdata*/

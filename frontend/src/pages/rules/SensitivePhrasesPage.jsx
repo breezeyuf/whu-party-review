@@ -59,7 +59,7 @@ export default function SensitivePhrasesPage() {
         命中后一律标记“需人工研判”，系统不对政治立场下结论。
       </PageHeader>
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={rows} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={rows} empty="还没有敏感表述" columns={[
           { key: "phrase", title: "表述" },
           { key: "match", title: "匹配", render: (r) => <span className="text-xs text-base-content/70">{MATCH_TYPE[r.match_type] || r.match_type}</span> },
           { key: "risk", title: "风险", render: (r) => (
@@ -75,7 +75,7 @@ export default function SensitivePhrasesPage() {
             </>
           ) },
         ]} />
-        <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />
+        {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
       </div>
       <RuleFormModal open={!!edit} title="敏感表述" fields={[
         { key: "phrase", label: "表述或正则", wide: true },

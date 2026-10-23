@@ -188,7 +188,7 @@ export default function MaterialDetailPage() {
       <MaterialViewer materialId={m.id} versionId={vid} page={page} onPage={setPage} pageCount={selectedVersion?.page_count} highlights={highlights} activeId={activeIssueId || (sourceBox ? "source" : null)} refreshKey={refreshKey} />
     </>}
     {tab === "text" && <div className="surface-card p-4">
-      {parsed.loading || (parsed.data && String(parsed.data.version_id) !== String(vid)) ? <Loading label="读取解析文本" /> : parsed.error ? <ErrorState error={parsed.error} onRetry={parsed.reload} /> :
+      {parsed.loading || (parsed.data && String(parsed.data.version_id) !== String(vid)) ? <Loading label="解析文本" /> : parsed.error ? <ErrorState error={parsed.error} onRetry={parsed.reload} /> :
         <ParsedTextPanel parsed={parsed.data} editable={canCorrect && !historical && selectedVersion?.parse_status === "DONE"} onSave={async (body) => {
           const result = await putParsed(id, body)
           toast.success(body.recheck ? "已保存校正，正在重新校验" : "已保存校正")
@@ -220,7 +220,7 @@ export default function MaterialDetailPage() {
       </div>
       <div>{diffError && <p role="alert" className="mb-2 text-xs text-error">{diffError}</p>}<VersionDiff diff={diff} /></div>
     </div>}
-    {tab === "issues" && (issues.loading ? <Loading label="读取材料问题" /> : issues.error ? <ErrorState error={issues.error} onRetry={issues.reload} /> : <IssueList issues={issues.data?.items || []} activeId={activeIssueId} onSelect={selectIssue} />)}
+    {tab === "issues" && (issues.loading ? <Loading label="材料问题" /> : issues.error ? <ErrorState error={issues.error} onRetry={issues.reload} /> : <IssueList issues={issues.data?.items || []} activeId={activeIssueId} onSelect={selectIssue} />)}
     {m.submission_id && reviewer && <Link className="btn btn-ghost btn-sm mt-4" to={`/review/submissions/${m.submission_id}`}>打开审核工作区</Link>}
   </div>
 }

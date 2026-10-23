@@ -1,18 +1,22 @@
-import { useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import StageProgress from "../../components/archive/StageProgress"
 import TimelineView from "../../components/archive/TimelineView"
-import NodeCorrectionModal from "../../components/archive/NodeCorrectionModal"
 import ReviewTrail from "../../components/review/ReviewTrail"
 import { DemoBadge, StatusBadge } from "../../components/common/Badges"
 import { Loading, ErrorState } from "../../components/common/States"
+import { ModalLoading } from "../../components/common/Modal"
+import { lazyWithRetry, whenIdle } from "../../utils/lazyLoad"
 import { useRequest } from "../../hooks/useRequest"
 import { correctNode, getArchive, getHistory, getTimeline, updateArchive } from "../../api/archives"
 import { fmtDate } from "../../utils/format"
 import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
 import { canManageArchive } from "../../utils/archiveWorkflow"
+
+// 节点校正弹窗只在校正时使用，不进页面首屏
+const NodeCorrectionModal = lazyWithRetry(() => import("../../components/archive/NodeCorrectionModal"))
 
 export default function ArchiveDetailPage() {
   const { id } = useParams()
@@ -27,6 +31,7 @@ export default function ArchiveDetailPage() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
   const editable = canManageArchive(activeRole)
+  useEffect(() => (editable ? whenIdle(() => NodeCorrectionModal.preload().catch(() => {}), 0) : undefined), [editable])
 
   const save = async () => {
     if (saving) return
@@ -44,7 +49,7 @@ export default function ArchiveDetailPage() {
     }
   }
 
-  if (arch.loading && !arch.data) return <Loading />
+  if (arch.loading && !arch.data) return <Loading label="发展档案" />
   if (arch.error) return <ErrorState error={arch.error} onRetry={arch.reload} />
   const a = arch.data
   if (!a) return null
@@ -104,12 +109,12 @@ export default function ArchiveDetailPage() {
       <h2 className="mb-2 text-sm font-medium">审核与整改历史</h2>
       {hist.error ? <ErrorState error={hist.error} onRetry={() => hist.reload().catch(() => {})} /> : hist.loading && !hist.data ? <Loading /> : <ReviewTrail records={Array.isArray(hist.data) ? hist.data : []} />}
       {node && (
-        <NodeCorrectionModal
+        <Suspense fallback={<ModalLoading />}><NodeCorrectionModal
           key={node.code}
           node={node}
           onClose={() => setNode(null)}
           onSave={(body) => correctNode(id, node.code, body).then(() => { toast.success("已校正，请重新校验受影响的报告"); time.reload().catch(() => {}); arch.reload().catch(() => {}) })}
-        />
+        /></Suspense>
       )}
     </div>
   )

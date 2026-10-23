@@ -68,31 +68,36 @@ def create_material_with_file(
         raise conflict("提交包审核中，不可上传材料")
     ext, mime = _validate_upload(db, filename, data)
     rel, sha, size = store.save_bytes(data, archive.id, ext)
-    stage = stage_code or submission.stage_code
-    mt = db.query(MaterialType).filter(MaterialType.id == material_type_id).first() if material_type_id else None
-    material = Material(
-        archive_id=archive.id, submission_id=submission.id, stage_code=stage,
-        title=title or Path(filename).stem,
-        declared_type_id=mt.id if mt else None,
-        type_id=mt.id if mt else None,
-        type_source="DECLARED" if mt else None,
-        type_confidence=1.0 if mt else None,
-        type_status="AUTO" if mt else "PENDING",
-        version_count=1, status="ACTIVE", uploaded_by=actor.id,
-        created_at=now(), updated_at=now(),
-    )
-    db.add(material)
-    db.flush()
-    ver = MaterialVersion(
-        material_id=material.id, version_no=1, original_filename=filename, stored_path=rel,
-        file_ext=ext, mime_type=mime, file_size=size, sha256=sha, change_note=change_note,
-        parse_status="PENDING", uploaded_by=actor.id, uploaded_at=now(),
-    )
-    db.add(ver)
-    db.flush()
-    material.current_version_id = ver.id
-    job = enqueue_job(db, "PARSE", actor.id, "material_version", ver.id, {"version_id": ver.id})
-    db.flush()
+    try:
+        stage = stage_code or submission.stage_code
+        mt = db.query(MaterialType).filter(MaterialType.id == material_type_id).first() if material_type_id else None
+        material = Material(
+            archive_id=archive.id, submission_id=submission.id, stage_code=stage,
+            title=title or Path(filename).stem,
+            declared_type_id=mt.id if mt else None,
+            type_id=mt.id if mt else None,
+            type_source="DECLARED" if mt else None,
+            type_confidence=1.0 if mt else None,
+            type_status="AUTO" if mt else "PENDING",
+            version_count=1, status="ACTIVE", uploaded_by=actor.id,
+            created_at=now(), updated_at=now(),
+        )
+        db.add(material)
+        db.flush()
+        ver = MaterialVersion(
+            material_id=material.id, version_no=1, original_filename=filename, stored_path=rel,
+            file_ext=ext, mime_type=mime, file_size=size, sha256=sha, change_note=change_note,
+            parse_status="PENDING", uploaded_by=actor.id, uploaded_at=now(),
+        )
+        db.add(ver)
+        db.flush()
+        material.current_version_id = ver.id
+        job = enqueue_job(db, "PARSE", actor.id, "material_version", ver.id, {"version_id": ver.id})
+        db.flush()
+    except Exception:
+        # 文件已落盘但数据库写入失败：删掉刚写出的文件再抛出，避免留下孤儿文件
+        store.remove(rel)
+        raise
     return material, ver, job
 
 
