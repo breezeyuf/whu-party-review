@@ -1,18 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import MaterialViewer from "../../components/material/MaterialViewer"
 import IssueList from "../../components/review/IssueList"
 import IssueActions from "../../components/review/IssueActions"
-import AddIssueModal from "../../components/review/AddIssueModal"
 import ReportSummary from "../../components/review/ReportSummary"
 import CompletenessTable from "../../components/review/CompletenessTable"
 import ReviewDecisionPanel from "../../components/review/ReviewDecisionPanel"
 import ReviewTrail from "../../components/review/ReviewTrail"
 import TimelineView from "../../components/archive/TimelineView"
-import NodeCorrectionModal from "../../components/archive/NodeCorrectionModal"
 import RecheckSummary from "../../components/review/RecheckSummary"
-import ReviewJobStatus from "../../components/review/ReviewJobStatus"
 import { DemoBadge, StatusBadge } from "../../components/common/Badges"
 import { Loading, ErrorState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
@@ -24,6 +21,14 @@ import { listVersions } from "../../api/materials"
 import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
 import { issueHighlights, issueLocation, loadAllReviewIssues, reportBlockReason, sameId } from "../../utils/review"
+import { ModalLoading } from "../../components/common/Modal"
+import { lazyWithRetry, whenIdle } from "../../utils/lazyLoad"
+
+// 只在打开时才用到的弹窗不进页面首屏；有权使用时在页面空闲时提前下载，打开时不再等待
+const AddIssueModal = lazyWithRetry(() => import("../../components/review/AddIssueModal"))
+const NodeCorrectionModal = lazyWithRetry(() => import("../../components/archive/NodeCorrectionModal"))
+// AI 检查进行中或失败时才显示任务进度
+const ReviewJobStatus = lazyWithRetry(() => import("../../components/review/ReviewJobStatus"))
 
 const TABS = [
   ["issues", "问题清单"],
@@ -69,6 +74,11 @@ export default function ReviewWorkspacePage() {
     setAdding(false); setNewIssueLocation(null); setCorrecting(null); setTab("issues")
     return () => { locateSequence.current += 1 }
   }, [id, roleKey])
+
+  const canAddIssue = !!sub?.can?.add_issue
+  const canEditTimeline = !!sub?.can?.edit_timeline
+  useEffect(() => (canAddIssue ? whenIdle(() => AddIssueModal.preload().catch(() => {}), 0) : undefined), [canAddIssue])
+  useEffect(() => (canEditTimeline ? whenIdle(() => NodeCorrectionModal.preload().catch(() => {}), 0) : undefined), [canEditTimeline])
 
   const materials = sub?.materials || []
   const issues = issueReq.data?.items || []
@@ -156,7 +166,7 @@ export default function ReviewWorkspacePage() {
       >
         {sub.archive?.student_no} · {sub.archive?.branch_name} · 第 {sub.round_no} 轮
       </PageHeader>
-      {trackedJobId && <div className="mb-3"><ReviewJobStatus jobId={trackedJobId} onDone={refreshAll} onRetry={refreshAll} /></div>}
+      {trackedJobId && <div className="mb-3"><Suspense fallback={<p className="text-xs text-base-content/60" role="status">正在加载任务状态…</p>}><ReviewJobStatus jobId={trackedJobId} onDone={refreshAll} onRetry={refreshAll} /></Suspense></div>}
       {reportBlockReason(sub) && <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-warning" role="status"><p>{reportBlockReason(sub)}</p>{needsAiCheck && <button type="button" className="btn btn-outline btn-sm" disabled={aiBusy} onClick={startAiCheck}>{aiBusy ? "发起中…" : "开始自动核对"}</button>}</div>}
       {noticeId && <div className="surface-card mb-3 p-3 text-sm">已生成并发送整改通知。<Link className="link ml-2" to={`/notices?notice=${noticeId}`}>查看整改通知</Link></div>}
       <nav className="review-stage-links" aria-label="审核步骤"><a href="#review-materials"><span>1</span>核对材料</a><a href="#review-issues"><span>2</span>处理问题</a><a href="#review-decision"><span>3</span>填写结论</a></nav>
@@ -194,7 +204,7 @@ export default function ReviewWorkspacePage() {
           </div>
           <div className="review-issues-pane">
           {tab === "issues" && issueReq.error && <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} />}
-          {tab === "issues" && issueReq.loading && !issueReq.data && <Loading label="加载完整问题清单" />}
+          {tab === "issues" && issueReq.loading && !issueReq.data && <Loading label="完整问题清单" />}
           {tab === "issues" && issueReq.data && (
             <IssueList
               issues={issueReq.data?.items || []}
@@ -204,7 +214,7 @@ export default function ReviewWorkspacePage() {
             />
           )}
           {tab === "timeline" && timeReq.error && <ErrorState error={timeReq.error} onRetry={() => timeReq.reload().catch(() => {})} />}
-          {tab === "timeline" && timeReq.loading && <Loading label="加载时间轴" />}
+          {tab === "timeline" && timeReq.loading && <Loading label="时间轴" />}
           {tab === "timeline" && !timeReq.loading && !timeReq.error && (
             <TimelineView
               timeline={timeReq.data}
@@ -212,14 +222,14 @@ export default function ReviewWorkspacePage() {
               onLocate={locateTimeline}
             />
           )}
-          {tab === "complete" && (compReq.error ? <ErrorState error={compReq.error} onRetry={() => compReq.reload().catch(() => {})} /> : compReq.loading ? <Loading label="核对材料完整性" /> : <div className="surface-card p-3"><CompletenessTable data={compReq.data} /></div>)}
+          {tab === "complete" && (compReq.error ? <ErrorState error={compReq.error} onRetry={() => compReq.reload().catch(() => {})} /> : compReq.loading ? <Loading label="材料完整性" /> : <div className="surface-card p-3"><CompletenessTable data={compReq.data} /></div>)}
           {tab === "report" && (
             <div className="space-y-3">
-              {reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : reportReq.loading ? <Loading label="加载审核报告" /> : <div className="surface-card p-3"><ReportSummary report={reportReq.data} /></div>}
+              {reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : reportReq.loading ? <Loading label="审核报告" /> : <div className="surface-card p-3"><ReportSummary report={reportReq.data} /></div>}
               <RecheckSummary summary={reportReq.data?.recheck_summary} />
             </div>
           )}
-          {tab === "trail" && (trailReq.error ? <ErrorState error={trailReq.error} onRetry={() => trailReq.reload().catch(() => {})} /> : trailReq.loading ? <Loading label="加载审核记录" /> : <ReviewTrail records={trailReq.data || []} />)}
+          {tab === "trail" && (trailReq.error ? <ErrorState error={trailReq.error} onRetry={() => trailReq.reload().catch(() => {})} /> : trailReq.loading ? <Loading label="审核记录" /> : <ReviewTrail records={trailReq.data || []} />)}
         </div></section>
       <section id="review-decision" className="review-decision">
         <ReviewDecisionPanel
@@ -234,19 +244,19 @@ export default function ReviewWorkspacePage() {
         />
       </section>
       </div></div>
-      {adding && <AddIssueModal
+      {adding && <Suspense fallback={<ModalLoading />}><AddIssueModal
         open={adding}
         materials={materials}
         initialLocation={newIssueLocation}
         onClose={() => { setAdding(false); setNewIssueLocation(null) }}
         onCreate={async (body) => { await addIssue(id, body); toast.success("已新增人工问题并确认"); await refreshAll() }}
-      />}
+      /></Suspense>}
       {correcting && archiveId && (
-        <NodeCorrectionModal
+        <Suspense fallback={<ModalLoading />}><NodeCorrectionModal
           node={correcting}
           onClose={() => setCorrecting(null)}
           onSave={async (body) => { await correctNode(archiveId, correcting.code, body); await refreshAll(); toast.success("节点已校正，请重新运行 AI 审核更新报告") }}
-        />
+        /></Suspense>
       )}
     </div>
   )

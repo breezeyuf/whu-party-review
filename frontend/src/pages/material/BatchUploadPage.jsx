@@ -9,6 +9,8 @@ import { listArchives } from "../../api/archives"
 import { useRequest } from "../../hooks/useRequest"
 import { useMeta } from "../../context/MetaContext"
 import { useToast } from "../../context/ToastContext"
+import { ErrorState } from "../../components/common/States"
+import { stageShort } from "../../utils/format"
 import { batchAssignmentBody, batchDraft, JOB_TERMINAL, mergeBatchItems } from "../../utils/materialWorkflow"
 
 const STATUS = { MATCHED: "已匹配，待确认导入", UNMATCHED: "待指定归属", IMPORTED: "已导入", SKIPPED: "已跳过", FAILED: "导入失败" }
@@ -21,11 +23,15 @@ export default function BatchUploadPage() {
   const [batchId, setBatchId] = useState("")
   const [stage, setStage] = useState("")
   const [jobId, setJobId] = useState(null)
+  // 上传时选择的阶段（写入任务参数）与确认区的导入阶段；后者默认取前者
+  const [uploadStage, setUploadStage] = useState("")
+  const [importStage, setImportStage] = useState("")
   const [settledItems, setSettledItems] = useState(null)
   const [assigns, setAssigns] = useState({})
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState("")
+  const [lastResult, setLastResult] = useState(null)
   const [search, setSearch] = useState("")
   const [query, setQuery] = useState("")
   const archives = useRequest(() => listArchives({ batch_id: batchId || undefined, q: query || undefined, page_size: 50 }), [batchId, query])
@@ -34,7 +40,7 @@ export default function BatchUploadPage() {
   const items = settledItems ?? currentJob?.result?.items ?? []
   const ready = currentJob && JOB_TERMINAL.has(currentJob.status)
   const locked = uploading || saving || (jobId && !ready)
-  const body = batchAssignmentBody(items, assigns)
+  const body = batchAssignmentBody(items, assigns, importStage)
   const imported = items.filter((item) => item.status === "IMPORTED").length
   const failed = items.filter((item) => item.status === "FAILED").length
   const pending = items.filter((item) => !["IMPORTED", "SKIPPED"].includes(item.status)).length
@@ -47,6 +53,9 @@ export default function BatchUploadPage() {
       const res = await batchUpload(file, { batch_id: batchId || undefined, stage_code: stage || undefined }, setProgress)
       setSettledItems(null)
       setAssigns({})
+      setLastResult(null)
+      setUploadStage(stage)
+      setImportStage(stage)
       setJobId(res.job_id)
       toast.info("ZIP 已上传，正在识别文件归属")
     } finally { setUploading(false) }
@@ -65,8 +74,10 @@ export default function BatchUploadPage() {
         for (const itemId of body.skip_item_ids) delete next[itemId]
         return next
       })
-      const summary = `已导入 ${result.imported || 0} 个，跳过 ${result.skipped || 0} 个，失败 ${result.failed || 0} 个`
-      if (result.failed) toast.error(summary)
+      const counts = { imported: result.imported || 0, already: result.already_imported || 0, skipped: result.skipped || 0, failed: result.failed || 0 }
+      setLastResult(counts)
+      const summary = `本次导入 ${counts.imported} 个，此前已入库 ${counts.already} 个，跳过 ${counts.skipped} 个，失败 ${counts.failed} 个`
+      if (counts.failed) toast.error(summary)
       else toast.success(summary)
     } catch (error) { setSaveError(error.message || "确认导入失败，请重试") }
     finally { setSaving(false) }
@@ -84,7 +95,7 @@ export default function BatchUploadPage() {
         {(meta.stages || []).map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
       </select>
     </div>
-    {batches.error && <p className="mb-2 text-xs text-error">批次加载失败：{batches.error.message}</p>}
+    {batches.error && <div className="mb-3"><ErrorState title="批次加载失败" error={batches.error} onRetry={batches.reload} /></div>}
     <FileUploader accept=".zip" maxMb={500} label="上传 ZIP" disabled={!!locked} onFile={upload} />
     {jobId && <div className="surface-card mt-4 p-3 text-sm" role="status" aria-live="polite">
       <div className="mb-2">文件归属识别 · {JOB_STATUS[job?.status] || "获取任务状态中"}</div>
@@ -96,12 +107,13 @@ export default function BatchUploadPage() {
     {items.length > 0 && <div className="surface-card mt-4 overflow-x-auto">
       <div className="space-y-2 p-3 text-xs">
         <p>共 {items.length} 个文件 · 已导入 {imported} 个 · 待处理 {pending} 个 · 失败 {failed} 个</p>
-        <p className="text-base-content/60">请核对每个文件的归属与类型；匹配成功的文件也需要点击「确认导入」。导入使用所选档案的当前发展阶段。</p>
+        {lastResult && <p role="status" className="font-medium">上次确认：本次导入 {lastResult.imported} 个 · 此前已入库 {lastResult.already} 个 · 跳过 {lastResult.skipped} 个 · 失败 {lastResult.failed} 个</p>}
+        <p className="text-base-content/60">请核对每个文件的归属与类型；匹配成功的文件也需要点击「确认导入」。文件导入到确认区选择的阶段，未选择时导入各档案的当前阶段；导入阶段不能晚于档案当前阶段，对应提交包须处于草稿或退回状态。已入库或内容相同的文件不会重复入库，确认失败后可以直接重试。</p>
         <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); setQuery(search.trim()) }}>
           <input aria-label="搜索归属档案" className="input input-bordered input-sm" placeholder="输入姓名或学号查找档案" value={search} onChange={(e) => setSearch(e.target.value)} />
           <button type="submit" className="btn btn-outline btn-sm" disabled={archives.loading}>查找归属档案</button>
         </form>
-        {archives.error && <p className="text-error">档案查询失败：{archives.error.message}</p>}
+        {archives.error && <ErrorState title="档案查询失败" error={archives.error} onRetry={archives.reload} />}
         {query && !archives.loading && !archives.error && !archives.data?.items?.length && <p>未找到匹配档案，请更换姓名或学号。</p>}
       </div>
       <table className="table table-sm">
@@ -128,15 +140,27 @@ export default function BatchUploadPage() {
               </select>}
             </td>
             <td><input aria-label={`跳过 ${item.entry_path}`} type="checkbox" className="checkbox checkbox-xs" disabled={saving || done} checked={draft.skip || item.status === "SKIPPED"} onChange={(e) => updateDraft(item.item_id, { skip: e.target.checked })} /></td>
-            <td className={`text-xs ${item.status === "FAILED" ? "text-error" : ""}`}>{STATUS[item.status] || item.status}{item.error ? ` · ${item.error}` : ""}</td>
+            <td className={`text-xs ${item.status === "FAILED" ? "text-error" : ""}`}>
+              {STATUS[item.status] || item.status}
+              {item.status === "IMPORTED" && item.stage_code ? `（${stageShort(meta, item.stage_code)}）` : ""}
+              {item.note ? ` · ${item.note}` : item.already_imported ? " · 此前已入库" : ""}
+              {item.error ? ` · ${item.error}` : ""}
+            </td>
           </tr>
         })}</tbody>
       </table>
-      {ready && pending > 0 && <div className="space-y-2 p-3">
+      {ready && pending > 0 && <div className="flex flex-wrap items-end gap-3 p-3">
+        <label className="form-control">
+          <span className="label-text mb-1 text-xs">导入阶段</span>
+          <select aria-label="导入阶段" className="select select-bordered select-sm" disabled={saving} value={importStage} onChange={(e) => setImportStage(e.target.value)}>
+            {!uploadStage && <option value="">档案当前阶段</option>}
+            {(meta.stages || []).map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
+          </select>
+        </label>
         <button type="button" className="btn btn-primary btn-sm" disabled={saving || (!body.assignments.length && !body.skip_item_ids.length)} onClick={saveAssign}>
           {saving ? "正在导入…" : `确认导入 ${body.assignments.length} 个文件${body.skip_item_ids.length ? `，跳过 ${body.skip_item_ids.length} 个` : ""}`}
         </button>
-        {pending > body.assignments.length + body.skip_item_ids.length && <p className="text-xs text-warning">未指定归属的文件会保留，待选择档案后再导入。</p>}
+        {pending > body.assignments.length + body.skip_item_ids.length && <p className="w-full text-xs text-warning">未指定归属的文件会保留，待选择档案后再导入。</p>}
       </div>}
       {saveError && <p role="alert" className="p-3 text-xs text-error">{saveError}</p>}
     </div>}

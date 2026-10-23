@@ -28,6 +28,13 @@ import AppLayout from "../src/components/layout/AppLayout"
 import FilterBar from "../src/components/common/FilterBar"
 import ReviewTasksPage from "../src/pages/review/ReviewTasksPage"
 import CrossReviewConfigPage from "../src/pages/review/CrossReviewConfigPage"
+import AuditLogsPage from "../src/pages/admin/AuditLogsPage"
+import JobsPage from "../src/pages/review/JobsPage"
+import RouteError from "../src/components/common/RouteError"
+import { lazyWithRetry } from "../src/utils/lazyLoad"
+import { pages as shellPages } from "../src/components/layout/shellModule"
+import { shellPageNames } from "../src/components/layout/lazyShell"
+import "../src/routes"
 
 const wait = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms))
 const flush = () => act(async () => { await wait(); await wait() })
@@ -87,7 +94,7 @@ function defaultFixture(config) {
   throw new Error(`测试缺少接口样例：${config.method} ${url}`)
 }
 
-async function mount(element, { path = "/", pattern = path.split("?")[0], roleCode = "STUDENT", handler } = {}) {
+async function mount(element, { path = "/", pattern = path.split("?")[0], roleCode = "STUDENT", handler, routes } = {}) {
   if (root) await act(async () => root.unmount())
   router?.dispose()
   document.getElementById("root").innerHTML = ""
@@ -102,7 +109,7 @@ async function mount(element, { path = "/", pattern = path.split("?")[0], roleCo
     if (data === undefined) data = defaultFixture(config)
     return { config, status: 200, statusText: "OK", headers: { "x-page-count": "3", "x-page-width": "595", "x-page-height": "842" }, data: config.responseType === "blob" ? data : { code: 0, message: "ok", data } }
   }
-  router = createMemoryRouter([{ path: pattern, element }], { initialEntries: [path] })
+  router = createMemoryRouter(routes || [{ path: pattern, element }], { initialEntries: [path] })
   root = createRoot(document.getElementById("root"))
   await act(async () => root.render(<ToastProvider><AuthProvider><RouterProvider router={router} /></AuthProvider></ToastProvider>))
   await flush()
@@ -546,6 +553,166 @@ export async function runUiScenarios() {
     assert.equal(button("删除记录"), undefined)
     assert.equal(requests.some((request) => request.url === "/rules/time-nodes"), false)
     assert.equal(document.querySelector("textarea").readOnly, true)
+  })
+
+  // ---- 本轮新增：审核待办改用后端筛选、统一的加载/失败/空状态、懒加载失败、ZIP 导入阶段 ----
+  const listRequests = () => requests.filter((request) => request.url === "/submissions")
+  const field = (label) => [...document.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === label)?.querySelector("select, input")
+
+  await test("待办每次筛选只发一个列表请求，无阻断与截止参数原样交给后端", async () => {
+    // 450 条结果：原先的浏览器端补做筛选需要按每页 200 条拉取 3 次
+    const many = (config) => config.url === "/submissions" ? { items: [{ id: 101, student_name: "测试学生", stage_code: 1, status: "BRANCH_REVIEW", issue_counts: {} }], total: 450, page: 1, page_size: 20 } : undefined
+    await mount(<ReviewTasksPage />, { path: "/review/tasks?due_within_days=7", roleCode: "BRANCH_REVIEWER", handler: many })
+    const before = listRequests().length
+    await input(field("阻断问题"), "false")
+    const sent = listRequests().slice(before)
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].params.has_block, "false")
+    assert.equal(sent[0].params.due_within_days, "7")
+    assert.equal(sent[0].params.todo, "true")
+    assert.equal(sent[0].params.page_size, 20)
+    assert.match(text(), /共 450 份提交材料/)
+  })
+
+  await test("首页“七日内到期”进入时截止筛选可见、可清除，筛选项含“仅看无阻断”", async () => {
+    await mount(<ReviewTasksPage />, { path: "/review/tasks?due_within_days=7", roleCode: "BRANCH_REVIEWER" })
+    assert.equal(document.querySelector("details").open, true)
+    assert.equal(field("截止").value, "7")
+    assert.deepEqual([...field("截止").options].map((option) => option.text), ["全部", "今天到期或已逾期", "3 天内", "7 天内", "14 天内"])
+    assert.ok([...field("阻断问题").options].some((option) => option.value === "false" && option.text === "仅看无阻断"))
+    await input(field("阻断问题"), "false")
+    assert.equal(listRequests().at(-1).params.has_block, "false")
+    await click(button("重置"))
+    const last = listRequests().at(-1).params
+    assert.equal(last.due_within_days, undefined)
+    assert.equal(last.has_block, undefined)
+  })
+
+  await test("待办加载失败只显示错误与重试，不显示空状态，重试后恢复数据", async () => {
+    let failing = true
+    await mount(<ReviewTasksPage />, { path: "/review/tasks", roleCode: "BRANCH_REVIEWER", handler: (config) => { if (config.url === "/submissions" && failing) throw new Error("待办服务暂不可用") } })
+    assert.match(text(), /待办服务暂不可用/)
+    assert.equal(document.querySelectorAll('[role="alert"]').length, 1)
+    assert.doesNotMatch(text(), /当前层级没有待办|共 0 份/)
+    failing = false
+    await click(button("重试"))
+    assert.match(text(), /测试学生/)
+    assert.doesNotMatch(text(), /待办服务暂不可用/)
+  })
+
+  await test("待办参数被后端拒绝时指出无效的筛选条件", async () => {
+    await mount(<ReviewTasksPage />, { path: "/review/tasks?due_within_days=9999", roleCode: "BRANCH_REVIEWER", handler: (config) => {
+      if (config.url === "/submissions") throw Object.assign(new Error("Request failed with status code 422"), { config, response: { status: 422, headers: {}, data: { code: 42200, message: "参数校验失败", data: { errors: [{ loc: ["query", "due_within_days"], msg: "Input should be less than or equal to 3650" }] } } } })
+    } })
+    assert.match(text(), /参数校验失败：截止天数的取值无效/)
+    assert.equal(field("截止").value, "9999")
+    assert.ok(button("重试"))
+  })
+
+  await test("待办为空时按是否筛选显示对应提示，可一键清除筛选", async () => {
+    const none = (config) => config.url === "/submissions" ? { items: [], total: 0, page: 1, page_size: 20 } : undefined
+    await mount(<ReviewTasksPage />, { path: "/review/tasks", roleCode: "BRANCH_REVIEWER", handler: none })
+    assert.match(text(), /当前层级没有待办/)
+    await mount(<ReviewTasksPage />, { path: "/review/tasks?has_block=false", roleCode: "BRANCH_REVIEWER", handler: none })
+    assert.match(text(), /没有符合筛选条件的提交包/)
+    await click(button("清除筛选条件"))
+    assert.equal(listRequests().at(-1).params.has_block, undefined)
+  })
+
+  await test("批量通过按统一口径提示，结果逐项显示后端原因", async () => {
+    await mount(<ReviewTasksPage />, { path: "/review/tasks", roleCode: "BRANCH_REVIEWER", handler: (config) => {
+      if (config.url === "/submissions/batch-review") return { passed: [], failed: [{ submission_id: 101, code: 40903, reason: "仍有未处理的阻断问题" }] }
+    } })
+    await click(button("批量处理"))
+    assert.match(text(), /已确认、修改或驳回的阻断问题不拦截，单份与批量一致/)
+    await click(document.querySelector('input[aria-label="选择行"]'))
+    await click(button("批量通过"))
+    assert.match(text(), /按单份通过的同一套规则/)
+    await click(button("确认批量通过"))
+    const body = JSON.parse(requests.find((request) => request.url === "/submissions/batch-review").data)
+    assert.deepEqual(body.submission_ids, [101])
+    assert.match(text(), /未通过 1 份/)
+    assert.match(text(), /提交包 #101：仍有未处理的阻断问题/)
+  })
+
+  await test("审核面板的通过规则说明与批量一致，不再提示批量会拒绝", async () => {
+    const submission = { ...baseSubmission, status: "BRANCH_REVIEW", level: "BRANCH", can: { review: true } }
+    await mount(<ReviewDecisionPanel submission={submission} issues={[{ id: 51, severity: "BLOCK", is_active: true, review_status: "CONFIRMED", report_id: 201 }]} />, { roleCode: "BRANCH_REVIEWER" })
+    assert.equal(button("通过")?.disabled, false)
+    assert.match(text(), /已确认、修改或驳回的阻断问题不拦截，单份与批量一致/)
+    assert.doesNotMatch(text(), /批量通过会拒绝/)
+  })
+
+  await test("审计日志加载失败可重试，ZIP 导入动作显示中文名", async () => {
+    let failing = true
+    await mount(<AuditLogsPage />, { path: "/admin/audit-logs", roleCode: "ORG_ADMIN", handler: (config) => {
+      if (config.url !== "/audit-logs") return undefined
+      if (failing) throw new Error("审计服务暂不可用")
+      return { items: [{ id: 1, created_at: "2026-10-23T10:00:00+08:00", username: "reviewer", role: "BRANCH_REVIEWER", action: "BATCH_IMPORT", object_type: "material", object_id: 90, detail: { job_id: 501 } }], total: 1, page: 1, page_size: 20 }
+    } })
+    assert.match(text(), /审计服务暂不可用/)
+    assert.doesNotMatch(text(), /没有符合条件的审计记录/)
+    failing = false
+    await click(button("重试"))
+    assert.match(text(), /批量导入材料/)
+  })
+
+  await test("任务明细加载失败在明细区提示，重试后显示任务进度", async () => {
+    let attempts = 0
+    await mount(<JobsPage />, { path: "/tasks/jobs", roleCode: "BRANCH_REVIEWER", handler: (config) => {
+      if (config.url === "/jobs") return { items: [{ id: 7, job_type: "BATCH_UPLOAD", status: "SUCCEEDED", total: 2, done_count: 2 }], total: 1, page: 1, page_size: 20 }
+      if (config.url === "/jobs/7") {
+        if (++attempts === 1) throw new Error("任务服务暂不可用")
+        return { id: 7, job_type: "BATCH_UPLOAD", status: "SUCCEEDED", total: 2, done_count: 2, result: { imported: 2 } }
+      }
+    } })
+    await click(button("批量上传"))
+    assert.match(text(), /任务明细加载失败/)
+    assert.match(text(), /任务服务暂不可用/)
+    await click(button("重试"))
+    assert.match(text(), /批量上传 · 已完成/)
+  })
+
+  await test("页面文件下载失败时自动重试一次，仍失败显示中文错误页与重新加载", async () => {
+    let downloads = 0
+    const Broken = lazyWithRetry(() => { downloads += 1; return Promise.reject(new TypeError("Failed to fetch dynamically imported module: /assets/Page-old.js")) }, { delay: 0 })
+    // React 与 React Router 会把被错误边界接住的错误打印到控制台，这里是预期的，暂时静音
+    const consoleError = console.error
+    console.error = () => {}
+    try {
+      await mount(null, { routes: [{ path: "/", element: <React.Suspense fallback={<p>加载中</p>}><Broken /></React.Suspense>, errorElement: <RouteError fullPage /> }] })
+      await flush()
+    } finally { console.error = consoleError }
+    assert.equal(downloads, 2)
+    assert.match(text(), /页面文件下载失败/)
+    assert.match(text(), /登录状态不受影响/)
+    assert.ok(button("重新加载"))
+    assert.doesNotMatch(text(), /Unexpected Application Error/)
+  })
+
+  await test("外壳内的页面都已登记在外壳块的导入清单中", async () => {
+    assert.equal(shellPageNames.size, 32)
+    for (const name of shellPageNames) assert.equal(typeof shellPages[name], "function", name)
+  })
+
+  await test("ZIP 确认携带导入阶段，结果区分本次导入与此前已入库", async () => {
+    const items = [{ item_id: 31, entry_path: "20260001_申请书.pdf", status: "MATCHED", matched_archive: { id: 1, real_name: "测试学生" } }]
+    await mount(<BatchUploadPage />, { path: "/materials/batch-upload", roleCode: "BRANCH_REVIEWER", handler: (config) => {
+      if (config.url === "/materials/batch-upload") return { job_id: 601 }
+      if (config.url === "/jobs/601") return { id: 601, status: "SUCCEEDED", params: { stage_code: 2 }, result: { items } }
+      if (config.url === "/materials/batch-upload/601/assign") return { imported: 0, already_imported: 1, skipped: 0, failed: 0, items: [{ ...items[0], status: "IMPORTED", material_id: 77, stage_code: 2, already_imported: true, note: "相同文件已在该提交包中，未重复入库" }] }
+    } })
+    await input(document.querySelector('[aria-label="发展阶段"]'), "2")
+    const fileInput = document.querySelector('input[type="file"]')
+    await act(async () => { Object.defineProperty(fileInput, "files", { value: [new File(["ZIP"], "samples.zip")] }); fileInput.dispatchEvent(new Event("change", { bubbles: true })); await wait() })
+    await flush()
+    assert.equal(requests.find((request) => request.url === "/materials/batch-upload").data.get("stage_code"), "2")
+    assert.equal(document.querySelector('[aria-label="导入阶段"]').value, "2")
+    await click(button("确认导入 1 个文件"))
+    const body = JSON.parse(requests.find((request) => request.url.endsWith("/assign")).data)
+    assert.equal(body.stage_code, 2)
+    assert.match(text(), /本次导入 0 个 · 此前已入库 1 个/)
+    assert.match(text(), /相同文件已在该提交包中，未重复入库/)
   })
 
   if (root) await act(async () => root.unmount())

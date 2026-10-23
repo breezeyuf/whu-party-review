@@ -77,7 +77,7 @@ export default function TermsPage() {
         </div>
       )}
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={rows} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={rows} empty={query.q ? "没有匹配的术语" : "还没有术语"} columns={[
           { key: "std", title: "标准表述", render: (r) => r.standard_text },
           { key: "type", title: "类型", render: (r) => <span className="text-xs text-base-content/70">{TERM_TYPE[r.term_type] || r.term_type}</span> },
           { key: "wrong", title: "错误写法", render: (r) => <span className="text-xs">{(r.wrong_variants || []).join("、")}</span> },
@@ -93,7 +93,7 @@ export default function TermsPage() {
             </>
           ) },
         ]} />
-        <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />
+        {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
       </div>
       <RuleFormModal open={!!edit} title="术语" fields={[
         { key: "term_type", label: "类型", type: "select", options: [{ value: "VARIANT", label: "错误写法" }, { value: "SEQUENCE", label: "并列顺序" }] },

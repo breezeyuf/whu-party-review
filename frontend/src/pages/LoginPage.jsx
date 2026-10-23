@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom"
 import { ShieldCheck, FileSearch, GitBranch, BellRing } from "lucide-react"
 import { demoAccounts } from "../api/auth"
 import { useAuth } from "../context/AuthContext"
-import { errMessage, roleName } from "../utils/format"
-import { FALLBACK_META } from "../utils/constants"
-import { loginDestination } from "../utils/identity"
+import { loginDestination, roleLabel } from "../utils/identity"
+import { whenIdle } from "../utils/lazyLoad"
+import { preloadShell } from "../components/layout/lazyShell"
 
 const FEATURES = [
   { icon: FileSearch, title: "AI 材料自查", desc: "清单核对、时间节点抽取与敏感表述检查" },
@@ -31,6 +31,9 @@ export default function LoginPage() {
     demoAccounts().then((list) => setAccounts(Array.isArray(list) ? list : [])).catch(() => {})
   }, [])
 
+  // 空闲时预取登录后的外壳，登录成功进入工作台时不再等待下载
+  useEffect(() => whenIdle(preloadShell), [])
+
   const submit = async (e) => {
     e.preventDefault()
     setBusy(true)
@@ -39,7 +42,7 @@ export default function LoginPage() {
       const data = await login(username.trim(), password)
       navigate(loginDestination(data.me, data.needsIdentitySelection), { replace: true })
     } catch (err) {
-      setError(errMessage(err, "登录失败"))
+      setError(err?.message || err?.response?.data?.message || "登录失败")
     } finally {
       setBusy(false)
     }
@@ -97,7 +100,7 @@ export default function LoginPage() {
               <span className="label-text mb-1 text-xs">密码</span>
               <input type="password" className="input input-bordered" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </label>
-            {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
+            {error && <div role="alert" className="alert alert-error py-2 text-sm">{error}</div>}
             <button type="submit" className="btn btn-primary w-full" disabled={busy}>
               {busy && <span className="loading loading-spinner loading-xs" />}
               {busy ? "正在登录…" : "登录"}
@@ -117,7 +120,7 @@ export default function LoginPage() {
                       onClick={() => { setUsername(a.username); setPassword(a.password_hint || "") }}
                     >
                       <span>{a.real_name} · {a.username}</span>
-                      <span className="text-base-content/40">{Array.from(new Set((a.roles || []).map((r) => roleName(FALLBACK_META, r.role || r)))).join(" / ")}</span>
+                      <span className="text-base-content/40">{Array.from(new Set((a.roles || []).map((r) => roleLabel(r.role || r)))).join(" / ")}</span>
                     </button>
                   </li>
                 ))}

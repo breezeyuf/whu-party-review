@@ -1,11 +1,17 @@
-import { EmptyState, SkeletonRows } from "./States"
+import { EmptyState, ErrorState, SkeletonRows } from "./States"
 
+// 表格区按“加载中 → 失败 → 空 → 数据”的优先级只显示一种状态
 export default function DataTable({
   columns,
   rows,
   rowKey = "id",
   loading,
+  loadingLabel = "正在加载…",
+  error,
+  onRetry,
   empty = "暂无数据",
+  emptyHint,
+  emptyAction,
   sort,
   onSort,
   selected,
@@ -14,6 +20,8 @@ export default function DataTable({
 }) {
   const keys = selected ? new Set(selected) : new Set()
   const allChecked = keys && rows?.length > 0 && rows.every((r) => keys.has(r[rowKey]))
+  const failed = !loading && !!error
+  const ready = !loading && !error
 
   return (
     <div className="overflow-x-auto">
@@ -39,9 +47,11 @@ export default function DataTable({
         </thead>
         <tbody>
           {loading && (
-            <tr><td colSpan={columns.length + (onToggle ? 1 : 0)}><SkeletonRows rows={4} cols={Math.min(columns.length, 5)} /></td></tr>
+            <tr><td colSpan={columns.length + (onToggle ? 1 : 0)}>
+              <div role="status" aria-live="polite"><span className="sr-only">{loadingLabel}</span><SkeletonRows rows={4} cols={Math.min(columns.length, 5)} /></div>
+            </td></tr>
           )}
-          {!loading && rows?.map((row) => (
+          {ready && rows?.map((row) => (
             <tr key={row[rowKey]} className="hover">
               {onToggle && (
                 <td>
@@ -63,7 +73,8 @@ export default function DataTable({
           ))}
         </tbody>
       </table>
-      {!loading && (!rows || rows.length === 0) && <EmptyState title={empty} />}
+      {failed && <ErrorState error={error} onRetry={onRetry} />}
+      {ready && (!rows || rows.length === 0) && <EmptyState title={empty} hint={emptyHint} action={emptyAction} />}
     </div>
   )
 }
@@ -87,7 +98,7 @@ export function Pager({ page = 1, pageSize = 20, total = 0, onPage, onPageSize }
           </select>
         </label>}
       </div>
-      <nav className="flex items-center gap-1" aria-label="用户列表分页">
+      <nav className="flex items-center gap-1" aria-label="列表分页">
         <button type="button" className="btn btn-xs" disabled={page <= 1} onClick={() => onPage(1)} aria-label="第一页">«</button>
         <button type="button" className="btn btn-xs" disabled={page <= 1} onClick={() => onPage(page - 1)}>上一页</button>
         {visiblePages.map((number) => <button key={number} type="button" className={`btn btn-xs ${number === page ? "btn-primary" : "btn-ghost"}`} aria-current={number === page ? "page" : undefined} onClick={() => onPage(number)}>{number}</button>)}

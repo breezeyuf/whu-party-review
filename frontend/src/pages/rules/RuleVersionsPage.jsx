@@ -102,7 +102,7 @@ export default function RuleVersionsPage() {
         </div>
       </div>
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={req.data?.items || []} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="还没有规则版本记录" columns={[
           { key: "no", title: "版本", render: (r) => <span className="mono">v{r.version_no}</span> },
           { key: "kind", title: "变更", render: (r) => <span className="text-xs">{CHANGE_KIND[r.change_kind] || r.change_kind || "—"}{r.change_kind !== "init" && CHANGE_ACTION[r.change_action] ? ` · ${CHANGE_ACTION[r.change_action]}` : ""}</span> },
           { key: "sum", title: "摘要", render: (r) => <span className="text-xs">{r.change_summary}</span> },
@@ -115,7 +115,7 @@ export default function RuleVersionsPage() {
             </span>
           ) },
         ]} />
-        <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />
+        {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
       </div>
       <div className="mt-4 flex flex-wrap items-end gap-2">
         <span className="text-xs">版本 A：{left ? `v${left.version_no}` : "未选择"}　版本 B：{right ? `v${right.version_no}` : "未选择"}</span>

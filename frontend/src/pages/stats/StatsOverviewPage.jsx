@@ -1,10 +1,8 @@
 import { useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
-import { BarChart } from "../../components/charts/BarChart"
-import { PieChart } from "../../components/charts/PieChart"
-import { LineChart } from "../../components/charts/LineChart"
-import { Loading, ErrorState } from "../../components/common/States"
+import { BarChart, LineChart, PieChart } from "../../components/charts/LazyCharts"
+import { Loading, ErrorState, EmptyState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
 import { overview, topIssues } from "../../api/stats"
 import { listBatches } from "../../api/batches"
@@ -84,14 +82,16 @@ export default function StatsOverviewPage() {
           </div>
           <section className="surface-card mt-4 p-4">
             <h2 className="mb-2 text-sm font-medium">高频问题</h2>
-            <table className="table table-sm">
-              <thead><tr><th>规则</th><th>次数</th><th>占比</th><th>已确认</th></tr></thead>
-              <tbody>
-                {(topReq.data || []).map((r) => (
-                  <tr key={r.key}><td className="text-xs" title={r.key}>{r.name}</td><td className="mono">{r.count}</td><td className="mono">{r.ratio != null ? `${Math.round(r.ratio * 100)}%` : "—"}</td><td className="mono">{r.confirmed_count ?? "—"}</td></tr>
-                ))}
-              </tbody>
-            </table>
+            {topReq.loading && !topReq.data ? <Loading label="高频问题" /> : topReq.error ? <ErrorState error={topReq.error} onRetry={topReq.reload} /> : !(topReq.data || []).length ? <EmptyState title="所选范围内没有问题记录" /> : (
+              <table className="table table-sm">
+                <thead><tr><th>规则</th><th>次数</th><th>占比</th><th>已确认</th></tr></thead>
+                <tbody>
+                  {(topReq.data || []).map((r) => (
+                    <tr key={r.key}><td className="text-xs" title={r.key}>{r.name}</td><td className="mono">{r.count}</td><td className="mono">{r.ratio != null ? `${Math.round(r.ratio * 100)}%` : "—"}</td><td className="mono">{r.confirmed_count ?? "—"}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </section>
         </>
       )}

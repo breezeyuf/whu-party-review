@@ -246,14 +246,6 @@ export default function UsersPage() {
         { key: "org_id", label: "所属组织", type: "select", placeholder: "全部组织", options: (orgs.data || []).map((org) => ({ id: org.id, name: `${org.name}（${ORG_TYPE_NAMES[org.org_type] || org.org_type}）` })) },
         { key: "is_active", label: "状态", type: "select", options: [{ code: "true", name: "启用" }, { code: "false", name: "停用" }] },
       ]} />
-      {req.error && (
-        <div className="alert alert-error mb-4 flex items-center justify-between gap-3 text-sm" role="alert">
-          <span>{req.error.message || "用户列表加载失败"}</span>
-          <button type="button" className="btn btn-error btn-outline btn-xs" onClick={() => req.reload()}>
-            重新加载
-          </button>
-        </div>
-      )}
       <div className="surface-card mb-4 p-3 text-sm">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-base-content/60">Excel 导入</span>
@@ -297,7 +289,7 @@ export default function UsersPage() {
         )}
       </div>
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={req.data?.items || []} empty="暂无用户" columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty={query.q || query.role || query.org_id || query.is_active ? "没有符合条件的用户" : "暂无用户"} columns={[
           { key: "name", title: "用户", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },
           { key: "org", title: "组织", render: (r) => r.org_name },
           { key: "roles", title: "角色", render: (r) => <span className="text-xs">{(r.roles || []).map((x) => roleName(meta, x.role || x)).join("、")}</span> },
@@ -314,13 +306,13 @@ export default function UsersPage() {
             </>
           ) },
         ]} />
-        <Pager
+        {!req.error && <Pager
           page={req.data?.page ?? query.page}
           pageSize={req.data?.page_size ?? query.page_size}
           total={req.data?.total}
           onPage={setPage}
           onPageSize={(page_size) => setQuery({ page_size })}
-        />
+        />}
       </div>
       {secret && <div className="alert mt-3 flex flex-wrap items-center justify-between gap-3 text-sm" role="status"><span>初始密码只显示这一次：<span className="mono font-medium select-all">{secret}</span></span><div className="flex items-center gap-1"><button type="button" className="btn btn-outline btn-xs" onClick={copySecret}>复制临时密码</button><button type="button" className="btn btn-ghost btn-xs" onClick={() => setSecret("")}>关闭密码提示</button></div></div>}
       <Modal open={!!pendingImportFile} title="确认正式导入" onClose={() => setPendingImportFile(null)} footer={(

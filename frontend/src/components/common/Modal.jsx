@@ -1,4 +1,14 @@
 import { useEffect, useId, useRef } from "react"
+import { Loading } from "./States"
+
+// 按需加载的弹窗下载完成前显示的占位
+export function ModalLoading() {
+  return (
+    <dialog className="modal modal-open" aria-busy="true">
+      <div className="modal-box max-w-lg border border-base-300"><Loading /></div>
+    </dialog>
+  )
+}
 
 export function Modal({ open, title, onClose, children, footer, wide }) {
   const ref = useRef(null)

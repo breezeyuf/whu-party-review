@@ -37,6 +37,22 @@ test("matched ZIP entries also need import confirmation; imported and skipped en
   assert.deepEqual(batchAssignmentBody([{ item_id: 1, status: "MATCHED", matched_archive: { id: 5 } }], { 1: { archive_id: "" } }), { assignments: [], skip_item_ids: [] })
 })
 
+test("the chosen import stage is sent at request level only when a stage is selected", () => {
+  const items = [{ item_id: 1, status: "MATCHED", matched_archive: { id: 5 } }]
+  assert.deepEqual(batchAssignmentBody(items, {}, "2"), { assignments: [{ item_id: 1, archive_id: 5 }], skip_item_ids: [], stage_code: 2 })
+  for (const stage of ["", null, undefined, "0", "abc"]) {
+    assert.equal("stage_code" in batchAssignmentBody(items, {}, stage), false)
+  }
+})
+
+test("items the server reports as already imported stay imported even when they were marked to skip", () => {
+  const original = [{ item_id: 1, status: "MATCHED" }, { item_id: 2, status: "UNMATCHED" }]
+  const merged = mergeBatchItems(original, { items: [{ item_id: 1, status: "IMPORTED", material_id: 77, already_imported: true, note: "相同文件已在该提交包中，未重复入库" }] }, [1, 2])
+  assert.equal(merged[0].status, "IMPORTED")
+  assert.equal(merged[0].material_id, 77)
+  assert.equal(merged[1].status, "SKIPPED")
+})
+
 test("partial assignment responses preserve untouched rows and permit retrying only failures", () => {
   const original = [{ item_id: 1, status: "MATCHED", matched_archive: { id: 5 } }, { item_id: 2, status: "UNMATCHED" }, { item_id: 3, status: "UNMATCHED" }]
   const merged = mergeBatchItems(original, { items: [{ item_id: 1, status: "IMPORTED", matched_archive: { id: 5 }, error: "上一次失败" }, { item_id: 2, status: "FAILED", error: "提交包审核中" }] }, [3])

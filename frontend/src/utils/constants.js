@@ -1,3 +1,5 @@
+import { ROLE_NAMES } from "./identity"
+
 /** 枚举中文名的本地兜底。登录后以 GET /api/meta 为准覆盖。 */
 
 export const FALLBACK_META = {
@@ -8,14 +10,7 @@ export const FALLBACK_META = {
     { code: 4, name: "接收预备党员" },
     { code: 5, name: "预备党员转正" },
   ],
-  roles: [
-    { code: "STUDENT", name: "发展学生" },
-    { code: "BRANCH_REVIEWER", name: "党支部审核员" },
-    { code: "CROSS_REVIEWER", name: "交叉互查审核员" },
-    { code: "COLLEGE_REVIEWER", name: "学院党委审核员" },
-    { code: "ORG_ADMIN", name: "学校组织部管理员" },
-    { code: "SYS_ADMIN", name: "系统管理员" },
-  ],
+  roles: Object.entries(ROLE_NAMES).map(([code, name]) => ({ code, name })),
   submission_statuses: [
     { code: "DRAFT", name: "自查中" },
     { code: "BRANCH_REVIEW", name: "支部初审" },

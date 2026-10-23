@@ -96,7 +96,7 @@ export default function MaterialViewer({ materialId, versionId, page, onPage, pa
         {onSelectRegion && <button type="button" className={`btn btn-xs ${selecting ? "btn-primary" : "btn-outline"}`} disabled={loading || !!error || !url} aria-pressed={selecting} onClick={() => selecting ? cancelSelection() : (setSelection(null), setSelecting(true))}>{selecting ? "取消框选" : "框选新增问题"}</button>}
       </div>
       {selecting && <p role="status" className="mb-2 text-xs text-primary">在原文上按住并拖动框选问题区域，松开后填写问题。按 Esc 取消。</p>}
-      {loading && <Loading label="渲染页面" />}
+      {loading && <Loading label="页面预览" />}
       {error && <p role="alert" className="text-xs text-error">{error.message} <button type="button" className="link" onClick={() => setRetryKey((key) => key + 1)}>重新加载预览</button></p>}
       {url && (
         <div className="inline-block max-w-full overflow-auto rounded border border-base-300 bg-base-200">
