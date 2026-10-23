@@ -94,11 +94,13 @@ def test_repeat_confirm_is_idempotent(case, as_client, storage_tmp):
     material_id = data["items"][0]["material_id"]
     assert data["items"][0]["stage_code"] == 2
     assert data["items"][0]["status"] == "IMPORTED"
+    assert data["items"][0]["already_imported"] is False
     assert case.db.query(Material).filter(Material.submission_id == case.sub_draft.id).count() == 1
 
     second = assign(case, client, job, body)
     again = second.json()["data"]
     assert (again["imported"], again["already_imported"]) == (0, 1)
+    assert again["items"][0]["already_imported"] is True
     assert again["items"][0]["material_id"] == material_id
     assert case.db.query(Material).filter(Material.submission_id == case.sub_draft.id).count() == 1
     # 审计只写一条

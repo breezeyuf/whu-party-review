@@ -262,7 +262,7 @@ def assign_batch_items(db, job: Job, actor, stage_code, assignments: list, skip_
                 item.error = None
                 item.updated_at = now()
                 skipped += 1
-                out.append(_item_dict(item, type_map, _material_stages(db, [item])))
+                out.append(_item_dict(item, type_map, _material_stages(db, [item]), already_imported=False))
             continue
         if item.status == "IMPORTED":
             # 幂等：重复确认不新建材料，返回原 material_id
@@ -339,7 +339,7 @@ def assign_batch_items(db, job: Job, actor, stage_code, assignments: list, skip_
             item.error = error[:200]
             item.updated_at = now()
             failed += 1
-            out.append(_item_dict(item, type_map))
+            out.append(_item_dict(item, type_map, already_imported=False))
             continue
         if material is None:
             already_imported += 1
@@ -347,7 +347,7 @@ def assign_batch_items(db, job: Job, actor, stage_code, assignments: list, skip_
                                   already_imported=True, note=DUPLICATE_NOTE))
         else:
             imported += 1
-            out.append(_item_dict(item, type_map, _material_stages(db, [item])))
+            out.append(_item_dict(item, type_map, _material_stages(db, [item]), already_imported=False))
 
     for sid in skip_ids or []:
         if sid in handled:
@@ -367,7 +367,7 @@ def assign_batch_items(db, job: Job, actor, stage_code, assignments: list, skip_
         item.error = None
         item.updated_at = now()
         skipped += 1
-        out.append(_item_dict(item, type_map, _material_stages(db, [item])))
+        out.append(_item_dict(item, type_map, _material_stages(db, [item]), already_imported=False))
 
     db.flush()
     return {
@@ -431,7 +431,7 @@ def _missing_item(item_id, reason: str) -> dict:
     return {
         "item_id": item_id, "entry_path": None, "parsed_student_no": None, "matched_archive": None,
         "material_type": None, "status": "FAILED", "error": reason,
-        "material_id": None, "stage_code": None, "note": None,
+        "material_id": None, "stage_code": None, "note": None, "already_imported": False,
     }
 
 
@@ -452,7 +452,7 @@ def _parse_type_hint(name: str, types) -> str | None:
 
 
 def _item_dict(row: BatchUploadItem, type_map: dict, material_stages: dict | None = None,
-               already_imported: bool = False, note: str | None = None) -> dict:
+               already_imported: bool | None = None, note: str | None = None) -> dict:
     mt = type_map.get(row.material_type_id)
     arch = row.matched_archive
     data = {
@@ -464,6 +464,7 @@ def _item_dict(row: BatchUploadItem, type_map: dict, material_stages: dict | Non
         "stage_code": (material_stages or {}).get(row.material_id),
         "note": note,
     }
-    if already_imported:
-        data["already_imported"] = True
+    if already_imported is not None:
+        # 确认响应里每条都带这个字段；识别结果与 job.result 不带（与设计示例一致）
+        data["already_imported"] = already_imported
     return data
