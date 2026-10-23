@@ -35,11 +35,16 @@ import { lazyWithRetry } from "../src/utils/lazyLoad"
 import { pages as shellPages } from "../src/components/layout/shellModule"
 import { shellPageNames } from "../src/components/layout/lazyShell"
 import "../src/routes"
+import BatchesPage from "../src/pages/admin/BatchesPage"
+import CompleteSettingsPage from "../src/pages/admin/CompleteSettingsPage"
+import RuleVersionsPage from "../src/pages/rules/RuleVersionsPage"
+import TimelineView from "../src/components/archive/TimelineView"
+import ExportPage from "../src/pages/stats/ExportPage"
 
 const wait = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms))
 const flush = () => act(async () => { await wait(); await wait() })
 const baseReport = { id: 201, status: "DONE", is_stale: false, summary: {}, handover_status: "NOT_REQUIRED", recommendation: "PASS" }
-const baseArchive = { id: 1, real_name: "测试学生", student_no: "20260001", current_stage: 1, status: "ACTIVE", submissions: [], current_submission: { id: 101, status: "DRAFT" } }
+const baseArchive = { id: 1, real_name: "测试学生", student_no: "20260001", branch_id: 2, batch_id: 1, current_stage: 1, status: "ACTIVE", submissions: [], current_submission: { id: 101, status: "DRAFT" } }
 const baseSubmission = { id: 101, archive: { id: 1, real_name: "测试学生" }, stage_code: 1, stage_name: "申请入党", status: "DRAFT", ai_status: "DONE", latest_report: baseReport, can: { self_check: true, submit: true } }
 const complete = { is_complete: true, missing_total: 0, items: [{ material_type: { id: 1, name: "申请书" }, required: true, expected: 1, actual: 1, missing: 0 }] }
 const groups = [{ stage_code: 1, checklist: [], unclassified: [], extra: [] }]
@@ -154,6 +159,80 @@ export async function runUiScenarios() {
       assert.equal(button("已下载").disabled, true)
     })
   }
+  await test("完整档案编辑提交姓名生日扩展资料和所属批次", async () => {
+    await mount(<ArchiveDetailPage />, { path:"/archives/1", pattern:"/archives/:id", roleCode:"ORG_ADMIN", handler:(c) => c.method === "put" ? {} : undefined })
+    await click(button("编辑"))
+    await input(document.querySelector('[aria-label="姓名"]'),"校正姓名")
+    await input(document.querySelector('[aria-label="出生日期"]'),"2004-05-12")
+    await input(document.querySelector('[aria-label="扩展资料"]'),'{"来源":"测试"}')
+    await click(button("保存"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal(body.real_name,"校正姓名"); assert.equal(body.birth_date,"2004-05-12"); assert.equal(body.branch_id,2); assert.deepEqual(body.profile_extra,{来源:"测试"})
+  })
+  await test("锁定时间节点只向显式授权的组织部入口开放", async () => {
+    const timeline = {nodes:[{code:"T02",name:"申请日期",locked:true,effective:{date:"2026-01-01"},sources:[]}],derived:[]}
+    await mount(<TimelineView timeline={timeline} onCorrect={() => {}} />)
+    assert.equal(button("更正已锁定节点"),undefined)
+    await mount(<TimelineView timeline={timeline} allowLockedCorrection onCorrect={() => {}} />,{roleCode:"ORG_ADMIN"})
+    assert.ok(button("更正已锁定节点"))
+  })
+  await test("只修改用户姓名时不发送角色替换，原多身份保持不变", async () => {
+    await mount(<UsersPage />, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/users" && c.method === "get") return {items:[{id:7,username:"tester",real_name:"测试",org_id:2,is_active:true,roles:[{role:"STUDENT",org_id:2},{role:"BRANCH_REVIEWER",org_id:2}]}],total:1,page:1,page_size:20}
+      if(c.url === "/users/7" && c.method === "put") return {}
+    }})
+    await click(button("编辑"))
+    assert.equal(document.querySelectorAll('[aria-label$="角色"]').length,2)
+    await click(button("保存"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal("roles" in body,false)
+  })
+  await test("批次表单保存全部五级截止日且允许关闭已有档案批次", async () => {
+    const row = {id:1,name:"测试批次",year:2026,term:"FULL_YEAR",stage_codes:[1],start_date:"2026-01-01",end_date:"2026-12-31",status:"ACTIVE",archive_count:2}
+    await mount(<BatchesPage />, {roleCode:"ORG_ADMIN",handler:(c) => c.url === "/batches" ? {items:[row],total:1,page:1,page_size:20} : c.method === "put" ? {} : undefined})
+    await click(button("编辑"))
+    await input(document.querySelector('[aria-label="学生自查截止"]'),"2026-02-01")
+    await input(document.querySelector('[aria-label="交叉互查截止"]'),"2026-04-01")
+    await input(document.querySelector('[aria-label="组织部备案截止"]'),"2026-06-01")
+    await click(button("保存"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal(body.self_deadline,"2026-02-01"); assert.equal(body.cross_deadline,"2026-04-01"); assert.equal(body.org_deadline,"2026-06-01")
+    await click(button("关闭批次"))
+    assert.match(text(),/已有档案和审核记录保留/)
+  })
+  await test("系统设置按组保存，组织部不能修改安全和任务参数", async () => {
+    const settings = {ai:{},ocr:{},worker:{concurrency:2},security:{max_failed_login:5},calendar:{holidays:[]},notification:{},retention:{},upload:{}}
+    await mount(<CompleteSettingsPage />, {roleCode:"SYS_ADMIN",handler:(c) => c.url === "/settings" ? settings : undefined})
+    await input(document.querySelector('[aria-label="任务并发数"]'),"3")
+    await click(button("保存后台任务"))
+    assert.deepEqual(JSON.parse(requests.find((c) => c.method === "put").data),{worker:{concurrency:3}})
+    await mount(<CompleteSettingsPage />, {roleCode:"ORG_ADMIN",handler:(c) => c.url === "/settings" ? settings : undefined})
+    assert.ok(button("保存后台任务").disabled)
+    assert.equal(button("保存日历").disabled,false)
+  })
+  await test("规则试运行传递临时覆盖并展示具体新增问题", async () => {
+    await mount(<RuleVersionsPage />, {roleCode:"ORG_ADMIN",handler:(c) => {
+      if(c.url === "/rules/versions") return {items:[]}
+      if(c.url === "/rules/dry-run") return {results:[{submission_id:101,added:["x"],removed:[],added_items:[{rule_code:"R-T01",title:"年龄测试问题",description:"测试详情"}]}]}
+    }})
+    await input(document.querySelector('input[placeholder*="提交包 ID"]'),"101")
+    await input(document.querySelector('[aria-label="临时规则参数"]'),'{"time_rules":[{"code":"R-T01","is_active":false}]}')
+    await click(button("试运行"))
+    const body = JSON.parse(requests.find((c) => c.url === "/rules/dry-run").data)
+    assert.equal(body.overrides.time_rules[0].is_active,false); assert.match(text(),/年龄测试问题/)
+  })
+  await test("导出页面实际提供阶段和批次控件并携带筛选", async () => {
+    await mount(<ExportPage />, {roleCode:"ORG_ADMIN",handler:(c) => {
+      if(c.url === "/stats/export") return {job_id:77}
+      if(c.url === "/jobs/77") return {id:77,status:"FAILED",error:"测试终止"}
+    }})
+    const selects = [...document.querySelectorAll("label")]
+    await input(selects.find((e) => e.textContent.startsWith("批次")).querySelector("select"),"1")
+    await input(selects.find((e) => e.textContent.startsWith("阶段")).querySelector("select"),"3")
+    await click(button("生成 Excel"))
+    const body = JSON.parse(requests.find((c) => c.url === "/stats/export").data)
+    assert.equal(body.filters.stage_code,"3"); assert.equal(body.filters.batch_id,"1")
+  })
 
   await test("学生发展进度页正常加载时间节点与审核轨迹，且不重复展示", async () => {
     await mount(<MyProgressPage />, {

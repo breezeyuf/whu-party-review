@@ -223,6 +223,8 @@ def update_archive(aid: int, body: dict, request: Request, db: Session = Depends
     if "batch_id" in body:
         a.batch_id = body["batch_id"]
     a.updated_at = now()
+    # Basic profile data is input to identity and cross-material checks.
+    a.timeline_updated_at = now()
     safe_detail = dict(body)
     if "id_card" in safe_detail:
         safe_detail["id_card"] = mask_id_card(safe_detail.get("id_card"))

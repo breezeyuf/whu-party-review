@@ -15,7 +15,7 @@ function valueText(node) {
   return fmtDate(eff.date)
 }
 
-export default function TimelineView({ timeline, onCorrect, onLocate, hidePersonalInfo = false }) {
+export default function TimelineView({ timeline, onCorrect, onLocate, hidePersonalInfo = false, allowLockedCorrection = false }) {
   const allNodes = timeline?.nodes || []
   const nodes = hidePersonalInfo
     ? allNodes.filter((node) => node.code !== "T01" && !/出生日期|出生年月/.test(node.name || ""))
@@ -52,7 +52,7 @@ export default function TimelineView({ timeline, onCorrect, onLocate, hidePerson
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">
                   <span className={`mono rounded-lg px-2.5 py-1 text-sm font-medium ${bad ? "bg-error/10 text-error" : "bg-base-200 text-base-content"}`}>{valueText(node)}</span>
-                  {onCorrect && !node.locked && <button type="button" className="btn btn-ghost btn-xs" onClick={() => onCorrect(node)}>校正</button>}
+                  {onCorrect && (!node.locked || allowLockedCorrection) && <button type="button" className="btn btn-ghost btn-xs" onClick={() => onCorrect(node)}>{node.locked ? "更正已锁定节点" : "校正"}</button>}
                 </div>
               </div>
               {(node.sources || []).length > 0 && (

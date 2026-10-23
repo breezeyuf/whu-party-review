@@ -14,6 +14,7 @@ import { severityName, stageName } from "../../utils/format"
 const VALUE_KIND = { DATE: "日期", DATETIME: "日期时间", NUMBER: "数值", INT: "整数", TEXT: "文本", BOOL: "是否" }
 import { can } from "../../utils/permissions"
 import { useToast } from "../../context/ToastContext"
+import { nodePayload, stringList } from "../../utils/ruleWorkflow"
 
 export default function TimeRulesPage() {
   const toast = useToast()
@@ -32,7 +33,7 @@ export default function TimeRulesPage() {
   const ruleRows = rules.data?.items || rules.data || []
 
   const saveNode = async (form) => {
-    const body = { ...form, stage_code: form.stage_code ? Number(form.stage_code) : undefined, sort_order: form.sort_order ? Number(form.sort_order) : undefined, has_hours: !!form.has_hours, is_active: form.is_active !== false }
+    const body = nodePayload(form)
     if (nodeEdit?.id) await timeNodes.update(nodeEdit.id, body)
     else await timeNodes.create(body)
     toast.success("节点已保存")
@@ -123,13 +124,17 @@ export default function TimeRulesPage() {
         fields={[
           { key: "code", label: "编码" },
           { key: "name", label: "名称" },
-          { key: "value_kind", label: "取值", type: "select", options: [{ value: "DATE", label: "日期" }, { value: "RANGE", label: "区间" }, { value: "DATE_SEQ", label: "日期序列" }] },
+          { key: "value_kind", label: "取值", type: "select", options: [{ value: "DATE", label: "日期" }, { value: "DATE_RANGE", label: "区间" }, { value: "DATE_SEQ", label: "日期序列" }, { value: "DERIVED", label: "派生日期" }] },
           { key: "stage_code", label: "所属阶段", type: "number" },
+          { key: "required_from_stage", label: "从第几阶段起必需", type: "number" },
+          { key: "source_material_codes", label: "来源材料编码（逗号分隔）", wide: true },
           { key: "has_hours", label: "含学时", type: "checkbox" },
           { key: "extract_keywords", label: "抽取关键词", wide: true },
+          { key: "derive_expr", label: '派生表达式（仅派生日期必填，例如 {"base":"T14","offset":{"value":1,"unit":"YEAR"}}）', type: "textarea", wide: true },
+          { key: "sort_order", label: "排序", type: "number" },
           { key: "is_active", label: "启用", type: "checkbox" },
         ]}
-        initial={nodeEdit || { is_active: true, value_kind: "DATE" }}
+        initial={nodeEdit ? { ...nodeEdit, source_material_codes: stringList(nodeEdit.source_material_codes).join(","), extract_keywords: stringList(nodeEdit.extract_keywords).join(","), derive_expr: typeof nodeEdit.derive_expr === "string" ? nodeEdit.derive_expr : JSON.stringify(nodeEdit.derive_expr || {}, null, 2) } : { is_active: true, value_kind: "DATE" }}
         onClose={() => setNodeEdit(null)}
         onSubmit={saveNode}
       />

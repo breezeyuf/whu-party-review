@@ -14,6 +14,7 @@ import { fmtDate } from "../../utils/format"
 import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
 import { canManageArchive } from "../../utils/archiveWorkflow"
+import ArchiveProfileForm from "../../components/archive/ArchiveProfileForm"
 
 // 节点校正弹窗只在校正时使用，不进页面首屏
 const NodeCorrectionModal = lazyWithRetry(() => import("../../components/archive/NodeCorrectionModal"))
@@ -27,26 +28,14 @@ export default function ArchiveDetailPage() {
   const hist = useRequest(() => getHistory(id), [id])
   const [node, setNode] = useState(null)
   const [editing, setEditing] = useState(false)
-  const [major, setMajor] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState("")
   const editable = canManageArchive(activeRole)
   useEffect(() => (editable ? whenIdle(() => NodeCorrectionModal.preload().catch(() => {}), 0) : undefined), [editable])
 
-  const save = async () => {
-    if (saving) return
-    setSaving(true)
-    setSaveError("")
-    try {
-      await updateArchive(id, { major: major.trim() })
+  const save = async (body) => {
+      await updateArchive(id, body)
       toast.success("档案已保存")
       setEditing(false)
-      arch.reload().catch(() => {})
-    } catch (error) {
-      setSaveError(error.message || "保存失败")
-    } finally {
-      setSaving(false)
-    }
+      await Promise.all([arch.reload(), time.reload()])
   }
 
   if (arch.loading && !arch.data) return <Loading label="发展档案" />
@@ -79,15 +68,8 @@ export default function ArchiveDetailPage() {
             <dt className="text-base-content/50">手机</dt><dd>{a.phone_masked || "—"}</dd>
             <dt className="text-base-content/50">证件</dt><dd>{a.id_card_masked || "—"}</dd>
           </dl>
-          {editable && !editing && <button type="button" className="btn btn-ghost btn-xs mt-3" onClick={() => { setMajor(a.major || ""); setEditing(true) }}>编辑</button>}
-          {editing && (
-            <div className="mt-3 space-y-2">
-              <label className="block text-xs">专业<input aria-label="专业" className="input input-bordered input-sm mt-1 w-full" value={major} disabled={saving} onChange={(e) => setMajor(e.target.value)} /></label>
-              <button type="button" className="btn btn-primary btn-xs" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存"}</button>
-              <button type="button" className="btn btn-ghost btn-xs ml-2" disabled={saving} onClick={() => { setEditing(false); setSaveError("") }}>取消</button>
-              {saveError && <p role="alert" className="text-xs text-error">{saveError}</p>}
-            </div>
-          )}
+          {editable && !editing && <button type="button" className="btn btn-ghost btn-xs mt-3" onClick={() => setEditing(true)}>编辑</button>}
+          {editing && <ArchiveProfileForm archive={a} onSave={save} onCancel={() => setEditing(false)} />}
           <h3 className="mb-2 mt-4 text-sm font-medium">各阶段提交包</h3>
           <ul className="space-y-1 text-xs">
             {(a.submissions || []).map((s) => (
@@ -101,7 +83,7 @@ export default function ArchiveDetailPage() {
         <section className="lg:col-span-2">
           <h2 className="mb-2 text-sm font-medium">时间节点</h2>
           {time.error ? <ErrorState error={time.error} onRetry={() => time.reload().catch(() => {})} /> : time.loading && !time.data ? <Loading /> : <>
-            <TimelineView timeline={time.data} onCorrect={editable ? setNode : undefined} />
+            <TimelineView timeline={time.data} allowLockedCorrection={activeRole?.role === "ORG_ADMIN"} onCorrect={editable ? setNode : undefined} />
             {time.data?.report_is_stale && <p className="mt-3 text-xs text-warning">时间节点已变更，请重新校验报告。</p>}
           </>}
         </section>
