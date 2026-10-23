@@ -6,7 +6,7 @@ root = Path(SPECPATH).parent
 sys.path.insert(0, str(root / "backend"))
 hidden = ["main", "uvicorn.logging", "uvicorn.loops.asyncio", "uvicorn.protocols.http.h11_impl", "uvicorn.lifespan.on",
           "sqlalchemy.dialects.postgresql.psycopg", "psycopg_binary", "webview.platforms.winforms", "webview.platforms.edgechromium"]
-for package in ["routers", "services", "ai", "schemas"]:
+for package in ["routers", "services", "ai", "schemas", "msoffcrypto"]:
     hidden += collect_submodules(package)
 datas = [(str(root / "backend" / "schema.sql"), "backend"),
          (str(root / "frontend" / "dist"), "frontend/dist")]

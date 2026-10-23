@@ -6,6 +6,7 @@ import { api, tokenStore } from "../src/api/client"
 import { AuthProvider } from "../src/context/AuthContext"
 import { ToastProvider } from "../src/context/ToastContext"
 import ArchiveListPage from "../src/pages/archive/ArchiveListPage"
+import UsersPage from "../src/pages/admin/UsersPage"
 import ArchiveDetailPage from "../src/pages/archive/ArchiveDetailPage"
 import SelfCheckPage from "../src/pages/student/SelfCheckPage"
 import RectificationPage from "../src/pages/student/RectificationPage"
@@ -107,6 +108,39 @@ export async function runUiScenarios() {
   const test = async (name, run) => {
     try { await run(); results.push({ name, passed: true }) }
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
+  }
+
+  for (const retryFirst of [false, true]) {
+    await test(retryFirst ? "密码文件下载失败保留口令并可重试" : "导入后下载加密密码文件并禁止再次领取", async () => {
+      let downloads = 0
+      await mount(<UsersPage />, { path: "/admin/users", roleCode: "ORG_ADMIN", handler: (config) => {
+        if (config.url === "/users") return { items: [], total: 0, page: 1, page_size: 20 }
+        if (config.url === "/users/import") return { total: 1, valid: 1, created_users: 1, created_archives: 0, errors: [],
+          initial_passwords_file: { id: 9, password: "test-file-unlock", file_name: "passwords.xlsx" } }
+        if (config.url === "/users/import-passwords/9/download") {
+          downloads += 1
+          if (retryFirst && downloads === 1) throw new Error("下载暂时失败")
+          return new Blob(["synthetic-encrypted-file"])
+        }
+        return undefined
+      } })
+      const picker = document.querySelectorAll('input[type="file"]')[1]
+      Object.defineProperty(picker, "files", { value: [new File(["synthetic"], "users.xlsx")], configurable: true })
+      await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })))
+      await flush()
+      await click(button("确认并导入"))
+      assert.match(text(), /test-file-unlock/)
+      assert.equal(document.body.textContent.includes("复制账号和密码"), false)
+      await click(button("下载密码文件"))
+      if (retryFirst) {
+        assert.match(text(), /下载暂时失败/)
+        assert.match(text(), /test-file-unlock/)
+        assert.equal(button("下载密码文件").disabled, false)
+        await click(button("下载密码文件"))
+      }
+      assert.equal(downloads, retryFirst ? 2 : 1)
+      assert.equal(button("已下载").disabled, true)
+    })
   }
 
   await test("学生发展进度页正常加载时间节点与审核轨迹，且不重复展示", async () => {

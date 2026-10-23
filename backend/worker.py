@@ -256,7 +256,9 @@ def _bump_parent(db, parent_id: int, ok: bool) -> None:
 
 
 def _scan(db) -> None:
+    from models import ImportPasswordFile
     from models import Message, ExportFile
     from datetime import datetime, timezone
     db.query(ExportFile).filter(ExportFile.expires_at < now()).delete(synchronize_session=False)
+    db.query(ImportPasswordFile).filter(ImportPasswordFile.expires_at <= now()).delete(synchronize_session=False)
     db.execute(text("DELETE FROM revoked_tokens WHERE expires_at < now()"))

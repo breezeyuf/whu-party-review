@@ -14,6 +14,7 @@ python-dateutil==2.9.0.post0
 PyMuPDF==1.28.2
 python-docx==1.2.0
 openpyxl==3.1.5
+msoffcrypto-tool==6.0.0
 numpy==2.5.4
 opencv-python-headless==5.0.0.93
 pytest==9.1.1

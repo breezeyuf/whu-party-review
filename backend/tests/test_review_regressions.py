@@ -165,7 +165,7 @@ def test_cross_pair_api_rejects_assigning_one_reviewer_to_multiple_branches(case
         ],
     })
     assert response.status_code == 422
-    assert "不能分配给多个支部" in response.json()["detail"]["message"]
+    assert "不能分配给多个支部" in response.json()["message"]
 
 
 def test_role_header_must_be_explicit_and_valid(case):
