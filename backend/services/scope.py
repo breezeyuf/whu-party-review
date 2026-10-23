@@ -55,6 +55,29 @@ def scoped_submissions(query: Query, actor: Actor, db: Session) -> Query:
     return query.filter(Submission.id == -1)
 
 
+def scoped_jobs(db: Session, actor: Actor):
+    """任务列表/详情的数据范围（原 routers/jobs.py::_scoped_jobs，逻辑不变）。
+
+    ZIP 确认入库也用它取任务，保证“看不到的任务”一律 404，不泄露他人任务。
+    """
+    from sqlalchemy import and_, or_
+
+    from models import Job, Material, MaterialVersion
+
+    query = db.query(Job)
+    if actor.role in ("SYS_ADMIN", "ORG_ADMIN"):
+        return query
+    if actor.role == "STUDENT":
+        return query.filter(Job.created_by == actor.id)
+    submissions = scoped_submissions(db.query(Submission.id), actor, db)
+    versions = db.query(MaterialVersion.id).join(Material).filter(Material.submission_id.in_(submissions))
+    return query.filter(or_(
+        Job.created_by == actor.id,
+        and_(Job.target_type == "submission", Job.target_id.in_(submissions)),
+        and_(Job.target_type == "material_version", Job.target_id.in_(versions)),
+    ))
+
+
 def ensure_archive_access(db: Session, actor: Actor, archive_id: int, request=None) -> Archive:
     q = scoped_archives(db.query(Archive), actor, db).filter(Archive.id == archive_id)
     row = q.first()
