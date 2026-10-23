@@ -63,6 +63,35 @@ $env:TEST_DATABASE_URL='postgresql+psycopg://postgres:PASSWORD@127.0.0.1:5432/pa
 
 这组用例创建随机 `review_test_*` schema，结束后仅移除该临时 schema，不会隐式使用应用数据库。连接用户需要 CREATE SCHEMA 权限。API 冒烟使用 `DATABASE_URL`，其生命周期会初始化应用结构，因此应指向测试库。
 
+### 没有本机 PostgreSQL 时：临时库跑数据库回归
+
+`pgserver` 自带 PostgreSQL 16.2 二进制，不需要单独安装数据库。它目前没有 Python 3.13 的轮子，
+用一份 3.12 环境单独装它即可（后端仍跑在项目自己的 3.13 环境）：
+
+```powershell
+uv python install 3.12
+uv venv --python 3.12 _pgtools/.venv
+uv pip install --python _pgtools/.venv/Scripts/python.exe pgserver
+_pgtools\.venv\Scripts\python.exe _tools\pg_run.py _tmp\pgdata   # 打印并常驻一个临时实例
+```
+
+拿到连接串后，把 `TEST_DATABASE_URL` 指向该实例的 `postgres` 库、`DATABASE_URL` 指向同实例的
+应用库（用于 API 冒烟），即可跑全量回归：
+
+```powershell
+$env:TEST_DATABASE_URL='postgresql+psycopg://postgres:@127.0.0.1:<port>/postgres'
+$env:DATABASE_URL='postgresql+psycopg://postgres:@127.0.0.1:<port>/party_review'
+$env:APP_SECRET_KEY='test-key-0123456789abcdef'
+$env:WORKER_ENABLED='0'
+cd backend
+..\.venv\Scripts\python.exe -m pytest -q
+```
+
+数据库用例为每个测试模块新建随机 schema（`pytest_*` / `zipconc_*`），测试在事务里跑完即回滚，
+结束后 `DROP SCHEMA`，从不连接应用库；`TEST_DATABASE_URL` 未设置时这些用例跳过，跳过不计为通过。
+本轮实测：278 passed / 0 skipped。
+
+
 请求竞态测试：先在前端运行 `npm run dev`，浏览器访问 http://127.0.0.1:5173/tests/hooks.html ，页面显示 4 项实际 React Hook 测试结果。
 
 完整 HTTP 回归脚本为 `backend/tests/e2e_review_flow.py`。它会创建演示数据与合成档案，必须连接独立空测试库，并显式传入 `--allow-test-writes`：
