@@ -11,6 +11,7 @@ from models import AuditLog, ReviewRecord
 from services.workflow import BLOCKING_REVIEW_STATUSES
 from tests.pg_fixtures import (  # noqa: F401  夹具由 import 引入
     add_issue,
+    add_material,
     add_report,
     as_client,
     case,
@@ -109,10 +110,31 @@ def test_handover_required_blocks_every_path(case, as_client, path):
 
 
 @pytest.mark.parametrize("path", ["review", "batch", "filing"])
-def test_stale_or_running_report_blocks_every_path(case, as_client, path):
+def test_running_check_blocks_every_path(case, as_client, path):
     sub = case.sub_filing if path == "filing" else case.sub_branch
     sub.ai_status = "RUNNING"
     case.db.flush()
+    client = as_client(case.org_admin if path == "filing" else case.reviewer)
+    if path == "review":
+        response = client.post(f"/api/submissions/{sub.id}/review", json=review_body())
+        assert response.status_code == 409 and response.json()["code"] == 40901
+    elif path == "batch":
+        response = client.post(
+            "/api/submissions/batch-review", json={"level": "BRANCH", "submission_ids": [sub.id]}
+        )
+        assert response.json()["data"]["failed"] == [
+            {"submission_id": sub.id, "code": 40901, "reason": "AI 报告已过期或检查未完成，请重新检查"}
+        ]
+    else:
+        response = client.post(f"/api/submissions/{sub.id}/filing", json={})
+        assert response.status_code == 409 and response.json()["code"] == 40901
+
+
+@pytest.mark.parametrize("path", ["review", "batch", "filing"])
+def test_stale_report_blocks_every_path(case, as_client, path):
+    """报告之后材料又变了：快照与当前材料不一致，视为报告过期。"""
+    sub = case.sub_filing if path == "filing" else case.sub_branch
+    add_material(case.db, sub, stored_path=f"materials/{sub.id}/late.pdf", sha="a" * 64)
     client = as_client(case.org_admin if path == "filing" else case.reviewer)
     if path == "review":
         response = client.post(f"/api/submissions/{sub.id}/review", json=review_body())
