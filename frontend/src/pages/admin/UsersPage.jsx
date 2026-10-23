@@ -5,7 +5,7 @@ import DataTable, { Pager } from "../../components/common/DataTable"
 import { Modal } from "../../components/common/Modal"
 import { usePagination } from "../../hooks/usePagination"
 import { useRequest } from "../../hooks/useRequest"
-import { createUser, importTemplate, importUsers, listUsers, resetPassword, updateUser } from "../../api/users"
+import { createUser, downloadImportPasswords, importTemplate, importUsers, listUsers, resetPassword, updateUser } from "../../api/users"
 import { saveBlob } from "../../api/client"
 import { listBatches } from "../../api/batches"
 import { listOrgs } from "../../api/orgs"
@@ -37,6 +37,7 @@ export default function UsersPage() {
   const [secret, setSecret] = useState("")
   const [importResult, setImportResult] = useState(null)
   const [importing, setImporting] = useState(false)
+  const [downloadingPasswords, setDownloadingPasswords] = useState(false)
   const [downloadingTemplate, setDownloadingTemplate] = useState(false)
   const [pendingImportFile, setPendingImportFile] = useState(null)
   const [batchId, setBatchId] = useState("")
@@ -140,15 +141,31 @@ export default function UsersPage() {
     }
   }
 
-  const copyImportedPasswords = async () => {
-    const rows = importResult?.initial_passwords || []
-    if (!rows.length) return
-    const text = rows.map((row) => `${row.username}\t${row.password}`).join("\n")
+  const copyFilePassword = async () => {
+    const password = importResult?.initial_passwords_file?.password
+    if (!password) return
     try {
-      await navigator.clipboard.writeText(text)
-      toast.success("账号和初始密码已复制")
+      await navigator.clipboard.writeText(password)
+      toast.success("文件打开口令已复制")
     } catch {
-      toast.error("浏览器不允许自动复制，请手动选中并复制表格内容")
+      toast.error("复制失败，请手动选中并复制打开口令")
+    }
+  }
+
+  const downloadPasswords = async () => {
+    const file = importResult?.initial_passwords_file
+    if (!file || file.downloaded || downloadingPasswords) return
+    setDownloadingPasswords(true)
+    try {
+      const result = await downloadImportPasswords(file.id)
+      saveBlob(result)
+      setImportResult((current) => current?.initial_passwords_file?.id === file.id
+        ? { ...current, initial_passwords_file: { ...file, downloaded: true } } : current)
+      toast.success("密码文件已下载，请使用显示的口令打开")
+    } catch (e) {
+      toast.error(e.message || "密码文件下载失败")
+    } finally {
+      setDownloadingPasswords(false)
     }
   }
 
@@ -163,7 +180,7 @@ export default function UsersPage() {
   }
 
   const doImport = async (file, dryRun) => {
-    if (importing) return
+    if (importing || downloadingPasswords) return
     const fileProblem = !file.name.toLowerCase().endsWith(".xlsx")
       ? "请选择 .xlsx 格式的 Excel 文件"
       : file.size > 10 * 1024 * 1024
@@ -241,7 +258,7 @@ export default function UsersPage() {
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-base-content/60">Excel 导入</span>
           <select className="select select-bordered select-xs" value={batchId} onChange={(e) => setBatchId(e.target.value)} disabled={importing}>
-            <option value="">不建档</option>
+            <option value="">未指定批次</option>
             {(batches.data?.items || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
           <label className={`btn btn-outline btn-xs ${importing ? "pointer-events-none opacity-50" : ""}`} aria-disabled={importing}>{importing ? "处理中…" : "预校验"}<input type="file" accept=".xlsx" className="hidden" disabled={importing} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) doImport(file, true) }} /></label>
@@ -256,23 +273,19 @@ export default function UsersPage() {
                 : importResult.dryRun
                   ? ((importResult.errors || []).length ? "预校验完成，发现问题（未写入数据）" : "预校验通过（未写入数据）")
                   : "正式导入完成"}</span>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => setImportResult(null)}>清除结果</button>
+              <button type="button" className="btn btn-ghost btn-xs" disabled={downloadingPasswords} onClick={() => setImportResult(null)}>清除结果</button>
             </div>
             <div>共 {importResult.total} 行，有效 {importResult.valid}，新建用户 {importResult.created_users ?? 0}，档案 {importResult.created_archives ?? 0}</div>
-            {!importResult.dryRun && !importResult.failed && (importResult.initial_passwords || []).length > 0 && (
+            {!importResult.dryRun && !importResult.failed && importResult.initial_passwords_file && (
               <div className="alert alert-warning mt-3 block text-xs">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">新账号初始密码仅本次显示，请妥善保存并安全交付。</span>
-                  <button type="button" className="btn btn-outline btn-xs" onClick={copyImportedPasswords}>复制账号和密码</button>
+                  <span className="font-medium">新账号密码已生成加密 Excel，可在 24 小时内下载一次。</span>
+                  <button type="button" className="btn btn-outline btn-xs" onClick={downloadPasswords} disabled={downloadingPasswords || importResult.initial_passwords_file.downloaded}>
+                    {importResult.initial_passwords_file.downloaded ? "已下载" : downloadingPasswords ? "正在下载…" : "下载密码文件"}
+                  </button>
                 </div>
-                <div className="max-h-48 overflow-auto">
-                  <table className="table table-xs">
-                    <thead><tr><th>账号</th><th>初始密码</th></tr></thead>
-                    <tbody>{importResult.initial_passwords.map((row) => (
-                      <tr key={row.username}><td className="mono">{row.username}</td><td className="mono select-all">{row.password}</td></tr>
-                    ))}</tbody>
-                  </table>
-                </div>
+                <p>文件打开口令（仅本次显示）：<span className="mono select-all">{importResult.initial_passwords_file.password}</span>
+                  <button type="button" className="btn btn-ghost btn-xs" onClick={copyFilePassword}>复制口令</button></p>
               </div>
             )}
             {(importResult.errors || []).length > 0 && (
@@ -320,8 +333,8 @@ export default function UsersPage() {
       )}>
         {pendingImportFile && <div className="grid gap-3">
           <div className="text-sm">文件：<span className="font-medium break-all">{pendingImportFile.name}</span></div>
-          <div className="text-sm">学生档案建档批次：<span className="font-medium">{batchId ? (batches.data?.items || []).find((batch) => String(batch.id) === String(batchId))?.name || `批次 ${batchId}` : "不建档"}</span></div>
-          <div className="alert alert-warning text-sm" role="alert">正式导入会写入本机数据库并创建文件中的用户/档案。若导入创建了新用户，初始密码只会在结果区显示一次。建议先对同一文件执行预校验。</div>
+          <div className="text-sm">学生档案建档批次：<span className="font-medium">{batchId ? (batches.data?.items || []).find((batch) => String(batch.id) === String(batchId))?.name || `批次 ${batchId}` : "未指定，可使用文件中的批次名称"}</span></div>
+          <div className="alert alert-warning text-sm" role="alert">正式导入会创建文件中的用户/档案。新用户的初始密码通过加密 Excel 交付，文件只能下载一次，打开口令仅本次显示。建议先对同一文件执行预校验。</div>
         </div>}
       </Modal>
       <Modal open={!!resetTarget} title="确认重置密码" onClose={() => { if (!resetting) setResetTarget(null) }} footer={(

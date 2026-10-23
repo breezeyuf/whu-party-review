@@ -727,6 +727,17 @@ class ExportFile(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ImportPasswordFile(Base):
+    __tablename__ = "import_password_files"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    encrypted_payload: Mapped[Optional[str]] = mapped_column(Text)
+    file_name: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 class SchemaMeta(Base):
     __tablename__ = "schema_meta"
     key: Mapped[str] = mapped_column(Text, primary_key=True)

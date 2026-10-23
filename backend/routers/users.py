@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, Query, Request, Response, UploadFile, File, Form
 from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
@@ -69,7 +69,7 @@ def import_template(actor: Actor = Depends(get_current_user)):
 
 
 @router.post("/import")
-async def import_users(file: UploadFile = File(...), dry_run: str = Form("true"), batch_id: str | None = Form(None),
+async def import_users(response: Response, file: UploadFile = File(...), dry_run: str = Form("true"), batch_id: int | None = Form(None),
                        db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("SYS_ADMIN", "ORG_ADMIN", "COLLEGE_REVIEWER"):
         raise forbidden()
@@ -77,10 +77,20 @@ async def import_users(file: UploadFile = File(...), dry_run: str = Form("true")
     if len(data) > 10 * 1024 * 1024:
         raise too_large("导入文件超过 10 MB")
     dry = str(dry_run).lower() in ("1", "true", "yes")
-    bid = int(batch_id) if batch_id else None
-    result = import_users_xlsx(db, actor, data, dry_run=dry, batch_id=bid)
+    result = import_users_xlsx(db, actor, data, dry_run=dry, batch_id=batch_id)
+    response.headers["Cache-Control"] = "no-store, private"
     log(db, actor, "USER_IMPORT", "user", None, {"dry_run": dry})
     return ok(result)
+
+
+@router.get("/import-passwords/{file_id}/download")
+def download_import_passwords(file_id: int, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    if actor.role not in ("SYS_ADMIN", "ORG_ADMIN", "COLLEGE_REVIEWER"):
+        raise forbidden()
+    from services.import_passwords import consume_password_file
+    response = consume_password_file(db, actor, file_id)
+    log(db, actor, "IMPORT_PASSWORDS_DOWNLOAD", "import_password_file", file_id)
+    return response
 
 
 @router.get("/{uid}")
