@@ -122,3 +122,18 @@ def test_existing_admin_is_not_reset_or_reactivated(monkeypatch):
     assert user.password_hash == "existing-hash"
     assert not user.is_active and user.token_version == 7
     db.flush.assert_not_called()
+
+
+@pytest.mark.parametrize("active", [False, True])
+def test_historically_public_admin_hash_is_rotated_without_reactivation(monkeypatch, active):
+    db, user = admin_db("synthetic-historical-hash")
+    user.is_active = active
+    # Supply a synthetic digest result rather than putting the old bcrypt hash
+    # back in a public regression fixture.
+    monkeypatch.setattr(seed_rules, "sha256", lambda _: SimpleNamespace(
+        hexdigest=lambda: "2baa999db1fb9db82bfc5798d798723b01686c7038ba9c8fc392e1ad16270346"))
+    monkeypatch.setattr(seed_rules, "ADMIN_PASSWORD", "ReplacementPassword9!")
+    assert seed_rules.ensure_admin(db) is None
+    assert verify_password("ReplacementPassword9!", user.password_hash)
+    assert user.is_active is active
+    assert user.must_change_password and user.token_version == 8
