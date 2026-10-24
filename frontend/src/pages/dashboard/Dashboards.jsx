@@ -68,8 +68,11 @@ export function AdminDashboard({ data }) {
   return <div className="home-stack">
     <section className="next-action"><p className="section-eyebrow">管理事项</p><h2>组织与平台管理</h2><p className="next-action-description">选择需要维护的事项，进入对应管理页面。</p></section>
     <section className="admin-entry-grid" aria-label="管理功能">{management.map((item) => <Link key={item.to} className="service-section admin-entry" to={item.to}><h2>{item.label}<ArrowRight size={18} /></h2><p>{descriptions[item.to]}</p></Link>)}</section>
-    {data.role === "ORG_ADMIN" && <section className="service-section"><div className="section-heading"><h2>备案办理</h2><Link className="quiet-link" to="/review/tasks">进入备案待办<ArrowRight size={16} /></Link></div><p className="text-sm text-base-content/65">当前有 <strong className="mono">{data.todo?.to_review ?? 0}</strong> 份材料等待组织部备案。</p></section>}
-    <div className="home-support-links"><Link to="/stats/overview">查看审核统计<ArrowRight size={15} /></Link><Link to="/messages">查看消息<ArrowRight size={15} /></Link></div>
+    <div className="admin-quick-links" aria-label="常用入口">
+      {data.role === "ORG_ADMIN" && <Link className="admin-quick-link" to="/review/tasks"><span><strong>进入备案待办</strong><small>当前有 {data.todo?.to_review ?? 0} 份材料等待组织部备案</small></span><ArrowRight size={18} /></Link>}
+      <Link className="admin-quick-link" to="/stats/overview"><span><strong>查看审核统计</strong><small>了解材料审核与整改情况</small></span><ArrowRight size={18} /></Link>
+      <Link className="admin-quick-link" to="/messages"><span><strong>查看消息</strong><small>查看审核提醒与工作通知</small></span><ArrowRight size={18} /></Link>
+    </div>
   </div>
 }
 

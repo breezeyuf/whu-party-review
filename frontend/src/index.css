@@ -90,6 +90,10 @@ a.surface-card:hover {
   background: var(--color-primary);
 }
 
+/* 规则页以栏目名作为一级视觉标题，页内标题收一级，形成清晰层次。 */
+.service-shell .rule-section-layout > nav > h2 { font-size: 1.625rem; line-height: 1.3; }
+.service-shell .rule-section-layout .page-title { font-size: 1.25rem; }
+
 /* daisyUI 5 removed form-control / label-text; keep the stacked label + full-width field layout */
 .form-control {
   display: flex;
@@ -296,7 +300,18 @@ main > * {
 .process-list .is-complete .process-number { border-color:#426b53; color:#426b53; }
 .process-current-label { display:inline-block; margin-top:8px; font-size:12px; color:#9a2530; }
 .home-support-links { display:flex; align-items:center; flex-wrap:wrap; gap:24px; }
-.home-support-links > a { display:flex; align-items:center; gap:14px; font-size:14px; color:#3e5e7c; text-decoration:underline; text-underline-offset:4px; }
+.home-support-links > a { display:flex; align-items:center; gap:14px; font-size:14px; }
+.admin-quick-links { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+.admin-quick-link { display:flex; min-width:0; align-items:center; justify-content:space-between; gap:12px; padding:18px 20px; border:1px solid #d5dbe1; border-radius:4px; background:#fff; color:#304f6b; text-decoration:none; }
+.admin-quick-link:hover { border-color:#aebdca; background:#f8fafc; }
+.admin-quick-link > span { display:flex; min-width:0; flex-direction:column; gap:5px; }
+.admin-quick-link strong { font-size:17px; font-weight:650; color:#24313e; }
+.admin-quick-link small { color:#697580; font-size:13px; line-height:1.5; }
+.admin-quick-link > svg { flex:0 0 auto; }
+.rule-action-export { border-color:#d4dee8; background:#eaf0f5; color:#344f68; }
+.rule-action-export:hover { border-color:#c4d1dd; background:#dfe8f0; }
+.rule-action-import { border-color:#d2e5d8; background:#edf5ef; color:#365b43; }
+.rule-action-import:hover { border-color:#c2d9c9; background:#e1efe5; }
 .service-details { border-top:1px solid #d5dbe1; background:transparent; }
 .service-details > summary { cursor:pointer; font-size:14px; font-weight:600; color:#3e5e7c; padding:16px 2px; }
 .service-details .details-content { background:#fff; border:1px solid #d5dbe1; border-radius:4px; padding:24px; margin:2px 0 8px; }
@@ -346,7 +361,7 @@ main > * {
 .service-compact-upload .btn { margin:0; flex-shrink:0; }
 @media (max-width:1199px) { .service-main { padding:28px 24px 48px; } .review-grid { grid-template-columns:minmax(0,1fr); } .review-preview { position:static; } .review-preview .preview-scroll { max-height:65vh; } }
 @media (max-width:1023px) { .service-menu-toggle { display:grid; place-items:center; height:36px; width:36px; cursor:pointer; flex-shrink:0; } .service-header { padding:0 16px; gap:8px; } .service-sidebar { display:none; position:fixed; top:72px; bottom:0; left:0; z-index:60; min-height:0; width:248px; } .service-sidebar.is-open { display:flex; } .service-nav-overlay { position:fixed; inset:72px 0 0; background:#13253350; z-index:50; cursor:pointer; } }
-@media (max-width:680px) { .service-header { height:64px; padding:0 10px; gap:4px; } .service-brand { font-size:13px; gap:7px; } .service-brand-mark { width:28px; height:28px; font-size:14px; } .service-brand-subtitle { font-size:10px; } .service-header-actions { gap:3px; } .service-role-label { display:none; } .service-role-select { width:104px; font-size:12px; padding-inline:6px; } .service-sidebar { top:64px; max-height:calc(100vh - 64px); } .service-nav-overlay { top:64px; } .service-main { padding:22px 16px 40px; } .service-shell .page-title { font-size:22px; } .home-stack { gap:20px; } .next-action { padding:22px 20px; } .next-action h2 { font-size:22px; } .next-action-context { margin-bottom:18px; } .service-section { padding:20px; } .process-list { grid-template-columns:1fr; gap:22px; } .home-two-columns { grid-template-columns:1fr; gap:20px; } .reviewer-next-action { grid-template-columns:1fr; gap:22px; } .review-todo-aside { border-left:0; border-top:1px solid #e0e5ea; padding:8px 0 0; } .review-todo-aside > a { padding:8px 0; } .home-support-links { gap:18px; } .review-stage-links { gap:12px; font-size:12px; } .review-issues-pane { max-height:none; } .service-compact-upload { flex-wrap:wrap; gap:8px; } }
+@media (max-width:680px) { .service-header { height:64px; padding:0 10px; gap:4px; } .service-brand { font-size:13px; gap:7px; } .service-brand-mark { width:28px; height:28px; font-size:14px; } .service-brand-subtitle { font-size:10px; } .service-header-actions { gap:3px; } .service-role-label { display:none; } .service-role-select { width:104px; font-size:12px; padding-inline:6px; } .service-sidebar { top:64px; max-height:calc(100vh - 64px); } .service-nav-overlay { top:64px; } .service-main { padding:22px 16px 40px; } .service-shell .page-title { font-size:22px; } .service-shell .rule-section-layout > nav > h2 { font-size:1.375rem; } .service-shell .rule-section-layout .page-title { font-size:1.125rem; } .home-stack { gap:20px; } .next-action { padding:22px 20px; } .next-action h2 { font-size:22px; } .next-action-context { margin-bottom:18px; } .service-section { padding:20px; } .process-list { grid-template-columns:1fr; gap:22px; } .home-two-columns { grid-template-columns:1fr; gap:20px; } .admin-quick-links { grid-template-columns:1fr; gap:10px; } .admin-quick-link { padding:15px 16px; } .reviewer-next-action { grid-template-columns:1fr; gap:22px; } .review-todo-aside { border-left:0; border-top:1px solid #e0e5ea; padding:8px 0 0; } .review-todo-aside > a { padding:8px 0; } .home-support-links { gap:18px; } .review-stage-links { gap:12px; font-size:12px; } .review-issues-pane { max-height:none; } .service-compact-upload { flex-wrap:wrap; gap:8px; } }
 @media (prefers-reduced-motion:reduce) { .service-shell *, .service-shell *::before { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
 
 .issue-filters select { width:auto; min-width:100px; max-width:100%; }

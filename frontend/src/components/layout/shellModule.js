@@ -21,6 +21,7 @@ export const pages = {
   MaterialDetailPage: () => import("../../pages/material/MaterialDetailPage"),
   NoticesPage: () => import("../../pages/notice/NoticesPage"),
   ChecklistsPage: () => import("../../pages/rules/ChecklistsPage"),
+  RuleSectionLayout: () => import("../rules/RuleSectionLayout"),
   MaterialTypesPage: () => import("../../pages/rules/MaterialTypesPage"),
   TimeRulesPage: () => import("../../pages/rules/TimeRulesPage"),
   CheckRulesPage: () => import("../../pages/rules/CheckRulesPage"),

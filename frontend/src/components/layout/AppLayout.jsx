@@ -10,8 +10,9 @@ import { useMeta } from "../../context/MetaContext"
 import { useUnreadCount } from "../../hooks/useUnreadCount"
 
 function NavigationGroup({ group, pathname, onNavigate }) {
-  const active = group.items.some((item) => isMenuActive(pathname, item.to))
-  const [expanded, setExpanded] = useState(active)
+  const isActive = (item) => (item.activePaths || [item.to]).some((path) => isMenuActive(pathname, path))
+  const active = group.items.some(isActive)
+  const [expanded, setExpanded] = useState(active || group.defaultExpanded === true)
   useEffect(() => { if (active) setExpanded(true) }, [active])
   const id = `nav-${group.group}`
   return <section className="service-nav-group">
@@ -19,7 +20,7 @@ function NavigationGroup({ group, pathname, onNavigate }) {
       <span>{group.group}</span><ChevronDown size={15} className={expanded ? "rotate-180" : ""} />
     </button> : <p className="service-nav-label">{group.group}</p>}
     <ul id={id} hidden={group.collapsible && !expanded}>
-      {group.items.map((item) => <li key={item.to}><Link to={item.to} aria-current={isMenuActive(pathname, item.to) ? "page" : undefined} onClick={onNavigate} className={`service-nav-link ${isMenuActive(pathname, item.to) ? "is-active" : ""}`}>{item.label}</Link></li>)}
+      {group.items.map((item) => <li key={item.to}><Link to={item.to} aria-current={isActive(item) ? "page" : undefined} onClick={onNavigate} className={`service-nav-link ${isActive(item) ? "is-active" : ""}`}>{item.label}</Link></li>)}
     </ul>
   </section>
 }

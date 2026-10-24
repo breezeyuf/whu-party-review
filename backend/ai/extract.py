@@ -99,8 +99,9 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
             ctx = text[max(0, d["start"] - 30): d["end"] + 12]
             if any(k in ctx for k in kws):
                 hits.append(d)
-        if not hits and nd.code in ("T06",) and dates:
-            hits = [dates[-1]]
+        # Do not guess a thought-report date from an unrelated date elsewhere
+        # in the document (for example, a birth date in an autobiography).
+        # False positives contaminate the archive timeline and can affect rules.
         for i, h in enumerate(hits):
             loc = _locate(pages, h.get("raw") or "")
             results.append({
