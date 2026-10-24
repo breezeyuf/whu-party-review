@@ -10,6 +10,7 @@ from config import WORKER_ENABLED
 from database import SessionLocal
 from models import Job, Material, Submission
 from utils import get_setting, now
+from diagnostics import event, log_exception
 
 # 站内消息里的任务类型 / 状态用中文，避免界面出现英文枚举
 _JOB_TYPE_NAME = {
@@ -35,7 +36,7 @@ _last_scan = 0.0
 
 def start_workers() -> None:
     if not WORKER_ENABLED:
-        print("[worker] WORKER_ENABLED=0, skip")
+        event("worker.disabled")
         return
     db = SessionLocal()
     try:
@@ -47,7 +48,7 @@ def start_workers() -> None:
         ).update({"status": "QUEUED"}, synchronize_session=False)
         db.commit()
     except Exception as e:
-        print("[worker] recover failed:", e)
+        log_exception("worker.recovery_failed", e)
         db.rollback()
     finally:
         db.close()
@@ -55,7 +56,7 @@ def start_workers() -> None:
         t = threading.Thread(target=_loop, name=f"worker-{i}", daemon=True)
         t.start()
         _threads.append(t)
-    print(f"[worker] started {_threads.__len__()} threads")
+    event("worker.started", threads=len(_threads))
 
 
 def stop_workers() -> None:
@@ -80,7 +81,7 @@ def _loop() -> None:
             db.commit()
         except Exception as e:
             db.rollback()
-            print("[worker] error:", e)
+            log_exception("worker.loop_failed", e)
         finally:
             db.close()
         if not did:
@@ -116,14 +117,16 @@ def _fail(db, job: Job, err: str) -> None:
         db.rollback()
     try:
         _apply_fail(db, job, err)
-    except Exception:
+    except Exception as exc:
+        log_exception("worker.failure_record_failed", exc, job_id=job.id)
         # 会话可能处于 aborted 状态（如 run_check 内部 flush 失败），回滚后重新加载任务再写
         db.rollback()
         fresh = db.query(Job).filter(Job.id == job.id).first()
         if fresh:
             try:
                 _apply_fail(db, fresh, err)
-            except Exception:
+            except Exception as exc:
+                log_exception("worker.failure_retry_record_failed", exc, job_id=job.id)
                 db.rollback()
 
 
@@ -157,8 +160,8 @@ def _notify_done(db, job: Job) -> None:
         send_message(db, job.created_by, "JOB_DONE",
                      f"任务 {_JOB_TYPE_NAME.get(job.job_type, job.job_type)} #{job.id} {_JOB_STATUS_NAME.get(job.status, job.status)}",
                      job.error or "", "job", job.id)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_exception("worker.notification_failed", exc, job_id=job.id)
 
 
 def _run(db, job: Job) -> None:
@@ -228,7 +231,8 @@ def _run(db, job: Job) -> None:
         else:
             _fail(db, job, f"未知任务类型 {job.job_type}")
     except Exception as e:
-        _fail(db, job, str(e))
+        log_exception("worker.job_failed", e, job_id=job.id, job_type=job.job_type)
+        _fail(db, job, "任务执行失败，请联系管理员并提供任务编号")
         if job.job_type == "AI_CHECK" and job.parent_id:
             _bump_parent(db, job.parent_id, False)
 

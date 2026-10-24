@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Optional
+from diagnostics import log_exception
 
 from sqlalchemy.orm import Session
 
@@ -123,8 +124,9 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
             merge_archive_nodes(db, material.archive_id, node_defs=nodes)
         return pr
     except Exception as e:
+        log_exception("material.parse_failed", e, version_id=version_id)
         ver.parse_status = "FAILED"
-        ver.parse_error = str(e)[:500]
+        ver.parse_error = "材料解析失败，请联系管理员并提供材料版本编号"
         db.flush()
         raise
 
@@ -325,8 +327,9 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         db.flush()
         return report
     except Exception as e:
+        log_exception("review.check_failed", e, submission_id=submission_id, report_id=report.id)
         report.status = "FAILED"
-        report.error = str(e)[:800]
+        report.error = "审核执行失败，请联系管理员并提供报告编号"
         report.finished_at = now()
         sub.ai_status = "FAILED"
         db.flush()

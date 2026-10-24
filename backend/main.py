@@ -15,6 +15,10 @@ from errors import AppError
 from seed_rules import ensure_admin, seed_rules
 from worker import start_workers, stop_workers
 from services.frontend import mount_frontend
+from diagnostics import configure_logging, log_exception
+from middleware import RequestBodyLimitMiddleware, RequestDiagnosticsMiddleware
+
+configure_logging()
 
 
 @asynccontextmanager
@@ -41,12 +45,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="党员发展材料智能审核工作台", version="1.0.0", lifespan=lifespan)
 
+app.add_middleware(RequestBodyLimitMiddleware)
+app.add_middleware(RequestDiagnosticsMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS or ["*"],
     allow_credentials=bool(CORS_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
 
@@ -74,6 +81,7 @@ async def http_handler(_, exc: StarletteHTTPException):
 
 @app.exception_handler(Exception)
 async def unhandled(_, exc: Exception):
+    log_exception("http.unhandled", exc)
     return JSONResponse(status_code=500, content={"code": 50000, "message": "服务器内部错误", "data": None})
 
 
@@ -127,4 +135,4 @@ mount_frontend(app, _fe)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host=os.getenv("HOST", HOST), port=int(os.getenv("PORT", str(PORT))))
+    uvicorn.run("main:app", host=os.getenv("HOST", HOST), port=int(os.getenv("PORT", str(PORT))), proxy_headers=False)
