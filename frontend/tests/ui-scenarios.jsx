@@ -590,7 +590,7 @@ export async function runUiScenarios() {
       { path: "/rules/material-types", element: <p>材料类型内容</p> },
     ] }]
     await mount(null, { path: "/rules/checklists", routes })
-    assert.match(text(), /材料标准阶段清单材料类型阶段清单内容/)
+    assert.match(text(), /材料标准材料清单材料类型与模板阶段清单内容/)
     await click(document.querySelector('a[href="/rules/material-types"]'))
     assert.equal(router.state.location.pathname, "/rules/material-types")
     assert.match(text(), /材料类型内容/)

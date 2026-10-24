@@ -97,6 +97,6 @@ export function menusFor(active) {
   if (can(active, "users")) admin.push(item("/admin/users", "用户管理"))
   if (can(active, "settings")) admin.push(item("/admin/settings", "系统配置"))
   if (can(active, "audit")) admin.push(item("/admin/audit-logs", "操作日志"))
-  if (admin.length) groups.push({ group: "组织与系统管理", collapsible: true, items: admin })
+  if (admin.length) groups.push({ group: "组织与系统管理", collapsible: true, defaultExpanded: true, items: admin })
   return groups
 }

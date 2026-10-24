@@ -12,7 +12,7 @@ import { useUnreadCount } from "../../hooks/useUnreadCount"
 function NavigationGroup({ group, pathname, onNavigate }) {
   const isActive = (item) => (item.activePaths || [item.to]).some((path) => isMenuActive(pathname, path))
   const active = group.items.some(isActive)
-  const [expanded, setExpanded] = useState(active)
+  const [expanded, setExpanded] = useState(active || group.defaultExpanded === true)
   useEffect(() => { if (active) setExpanded(true) }, [active])
   const id = `nav-${group.group}`
   return <section className="service-nav-group">
