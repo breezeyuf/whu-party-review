@@ -5,17 +5,22 @@ from sqlalchemy.orm import Session, selectinload
 
 from config import DEMO_LOGIN_HINT, DEMO_PASSWORD
 from database import get_db
-from deps import Actor, get_current_user, get_current_user_allow_must_change, client_ip
-from errors import locked, unauthorized, unprocessable
+from deps import Actor, get_current_user, get_current_user_allow_must_change
+from errors import unauthorized, unprocessable
 from models import RevokedToken, User, UserRole
 from schemas.common import ok
 from security import decode_token, hash_password, issue_token, password_ok, verify_password
 from services.audit import log
+from services.client_ip import client_ip
 from utils import get_setting, now, serialize_user_brief
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import secrets
 import jwt
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+# Never corresponds to an account; one bcrypt check also runs for unknown users.
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(32))
+_LOGIN_FAILURE = "用户名或密码错误"
 
 
 def _tokens(user: User, minutes: int, days: int):
@@ -28,24 +33,33 @@ def _tokens(user: User, minutes: int, days: int):
 def login(body: dict, request: Request, db: Session = Depends(get_db)):
     username = (body or {}).get("username") or ""
     password = (body or {}).get("password") or ""
+    username = username if isinstance(username, str) else ""
+    password = password if isinstance(password, str) else ""
     user = db.query(User).options(selectinload(User.roles).selectinload(UserRole.org), selectinload(User.org)).filter(User.username == username).first()
     sec = get_setting(db, "security", {"max_failed_login": 5, "lock_minutes": 15, "access_token_minutes": 120, "refresh_token_days": 7})
-    if user and user.locked_until and user.locked_until > datetime.now(timezone.utc):
-        raise locked("账号已锁定", {"locked_until": user.locked_until.isoformat()})
-    if not user or not verify_password(password, user.password_hash) or not user.is_active:
+    is_locked = bool(user and user.locked_until and user.locked_until > now())
+    check_hash = user.password_hash if user and user.is_active and not is_locked else _DUMMY_PASSWORD_HASH
+    password_valid = verify_password(password, check_hash)
+    if not user or not password_valid or not user.is_active or is_locked:
+        detail = {"username": username}
         if user:
-            user.failed_login_count = (user.failed_login_count or 0) + 1
-            remain = max(0, int(sec.get("max_failed_login", 5)) - user.failed_login_count)
-            if user.failed_login_count >= int(sec.get("max_failed_login", 5)):
-                from datetime import timedelta
-                user.locked_until = now() + timedelta(minutes=int(sec.get("lock_minutes", 15)))
-                log(db, None, "LOGIN_FAILED", "user", user.id, {"username": username}, request)
-                db.commit()
-                raise locked("连续失败次数过多，账号已锁定", {"locked_until": user.locked_until.isoformat()})
-            log(db, None, "LOGIN_FAILED", "user", user.id, {"username": username, "remain": remain}, request)
-            db.commit()
-            raise unauthorized(f"用户名或密码错误，剩余 {remain} 次")
-        raise unauthorized("用户名或密码错误")
+            if is_locked:
+                detail["reason"] = "LOCKED"
+            else:
+                user.failed_login_count = (user.failed_login_count or 0) + 1
+                max_failed = int(sec.get("max_failed_login", 5))
+                detail["remain"] = max(0, max_failed - user.failed_login_count)
+                detail["reason"] = "BAD_PASSWORD" if user.is_active else "INACTIVE"
+                if user.failed_login_count >= max_failed:
+                    user.locked_until = now() + timedelta(minutes=int(sec.get("lock_minutes", 15)))
+                    detail["reason"] = "LOCKED"
+            if user.locked_until:
+                detail["locked_until"] = user.locked_until.isoformat()
+        else:
+            detail["reason"] = "UNKNOWN_USER"
+        log(db, None, "LOGIN_FAILED", "user", user.id if user else None, detail, request)
+        db.commit()
+        raise unauthorized(_LOGIN_FAILURE)
     user.failed_login_count = 0
     user.locked_until = None
     user.last_login_at = now()
