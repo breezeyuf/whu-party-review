@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import threading
 from typing import Any, Optional
 
 import httpx
@@ -14,6 +15,25 @@ from errors import unprocessable
 from models import Archive, PromptTemplate
 from security import decrypt_field
 from utils import get_setting
+
+_CALLS = threading.Condition()
+_ACTIVE_CALLS = 0
+
+
+def chat_json(db, code, variables, override=None, *, archive=None, rule_set=None):
+    global _ACTIVE_CALLS
+    cfg = {**llm_config(db), **(override or {})}
+    limit = max(1, min(32, int(cfg.get('max_concurrency') or 2)))
+    with _CALLS:
+        while _ACTIVE_CALLS >= limit:
+            _CALLS.wait()
+        _ACTIVE_CALLS += 1
+    try:
+        return _chat_json(db, code, variables, override, archive=archive, rule_set=rule_set)
+    finally:
+        with _CALLS:
+            _ACTIVE_CALLS -= 1
+            _CALLS.notify_all()
 
 
 def llm_config(db) -> dict:
@@ -35,7 +55,7 @@ def validate_credential_options(options) -> None:
             raise unprocessable(f"{field} 必须是字符串或 null")
 
 
-def chat_json(
+def _chat_json(
     db, code: str, variables: dict, override: Optional[dict] = None, *,
     archive: Optional[Archive] = None,
     rule_set=None,
@@ -85,6 +105,12 @@ def chat_json(
         # 模板本身也可能包含身份信息；此处统一处理最终发送的两段提示词。
         sys_p = desensitize_text(sys_p, archive)
         user_p = desensitize_text(user_p, archive)
+    contracts = {
+        'CLASSIFY': '输出 {"type_code":"候选代码","confidence":0.0,"reason":"依据"}。',
+        'EXTRACT': '输出 {"dates":[{"node_code":"候选节点代码","date":"YYYY-MM-DD","raw_text":"原文连续片段","confidence":0.0}]}，不得推测原文没有的日期。',
+        'SUGGEST': '输出 {"suggestion":"建议"}，必须原样保留模板中的修改要求，不得添加新事实。',
+    }
+    user_p += '\n' + contracts.get(code, '')
     payload = {
         "model": model,
         "temperature": float(cfg.get("temperature") or 0.1),

@@ -261,9 +261,10 @@ def list_versions(mid: int, request: Request, db: Session = Depends(get_db), act
     ensure_archive_access(db, actor, m.archive_id, request)
     vers = db.query(MaterialVersion).filter(MaterialVersion.material_id == mid).order_by(MaterialVersion.version_no).all()
     out = []
+    reports = db.query(AiReport).filter(AiReport.submission_id == m.submission_id, AiReport.status == 'DONE').order_by(AiReport.report_no).all()
     for v in vers:
         d = _ver_brief(db, v, v.id == m.current_version_id)
-        d["report_ids"] = []
+        d["report_ids"] = [r.id for r in reports if any(item.get('version_id') == v.id for item in (r.material_versions or []))]
         out.append(d)
     return ok(out)
 

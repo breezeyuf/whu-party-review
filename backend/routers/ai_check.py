@@ -119,6 +119,7 @@ def get_report(rid: int, request: Request, db: Session = Depends(get_db), actor:
         "summary": r.summary, "classification": r.classification, "completeness": r.completeness,
         "timeline_snapshot": r.timeline_snapshot, "rule_results": r.rule_results,
         "issues_by_category": dict(grouped), "recheck_summary": r.recheck_summary,
+        "changed_materials": r.changed_materials or [], "material_versions": r.material_versions or [],
     })
 
 

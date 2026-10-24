@@ -92,10 +92,16 @@ def test_ai(db: Session, target: str, override: dict | None = None) -> dict:
         try:
             page = document.new_page(width=500, height=180)
             page.insert_text((40,85), 'WORKBENCH OCR TEST 2026', fontsize=22)
-            extracted, blocks, engine, error = ocr_pixmap(page.get_pixmap(matrix=fitz.Matrix(2,2)))
-            ok = not error and '2026' in extracted
+            page.insert_text((40,125), '虚构学生材料 申请日期', fontname='china-s', fontsize=20)
+            from ai.ocr import settings as ocr_settings
+            token = ocr_settings.set({**get_setting(db, 'ocr', {}), **(override or {})})
+            try:
+                extracted, blocks, engine, error = ocr_pixmap(page.get_pixmap(matrix=fitz.Matrix(2,2)))
+            finally:
+                ocr_settings.reset(token)
+            ok = not error and '2026' in extracted and '学生' in extracted
             return {"ok":bool(ok), "latency_ms":int((time.time()-t0)*1000), "message": error or (f"{engine} 已完成内置图片识别" if ok else "引擎未正确识别内置测试图片")}
         finally:
             document.close()
-    parsed, err, ms = chat_json(db, "CLASSIFY", {"types": "TEST", "text": "ping"}, override)
+    parsed, err, ms = chat_json(db, "CONNECTION_TEST", {"text": "Return a JSON object: {\"ok\":true}"}, override)
     return {"ok": err is None, "latency_ms": int(ms), "model": (override or {}).get("model") or get_setting(db, "ai", {}).get("model"), "message": err or "ok"}

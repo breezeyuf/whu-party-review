@@ -12,6 +12,7 @@ export default function VersionList({ versions = [], currentId, onSelect }) {
               {v.original_filename} · {fmtSize(v.file_size)} · {v.parse_status} · {fmtDateTime(v.uploaded_at)}
             </div>
             {v.change_note && <div className="text-xs">{v.change_note}</div>}
+            {!!v.report_ids?.length && <p className="text-xs text-base-content/60">关联报告：{v.report_ids.map((id) => `#${id}`).join("、")}</p>}
             {v.parse_error && <p className="text-xs text-error">解析失败：{v.parse_error}</p>}
           </div>
           {onSelect && <button type="button" className="btn btn-ghost btn-xs" onClick={() => onSelect(v)}>查看</button>}

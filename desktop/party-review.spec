@@ -13,6 +13,10 @@ datas = [(str(root / "backend" / "schema.sql"), "backend"),
          (str(root / "frontend" / "dist"), "frontend/dist")]
 datas += collect_data_files("webview")
 datas += copy_metadata("pywebview")
+for package in ['rapidocr', 'onnxruntime']:
+    datas += collect_data_files(package)
+    datas += copy_metadata(package)
+    hidden += collect_submodules(package)
 for name in ["seed_data"]:
     if (root / "backend" / name).is_dir(): datas.append((str(root / "backend" / name), "backend/" + name))
 a = Analysis([str(root / "desktop" / "app.py")], pathex=[str(root), str(root / "backend")],

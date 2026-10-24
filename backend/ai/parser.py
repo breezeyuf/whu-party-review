@@ -278,7 +278,13 @@ def _ocr_page(page) -> tuple[str, list, Optional[str], Optional[str]]:
     try:
         from ai.ocr import ocr_pixmap
         pix = page.get_pixmap(dpi=150)
-        return ocr_pixmap(pix)
+        text, blocks, engine, warning = ocr_pixmap(pix)
+        sx, sy = page.rect.width / pix.width, page.rect.height / pix.height
+        for block in blocks:
+            if block.get('bbox') and len(block['bbox']) == 4:
+                x0, y0, x1, y1 = block['bbox']
+                block['bbox'] = [x0*sx, y0*sy, x1*sx, y1*sy]
+        return text, blocks, engine, warning
     except Exception as e:
         return "", [], None, f"OCR 不可用：{e}"
 

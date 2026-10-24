@@ -37,7 +37,7 @@ from services.timeline import merge_archive_nodes, node_map_for_archive
 from utils import now, get_setting
 
 
-def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) -> ParseResult:
+def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, use_llm=True) -> ParseResult:
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == version_id).first()
     if not ver:
         raise ValueError("version not found")
@@ -49,7 +49,12 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
     ver.parse_status = "RUNNING"
     db.flush()
     try:
-        result = parse_version_file(ver.stored_path, ver.file_ext)
+        from ai.ocr import settings as ocr_settings
+        token = ocr_settings.set(get_setting(db, 'ocr', {}))
+        try:
+            result = parse_version_file(ver.stored_path, ver.file_ext)
+        finally:
+            ocr_settings.reset(token)
         is_current = material.current_version_id == ver.id and material.status == "ACTIVE"
         types = rule_set.rows("material_types") if rule_set else db.query(MaterialType).filter(MaterialType.is_active.is_(True)).all()
         declared = (rule_set.types.get(material.declared_type_id) if rule_set else
@@ -57,6 +62,12 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
         threshold = context.classify_confidence_threshold if context else float(get_setting(db, "ai", {}).get("classify_confidence_threshold") or 0.7)
         cls = classify_material(result.get("full_text") or "", declared, types,
                                 threshold)
+        enrich = use_llm and llm_enabled(db)
+        if enrich and material.type_status != 'CONFIRMED':
+            from ai.enrichment import classify_fallback
+            cls, error = classify_fallback(db, result.get('full_text') or '', cls, types, threshold,
+                archive=material.archive, rule_set=rule_set)
+            if error: result.setdefault('warnings', []).append('模型分类未采用：'+error)
         if is_current and material.type_status != "CONFIRMED":
             material.type_id = cls["type_id"]
             material.type_source = cls["type_source"]
@@ -68,6 +79,11 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
         result["extracted_fields"] = fields
         nodes = rule_set.rows("time_node_defs") if rule_set else db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
         extractions = extract_nodes(result.get("full_text") or "", result.get("pages") or [], type_row, nodes)
+        if enrich:
+            from ai.enrichment import extract_fallback
+            extractions, error = extract_fallback(db, result.get('full_text') or '', result.get('pages') or [], extractions, nodes,
+                archive=material.archive, rule_set=rule_set)
+            if error: result.setdefault('warnings', []).append('模型补抽未采用：'+error)
         db.query(TimeNodeExtraction).filter(
             TimeNodeExtraction.material_id == material.id,
             TimeNodeExtraction.is_current.is_(True),
@@ -199,7 +215,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
                 continue
             versions[m.id] = ver
             if ver.parse_status != "DONE":
-                parse_version(db, ver.id, rule_set=rules, context=context)
+                parse_version(db, ver.id, rule_set=rules, context=context, use_llm=enabled)
                 db.refresh(ver)
             pr = db.query(ParseResult).filter(ParseResult.version_id == ver.id).first()
             if pr:
@@ -225,6 +241,12 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         report.degrade_reason = degrade
         drafts = d1 + d2 + d3 + d4
         fill_suggestions(db, drafts, rule_set=rules)
+        if enabled and mode == 'RULE_LLM':
+            from ai.enrichment import polish_suggestions
+            suggestion_error = polish_suggestions(db, drafts, archive=sub.archive, rule_set=rules)
+            if suggestion_error:
+                r4.append({'rule_code':'SUGGEST','engine':'LLM','result':'SKIPPED',
+                    'reason':'建议润色不可用，已保留模板建议：'+suggestion_error})
         rule_results = r1 + r2 + r3 + r4
         summary = summarize(drafts, len(materials), rule_results)
         rec = recommend(summary, drafts)
@@ -245,6 +267,16 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         reasons = _handover_reasons(sub, materials, drafts, mode, node_map)
         hs = "REQUIRED" if reasons else "NOT_REQUIRED"
         report.material_versions = used_versions
+        if prev:
+            before = {v['material_id']: v for v in (prev.material_versions or [])}
+            after = {v['material_id']: v for v in used_versions}
+            report.changed_materials = [
+                {'material_id': mid, 'old_version_id': before.get(mid, {}).get('version_id'),
+                 'new_version_id': after.get(mid, {}).get('version_id'),
+                 'change': 'ADDED' if mid not in before else 'REMOVED' if mid not in after else 'UPDATED'}
+                for mid in sorted(before.keys() | after.keys())
+                if before.get(mid, {}).get('version_id') != after.get(mid, {}).get('version_id')
+            ]
         report.classification = classification
         report.completeness = completeness
         report.timeline_snapshot = snapshot

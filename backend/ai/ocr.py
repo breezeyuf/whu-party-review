@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from contextvars import ContextVar
 from typing import Optional
 
 # PaddleOCR runs in a dedicated spawned child process: inside the uvicorn process its native
@@ -11,12 +12,16 @@ _OCR_TIMEOUT_S = 600
 
 _ENGINE = None  # child-process only
 _ENGINE_V3 = False
+_RAPID = None
+settings = ContextVar('ocr_settings', default={})
 
 
 def available_engines() -> list[str]:
     # find_spec avoids importing paddle (~12s), which made /api/health time out
     from importlib.util import find_spec
     out = []
+    if find_spec('rapidocr') is not None and find_spec('onnxruntime') is not None:
+        out.append('rapidocr')
     try:
         if find_spec("paddleocr") is not None:
             out.append("paddleocr")
@@ -26,12 +31,19 @@ def available_engines() -> list[str]:
 
 
 def ocr_pixmap(pix) -> tuple[str, list, Optional[str], Optional[str]]:
-    if not available_engines():
+    cfg = settings.get()
+    engines = available_engines()
+    selected = cfg.get('engine', 'auto')
+    selected = (engines[0] if engines else None) if selected == 'auto' else selected
+    if selected not in engines:
         return "", [], None, "未启用 OCR，扫描件需人工核对文本"
     from concurrent.futures.process import BrokenProcessPool
     try:
-        fut = _pool().submit(_child_ocr, bytes(pix.samples), pix.width, pix.height, pix.n)
-        lines, err = fut.result(timeout=_OCR_TIMEOUT_S)
+        fut = _pool().submit(_child_ocr, bytes(pix.samples), pix.width, pix.height, pix.n, selected)
+        lines, err = fut.result(timeout=max(1, float(cfg.get('timeout_s') or _OCR_TIMEOUT_S)))
+    except TimeoutError:
+        _reset_pool()
+        return '', [], None, 'OCR 超时，请重试或人工核对文本'
     except BrokenProcessPool:
         _reset_pool()
         return "", [], None, "OCR 进程异常退出，扫描件需人工核对文本"
@@ -40,7 +52,7 @@ def ocr_pixmap(pix) -> tuple[str, list, Optional[str], Optional[str]]:
     if err:
         return "", [], None, err
     blocks = [{"text": t, "bbox": b, "conf": c} for t, b, c in lines]
-    return "\n".join(t for t, _, _ in lines), blocks, "paddleocr", None
+    return "\n".join(t for t, _, _ in lines), blocks, selected, None
 
 
 def shutdown() -> None:
@@ -61,18 +73,38 @@ def _reset_pool() -> None:
     global _POOL
     with _POOL_LOCK:
         if _POOL is not None:
+            for process in list((_POOL._processes or {}).values()):
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=2)
             _POOL.shutdown(wait=False, cancel_futures=True)
             _POOL = None
 
 
-def _child_ocr(samples: bytes, width: int, height: int, n: int):
+def _child_ocr(samples: bytes, width: int, height: int, n: int, selected='paddleocr'):
     import numpy as np
-    engine = _child_engine()
-    if engine is None:
-        return [], "未启用 OCR，扫描件需人工核对文本"
     img = np.frombuffer(samples, dtype=np.uint8).reshape(height, width, n)
     if n == 4:
         img = img[:, :, :3]
+    if n == 1:
+        img = np.repeat(img, 3, axis=2)
+    # PyMuPDF supplies RGB, both OCR engines consume OpenCV BGR arrays.
+    img = img[:, :, ::-1].copy()
+    if selected == 'rapidocr':
+        global _RAPID
+        from rapidocr import RapidOCR
+        if _RAPID is None:
+            _RAPID = RapidOCR()
+        result = _RAPID(img)
+        lines = []
+        if result.txts is not None:
+            for txt, box, score in zip(result.txts, result.boxes, result.scores):
+                xs, ys = box[:, 0], box[:, 1]
+                lines.append((txt, [float(min(xs)), float(min(ys)), float(max(xs)), float(max(ys))], float(score)))
+        return lines, None
+    engine = _child_engine()
+    if engine is None:
+        return [], "未启用 OCR，扫描件需人工核对文本"
     try:
         return (_run_v3(engine, img) if _ENGINE_V3 else _run_v2(engine, img)), None
     except Exception as e:

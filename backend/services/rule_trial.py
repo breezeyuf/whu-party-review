@@ -65,6 +65,7 @@ def trial_rules(db, body, actor):
         d3, _ = run_format(db, mats, versions, parses, rules.types, rule_set=rules)
         d4, content_results = run_content(db, sub, mats, versions, parses, rules.types, False, rule_set=rules)
         skipped = {r['rule_code'] for r in content_results if r.get('result') == 'SKIPPED'}
+        skipped -= {r['rule_code'] for r in content_results if r.get('result') in ('PASS', 'FAIL')}
         old = db.query(Issue).filter(Issue.report_id == sub.latest_report_id, Issue.source != 'MANUAL').all() if sub.latest_report_id else []
         current = {i.fingerprint: {'fingerprint':i.fingerprint,'rule_code':i.rule_code,'title':i.title,'description':i.description}
                    for i in old if i.fingerprint and i.source != 'AI_LLM' and i.rule_code not in skipped}

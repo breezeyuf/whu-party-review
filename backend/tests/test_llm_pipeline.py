@@ -136,7 +136,7 @@ def test_later_failure_cannot_leave_semantic_issues_in_rule_only_report(endpoint
     requests = endpoint(content(issue()), 503)
     db, sub = report_case(rules=[semantic_rule(), semantic_rule("R-C07")])
     report = pipeline.run_check(db, sub.id)
-    assert report.mode == "RULE_ONLY" and len(requests) == 2
+    assert report.mode == "RULE_ONLY" and len(requests) == 4
     assert all(row.source == "AI_RULE" for row in db.added if isinstance(row, Issue))
     assert all(r["result"] == "SKIPPED" for r in report.rule_results if r.get("engine") == "LLM")
 
@@ -152,7 +152,7 @@ def test_failed_recheck_does_not_claim_old_semantic_issue_resolved(
     db, sub = report_case()
     old = NS(id=50, source="AI_LLM", fingerprint="old-semantic-finding", resolution="OPEN", review_status=review_status,
              resolved_by_report_id=None)
-    db.rows[AiReport] = [NS(id=90)]
+    db.rows[AiReport] = [NS(id=90, material_versions=[])]
     db.rows[Issue] = [old]
 
     report = pipeline.run_check(db, sub.id, trigger_type="RECHECK")

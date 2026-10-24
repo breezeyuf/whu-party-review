@@ -26,6 +26,16 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
         pr = parses.get(ver.id) if ver else None
         texts[m.id] = (pr.corrected_text or pr.full_text or "") if pr else ""
     llm_error = None
+    # Keep rule evidence and semantic evidence as separate results for mixed rules.
+    expanded = []
+    for rule in rules:
+        if rule.engine == 'RULE_LLM':
+            from types import SimpleNamespace
+            values = {key: getattr(rule, key, None) for key in ('code','name','basis','message_template','severity','applies_to','params','needs_human_judgement')}
+            expanded.extend([SimpleNamespace(**values, engine='RULE'), SimpleNamespace(**values, engine='LLM')])
+        else:
+            expanded.append(rule)
+    rules = expanded
     for rule in rules:
         if rule.engine == "LLM" and not llm_enabled:
             results.append({"rule_code": rule.code, "engine": "LLM", "result": "SKIPPED", "reason": "需大模型，当前为仅规则模式"})
@@ -93,7 +103,7 @@ def _apply_llm_rule(db, rule, m, ver, text: str, archive=None, *, rule_set=None)
     }
     try:
         parsed, err, _ms = chat_json(
-            db, "CONTENT_CHECK", variables, override={"max_attempts": 1}, archive=archive, rule_set=rule_set,
+            db, "CONTENT_CHECK", variables, archive=archive, rule_set=rule_set,
         )
     except Exception as exc:  # 大模型异常不得中断检查，也不回传可能包含敏感信息的异常原文
         from diagnostics import log_exception
