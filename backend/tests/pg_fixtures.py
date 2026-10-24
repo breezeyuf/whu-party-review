@@ -10,7 +10,6 @@ import os
 import zipfile
 from datetime import date, timedelta
 from io import BytesIO
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -51,16 +50,9 @@ class SchemaDatabase:
             url, connect_args={"connect_timeout": 5, "options": f"-csearch_path={self.name}"}
         )
         try:
-            from database import _HANDOVER_PATCH
+            from migrations import apply_migrations
 
-            raw = self.engine.raw_connection()
-            try:
-                with raw.cursor() as cur:
-                    cur.execute((Path(__file__).parents[1] / "schema.sql").read_text(encoding="utf-8"))
-                    cur.execute(_HANDOVER_PATCH)
-                raw.commit()
-            finally:
-                raw.close()
+            apply_migrations(self.engine)
             from seed_rules import seed_rules
 
             with Session(self.engine) as db:
