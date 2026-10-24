@@ -22,14 +22,18 @@ _ACTIVE_CALLS = 0
 
 def chat_json(db, code, variables, override=None, *, archive=None, rule_set=None):
     global _ACTIVE_CALLS
-    cfg = {**llm_config(db), **(override or {})}
+    if override is not None:
+        validate_credential_options(override)
+    saved_cfg = dict(llm_config(db))
+    cfg = {**saved_cfg, **(override or {})}
     limit = max(1, min(32, int(cfg.get('max_concurrency') or 2)))
     with _CALLS:
         while _ACTIVE_CALLS >= limit:
             _CALLS.wait()
         _ACTIVE_CALLS += 1
     try:
-        return _chat_json(db, code, variables, override, archive=archive, rule_set=rule_set)
+        return _chat_json(db, code, variables, override, archive=archive, rule_set=rule_set,
+                          config_snapshot=saved_cfg)
     finally:
         with _CALLS:
             _ACTIVE_CALLS -= 1
@@ -59,10 +63,11 @@ def _chat_json(
     db, code: str, variables: dict, override: Optional[dict] = None, *,
     archive: Optional[Archive] = None,
     rule_set=None,
+    config_snapshot=None,
 ) -> tuple[Optional[dict], Optional[str], float]:
     if override is not None:
         validate_credential_options(override)
-    cfg = dict(llm_config(db))
+    cfg = dict(config_snapshot if config_snapshot is not None else llm_config(db))
     if cfg.get("base_url") is not None and not isinstance(cfg["base_url"], str):
         return None, "大模型接口地址配置无效", 0
     saved_base = (cfg.get("base_url") or "").strip().rstrip("/")

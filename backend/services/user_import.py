@@ -129,6 +129,8 @@ def import_users(db, actor, data, dry_run=True, batch_id=None):
                             error(sheet, row_no, "batch_name", "与所选建档批次不一致")
                         else:
                             batch = matches[0]
+                    if batch and batch.status != 'ACTIVE':
+                        error(sheet, row_no, 'batch_name', '批次已关闭，不能导入新档案')
                     try:
                         birth = _date(rec.get("birth_date"))
                         if birth and birth > now().date():
@@ -143,7 +145,10 @@ def import_users(db, actor, data, dry_run=True, batch_id=None):
                             error(sheet, row_no, code, "时间节点不存在、已停用或不能直接导入")
                             continue
                         try:
-                            nodes.append((code, _date(value)))
+                            node_date = _date(value)
+                            if node_date and node_date > now().date():
+                                raise ValueError('节点日期不能晚于今天')
+                            nodes.append((code, node_date))
                         except ValueError:
                             error(sheet, row_no, code, "节点日期无效，请使用 Excel 日期或 YYYY-MM-DD")
                 if len(errors) != before:
