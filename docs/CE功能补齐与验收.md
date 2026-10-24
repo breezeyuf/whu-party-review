@@ -34,7 +34,7 @@ pytest 显示一条现有 Starlette/httpx 弃用提示，不影响本次通过�
 源码运行使用同目录“启动前端开发.cmd”。修改 React 源码后浏览器开发页面会更新，已有 EXE 需重新打包。完整打包流程仍见 Windows 本地程序说明。
 
 尚未上传本轮整合代码或替换 GitHub Release。旧版源码在同步前备份到项目 work/ce-complete-20261022/original-source-backup，新版程序位于全新目录，不覆盖旧 EXE 或数据库。
-# 2026-10-25 整合补充
+
+## 2026-10-25 整合补充
 
 本文件为此前本地 C/E 开发记录。最新上传分支 `feature/ocr-workflow-integrated` 已合入 `dev` 的统一导入及一次性加密密码文件能力；当前整合范围与验证结果见 [OCR 与审核流程补齐](OCR与审核流程补齐_2026-10-24.md)。本地旧 EXE 不代表这次整合源码。
-
