@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import CORS_ORIGINS, HOST, PORT, ensure_storage
@@ -16,6 +14,7 @@ from database import SessionLocal, init_db
 from errors import AppError
 from seed_rules import ensure_admin, seed_rules
 from worker import start_workers, stop_workers
+from services.frontend import mount_frontend
 
 
 @asynccontextmanager
@@ -122,23 +121,7 @@ app.include_router(admin.router, prefix="/api")
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _fe = os.environ.get("PARTY_REVIEW_FRONTEND_DIR") or os.path.normpath(os.path.join(_here, "..", "frontend"))
-_dist = os.path.join(_fe, "dist")
-_FRONT = _dist if os.path.isdir(_dist) else _fe
-
-
-class _SPAStatic(StaticFiles):
-    async def get_response(self, path, scope):
-        path = path.replace("\\", "/").lstrip("/")
-        try:
-            return await super().get_response(path, scope)
-        except StarletteHTTPException as exc:
-            if exc.status_code != 404 or path.split("/", 1)[0] in ("api", "assets", "storage") or Path(path).suffix:
-                raise
-            return await super().get_response("index.html", scope)
-
-
-if os.path.isdir(_FRONT):
-    app.mount("/", _SPAStatic(directory=_FRONT, html=True), name="frontend")
+mount_frontend(app, _fe)
 
 
 if __name__ == "__main__":

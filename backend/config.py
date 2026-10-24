@@ -29,7 +29,7 @@ STORAGE_DIR = Path(_env("STORAGE_DIR") or str(_HERE / "storage")).resolve()
 ADMIN_USERNAME = _env("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = _env("ADMIN_PASSWORD", "")
 WORKER_ENABLED = _env("WORKER_ENABLED", "1") not in ("0", "false", "False", "no")
-DEMO_LOGIN_HINT = _env("DEMO_LOGIN_HINT", "1") not in ("0", "false", "False", "no")
+DEMO_LOGIN_HINT = _env("DEMO_LOGIN_HINT", "0") not in ("0", "false", "False", "no")
 DEMO_PASSWORD = _env("DEMO_PASSWORD", "Demo@2026")
 CORS_ORIGINS = [s.strip() for s in _env("CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",") if s.strip()]
 

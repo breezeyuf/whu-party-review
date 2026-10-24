@@ -25,6 +25,7 @@ from config import ADMIN_PASSWORD, ADMIN_USERNAME, BACKEND_DIR
 import secrets
 
 SEED_DIR = BACKEND_DIR / "seed_data"
+RESTORE_PASSWORD_MARKER = "!RESET_REQUIRED_AFTER_RESTORE!"
 
 
 def _load(name: str) -> Any:
@@ -128,6 +129,18 @@ def ensure_admin(db: Session) -> str | None:
         db.flush()
     user = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     printed = None
+    if user and user.password_hash == RESTORE_PASSWORD_MARKER:
+        # Public demo dumps retain IDs/relations but never a reusable admin hash.
+        pwd = ADMIN_PASSWORD or secrets.token_urlsafe(10) + "A1"
+        printed = None if ADMIN_PASSWORD else pwd
+        user.password_hash = hash_password(pwd)
+        user.is_active = True
+        user.must_change_password = True
+        user.token_version = (user.token_version or 0) + 1
+        user.failed_login_count = 0
+        user.locked_until = None
+        user.updated_at = now()
+        db.flush()
     if not user:
         pwd = ADMIN_PASSWORD or secrets.token_urlsafe(10) + "A1"
         printed = None if ADMIN_PASSWORD else pwd
