@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import timedelta
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from database import get_db
 from deps import Actor, get_current_user
-from errors import conflict, forbidden, not_found, unprocessable
+from errors import AppError, conflict, forbidden, not_found, unprocessable
 from models import AiReport, Archive, Batch, Issue, Material, MaterialVersion, ReviewRecord, Submission
 from schemas.common import ok, page_params
 from services.audit import log
@@ -19,7 +19,8 @@ from utils import LEVEL_BY_STATUS, now, stage_name
 router = APIRouter(tags=["submissions"])
 
 
-def _deadline_sort_expr(db):
+def _deadline_expr(db):
+    """当前层级截止日的相关标量子查询：排序（days_left）与筛选（due_within_days）共用同一口径。"""
     from sqlalchemy import case
     from sqlalchemy.orm import aliased
 
@@ -59,7 +60,8 @@ def list_submissions(
     todo: bool = False, level: str | None = None, batch_id: int | None = None, branch_id: int | None = None,
     stage_code: int | None = None, status: str | None = None, recommendation: str | None = None,
     has_block: bool | None = None, min_issues: int | None = None, q: str | None = None,
-    due_within_days: int | None = None, page: int = 1, page_size: int = 20, sort: str | None = None,
+    due_within_days: int | None = Query(None, ge=0, le=3650),
+    page: int = 1, page_size: int = 20, sort: str | None = None,
     db: Session = Depends(get_db), actor: Actor = Depends(get_current_user),
 ):
     query = scoped_submissions(
@@ -88,8 +90,14 @@ def list_submissions(
         if level in mapping:
             query = query.filter(Submission.status == mapping[level])
     if q:
-        query = query.join(Archive, Archive.id == Submission.archive_id).filter(
-            (Archive.real_name.ilike(f"%{q}%")) | (Archive.student_no.ilike(f"%{q}%"))
+        # 用 EXISTS 而不是 JOIN：学生角色的范围查询本身已 JOIN archives，再 JOIN 会重复/冲突；
+        # 子查询用别名，避免外层已有 archives 时被自动相关掉
+        like = f"%{q}%"
+        a2 = aliased(Archive)
+        query = query.filter(
+            db.query(a2.id)
+            .filter(a2.id == Submission.archive_id, a2.real_name.ilike(like) | a2.student_no.ilike(like))
+            .exists()
         )
     # 过滤条件下推到 SQL，保证分页条数与 total 一致
     issue_active_cnt = (
@@ -99,13 +107,18 @@ def list_submissions(
     )
     if min_issues:
         query = query.filter(issue_active_cnt >= int(min_issues))
-    if has_block:
-        block_cnt = (
-            db.query(func.count(Issue.id))
+    if has_block is not None:
+        # 与列表 issue_counts.BLOCK 同源：只看 is_active + severity='BLOCK'，不看审核状态
+        block_exists = (
+            db.query(Issue.id)
             .filter(Issue.submission_id == Submission.id, Issue.is_active.is_(True), Issue.severity == "BLOCK")
-            .scalar_subquery()
+            .exists()
         )
-        query = query.filter(block_cnt > 0)
+        query = query.filter(block_exists if has_block else ~block_exists)
+    if due_within_days is not None:
+        # 与 days_left 同一截止日表达式和同一个“今天”：截止日不为空且 <= 今天 + N（含已逾期）
+        deadline_expr = _deadline_expr(db)
+        query = query.filter(deadline_expr.is_not(None), deadline_expr <= now().date() + timedelta(days=due_within_days))
     if recommendation:
         query = query.join(AiReport, AiReport.id == Submission.latest_report_id).filter(
             func.coalesce(AiReport.effective_recommendation, AiReport.recommendation) == recommendation
@@ -119,7 +132,7 @@ def list_submissions(
     if key == "issue_count":
         order_expr = issue_active_cnt
     elif key in ("days_left", "deadline"):
-        order_expr = _deadline_sort_expr(db)
+        order_expr = _deadline_expr(db)
     elif key == "id":
         order_expr = Submission.id
     else:
@@ -275,23 +288,52 @@ def review(sid: int, body: dict, request: Request, db: Session = Depends(get_db)
 
 @router.post("/submissions/batch-review")
 def batch_review(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    raw = body.get("submission_ids")
+    if not isinstance(raw, list):
+        raise unprocessable("submission_ids 须为提交包编号列表")
+    # 逐个规范化（整数字符串也接受），按首次出现的顺序去重，其余记为无效项
+    targets: list[tuple[object, int | None]] = []
+    seen: set[int] = set()
+    for value in raw:
+        sid = _normalize_submission_id(value)
+        if sid is None:
+            targets.append((value, None))
+        elif sid not in seen:
+            seen.add(sid)
+            targets.append((value, sid))
     passed, failed = [], []
-    for sid in body.get("submission_ids") or []:
+    for value, sid in targets:
+        if sid is None:
+            failed.append({"submission_id": value, "code": 42200, "reason": "提交包编号无效"})
+            continue
         try:
+            # 每份独立保存点：单份失败只回滚该份的写入
             with db.begin_nested():
                 s = ensure_submission_access(db, actor, sid)
-                blocks = db.query(func.count(Issue.id)).filter(
-                    Issue.submission_id == sid, Issue.is_active.is_(True), Issue.severity == "BLOCK",
-                    Issue.review_status != "REJECTED",
-                ).scalar() or 0
-                if blocks:
-                    raise conflict("存在阻断问题")
+                # 与单份通过走同一条路径，ensure_passable() 的阻断口径因此完全一致
                 review_package(db, s, actor, body.get("level"), "pass", body.get("comment"), is_batch=True)
             passed.append(sid)
-        except Exception as e:
-            failed.append({"submission_id": sid, "reason": getattr(e, "biz_message", "审核失败")})
-    log(db, actor, "BATCH_REVIEW", "submission", None, {"passed": passed})
+        except AppError as e:
+            if e.status_code == 404:
+                failed.append({"submission_id": sid, "code": 40400, "reason": "提交包不存在或无权访问"})
+            else:
+                failed.append({"submission_id": sid, "code": e.biz_code, "reason": e.biz_message})
+        except Exception:
+            failed.append({"submission_id": sid, "code": 50000, "reason": "审核失败"})
+    log(db, actor, "BATCH_REVIEW", "submission", None, {
+        "passed": passed,
+        "failed": [{"submission_id": f["submission_id"], "code": f["code"]} for f in failed],
+    })
     return ok({"passed": passed, "failed": failed})
+
+
+def _normalize_submission_id(value) -> int | None:
+    """整数（布尔值除外）或纯数字字符串转成提交包编号；其他返回 None。"""
+    if type(value) is int:
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
 
 
 @router.post("/submissions/{sid}/filing")

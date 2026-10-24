@@ -1,7 +1,7 @@
 import { useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
 import { Modal, ConfirmDialog } from "../../components/common/Modal"
-import { Loading, ErrorState } from "../../components/common/States"
+import { Loading, ErrorState, EmptyState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
 import { createOrg, deleteOrg, listOrgs, updateOrg } from "../../api/orgs"
 import { useToast } from "../../context/ToastContext"
@@ -54,7 +54,7 @@ export default function OrgsPage() {
   return (
     <div>
       <PageHeader title="组织架构" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => setEdit({ org_type: "SCHOOL", name: "", code: "", is_active: true })}>新增学校</button>} />
-      {req.loading && !req.data ? <Loading /> : req.error ? <ErrorState error={req.error} onRetry={req.reload} /> : (
+      {req.loading && !req.data ? <Loading label="组织架构" /> : req.error ? <ErrorState error={req.error} onRetry={req.reload} /> : !tree.length ? <EmptyState title="还没有组织" hint="点击右上角“新增学校”开始维护组织架构。" /> : (
         <ul className="surface-card p-3">{tree.map((n) => <Node key={n.id} node={n} depth={0} onEdit={setEdit} onAdd={(parent) => setEdit({ parent_id: parent.id, org_type: CHILD[parent.org_type], name: "", code: "", is_active: true })} onRemove={setRemove} />)}</ul>
       )}
       <Modal open={!!edit} title={edit?.id ? "编辑组织" : "新增组织"} onClose={() => setEdit(null)} footer={

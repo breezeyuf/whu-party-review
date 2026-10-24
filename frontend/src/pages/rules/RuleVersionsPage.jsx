@@ -76,8 +76,13 @@ export default function RuleVersionsPage() {
   const [trial, setTrial] = useState(null)
 
   const compare = async () => {
-    if (!left || !right) return
-    setDiff(await ruleVersion(left, { diff_with: right }))
+    if (!left || !right) { toast.error("请先分别选择版本 A 和版本 B"); return }
+    if (left.id === right.id) { toast.error("请选择两个不同的规则版本再对比"); return }
+    try {
+      setDiff(await ruleVersion(left.id, { diff_with: right.id }))
+    } catch (e) {
+      toast.error(e.message || "版本对比失败")
+    }
   }
 
   const run = async () => {
@@ -90,8 +95,14 @@ export default function RuleVersionsPage() {
   return (
     <div>
       <PageHeader title="规则版本" />
+      <div className="alert mb-3 items-start border border-base-300 bg-base-100 text-sm">
+        <div>
+          <p className="font-medium">这里记录“审核规则什么时候、改了什么”。</p>
+          <p className="mt-1 text-xs text-base-content/65">每次调整材料清单、时间要求或内容校验规则，都会生成一个版本。选两个版本可查看字段变化；“规则试运行”仅对已有提交包预演当前规则，不会修改审核报告或正式数据。</p>
+        </div>
+      </div>
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={req.data?.items || []} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="还没有规则版本记录" columns={[
           { key: "no", title: "版本", render: (r) => <span className="mono">v{r.version_no}</span> },
           { key: "kind", title: "变更", render: (r) => <span className="text-xs">{CHANGE_KIND[r.change_kind] || r.change_kind || "—"}{r.change_kind !== "init" && CHANGE_ACTION[r.change_action] ? ` · ${CHANGE_ACTION[r.change_action]}` : ""}</span> },
           { key: "sum", title: "摘要", render: (r) => <span className="text-xs">{r.change_summary}</span> },
@@ -99,15 +110,15 @@ export default function RuleVersionsPage() {
           { key: "rep", title: "关联报告", render: (r) => r.report_count ?? 0 },
           { key: "pick", title: "对比", render: (r) => (
             <span className="flex gap-1">
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => setLeft(r.id)}>甲</button>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => setRight(r.id)}>乙</button>
+              <button type="button" className={`btn btn-xs ${left.id === r.id ? "btn-primary" : "btn-ghost"}`} aria-label={`选择 v${r.version_no} 为版本 A`} onClick={() => setLeft({ id: r.id, version_no: r.version_no })}>选为 A</button>
+              <button type="button" className={`btn btn-xs ${right.id === r.id ? "btn-primary" : "btn-ghost"}`} aria-label={`选择 v${r.version_no} 为版本 B`} onClick={() => setRight({ id: r.id, version_no: r.version_no })}>选为 B</button>
             </span>
           ) },
         ]} />
-        <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />
+        {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
       </div>
       <div className="mt-4 flex flex-wrap items-end gap-2">
-        <span className="text-xs">甲 {left || "—"} / 乙 {right || "—"}</span>
+        <span className="text-xs">版本 A：{left ? `v${left.version_no}` : "未选择"}　版本 B：{right ? `v${right.version_no}` : "未选择"}</span>
         <button type="button" className="btn btn-outline btn-sm" onClick={compare}>对比两个版本</button>
       </div>
       {diff?.changes && (
@@ -130,7 +141,7 @@ export default function RuleVersionsPage() {
       {writable && (
         <section className="surface-card mt-4 p-4">
           <h2 className="text-sm font-medium">规则试运行</h2>
-          <p className="mt-1 text-xs text-base-content/55">对已有提交包用当前规则重算，只返回差异，不写审核报告。</p>
+          <p className="mt-1 text-xs text-base-content/55">提交包 ID 可在审核工作区或提交详情地址中查看。输入最多 20 个 ID 后，系统会用当前规则预演并显示新增/消失的问题；不会保存报告，也不会改动正式审核结论。</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <input className="input input-bordered input-sm w-72" placeholder="提交包 ID，逗号分隔" value={trialIds} onChange={(e) => setTrialIds(e.target.value)} />
             <button type="button" className="btn btn-outline btn-sm" onClick={run}>试运行</button>

@@ -1,0 +1,40 @@
+{
+  "browser": "Microsoft Edge headless",
+  "viewport": "1440x1000 and 390x844",
+  "mode": "isolated in-memory API preview",
+  "results": [
+    {
+      "name": "学生首页只有一个主要办理入口",
+      "passed": true
+    },
+    {
+      "name": "退回后首页直接引导整改",
+      "passed": true
+    },
+    {
+      "name": "低频菜单可展开，进入分组页面后保持展开",
+      "passed": true
+    },
+    {
+      "name": "待办默认无批量工具，手动启用后可选材料",
+      "passed": true
+    },
+    {
+      "name": "精简后问题处理仍刷新审核门禁",
+      "passed": true
+    },
+    {
+      "name": "选择退回先显示表单，不立即执行退回",
+      "passed": true
+    },
+    {
+      "name": "窄屏无横向溢出，导航可展开并用 Escape 关闭",
+      "passed": true
+    },
+    {
+      "name": "浏览器无未处理脚本异常",
+      "passed": true
+    }
+  ],
+  "errors": []
+}

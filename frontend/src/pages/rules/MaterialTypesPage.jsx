@@ -88,7 +88,10 @@ export default function MaterialTypesPage() {
       <div className="surface-card p-2">
         <DataTable
           loading={req.loading}
+          error={req.error}
+          onRetry={req.reload}
           rows={rows}
+          empty="还没有材料类型"
           columns={[
             {
               key: "name",
@@ -123,7 +126,7 @@ export default function MaterialTypesPage() {
             ) },
           ]}
         />
-        <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />
+        {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
       </div>
       <RuleFormModal open={!!edit} title={edit?.id ? "编辑材料类型" : "新增材料类型"} fields={edit?.id ? FIELDS.filter((f) => f.key !== "code") : FIELDS} initial={toForm(edit?.id ? edit : null)} onClose={() => setEdit(null)} onSubmit={save} />
       <ConfirmDialog open={!!removeId} danger title="删除材料类型" message="已被清单引用时后端会拒绝，可改为停用。" onClose={() => setRemoveId(null)} onConfirm={async () => { await materialTypes.remove(removeId); setRemoveId(null); req.reload() }} />

@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom"
 import { ShieldCheck, FileSearch, GitBranch, BellRing } from "lucide-react"
 import { demoAccounts } from "../api/auth"
 import { useAuth } from "../context/AuthContext"
-import { errMessage, roleName } from "../utils/format"
-import { FALLBACK_META } from "../utils/constants"
+import { loginDestination, roleLabel } from "../utils/identity"
+import { whenIdle } from "../utils/lazyLoad"
+import { preloadShell } from "../components/layout/lazyShell"
 
 const FEATURES = [
   { icon: FileSearch, title: "AI 材料自查", desc: "清单核对、时间节点抽取与敏感表述检查" },
@@ -14,7 +15,7 @@ const FEATURES = [
 ]
 
 export default function LoginPage() {
-  const { login, user } = useAuth()
+  const { login, user, ready, needsIdentitySelection } = useAuth()
   const navigate = useNavigate()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
@@ -23,12 +24,15 @@ export default function LoginPage() {
   const [accounts, setAccounts] = useState([])
 
   useEffect(() => {
-    if (user) navigate("/", { replace: true })
-  }, [user, navigate])
+    if (ready && user) navigate(loginDestination(user, needsIdentitySelection), { replace: true })
+  }, [user, ready, needsIdentitySelection, navigate])
 
   useEffect(() => {
     demoAccounts().then((list) => setAccounts(Array.isArray(list) ? list : [])).catch(() => {})
   }, [])
+
+  // 空闲时预取登录后的外壳，登录成功进入工作台时不再等待下载
+  useEffect(() => whenIdle(preloadShell), [])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -36,10 +40,9 @@ export default function LoginPage() {
     setError("")
     try {
       const data = await login(username.trim(), password)
-      if (data.must_change_password || data.me?.must_change_password) navigate("/change-password", { replace: true })
-      else navigate("/", { replace: true })
+      navigate(loginDestination(data.me, data.needsIdentitySelection), { replace: true })
     } catch (err) {
-      setError(errMessage(err, "登录失败"))
+      setError(err?.message || err?.response?.data?.message || "登录失败")
     } finally {
       setBusy(false)
     }
@@ -97,16 +100,17 @@ export default function LoginPage() {
               <span className="label-text mb-1 text-xs">密码</span>
               <input type="password" className="input input-bordered" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </label>
-            {error && <div className="alert alert-error py-2 text-sm">{error}</div>}
+            {error && <div role="alert" className="alert alert-error py-2 text-sm">{error}</div>}
             <button type="submit" className="btn btn-primary w-full" disabled={busy}>
               {busy && <span className="loading loading-spinner loading-xs" />}
-              登录
+              {busy ? "正在登录…" : "登录"}
             </button>
+            <p className="text-center text-xs text-base-content/60">登录后按账号身份进入学生、审核或管理工作台。</p>
             <p className="text-center text-xs text-base-content/45">账号由组织开通，不开放自助注册。连续输错 5 次将锁定 15 分钟。</p>
           </form>
           {accounts.length > 0 && (
-            <div className="mt-4 surface-card p-4">
-              <div className="text-xs font-medium text-base-content/60">演示账号</div>
+            <details className="mt-4 surface-card p-4">
+              <summary className="cursor-pointer text-xs font-medium text-base-content/60">查看演示账号</summary>
               <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto pr-1">
                 {accounts.map((a) => (
                   <li key={a.username}>
@@ -116,12 +120,12 @@ export default function LoginPage() {
                       onClick={() => { setUsername(a.username); setPassword(a.password_hint || "") }}
                     >
                       <span>{a.real_name} · {a.username}</span>
-                      <span className="text-base-content/40">{Array.from(new Set((a.roles || []).map((r) => roleName(FALLBACK_META, r.role || r)))).join(" / ")}</span>
+                      <span className="text-base-content/40">{Array.from(new Set((a.roles || []).map((r) => roleLabel(r.role || r)))).join(" / ")}</span>
                     </button>
                   </li>
                 ))}
               </ul>
-            </div>
+            </details>
           )}
         </div>
       </div>

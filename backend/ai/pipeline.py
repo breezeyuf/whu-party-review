@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Optional
+from diagnostics import log_exception
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,7 @@ from ai.extract import extract_fields, extract_nodes
 from ai.llm import llm_enabled
 from ai.parser import parse_version_file
 from ai.report import issue_fp, recommend, summarize
+from ai.rule_snapshot import EvaluationContext, RuleSet
 from ai.suggest import fill_suggestions
 from models import (
     AiReport,
@@ -35,7 +37,7 @@ from services.timeline import merge_archive_nodes, node_map_for_archive
 from utils import now, get_setting
 
 
-def parse_version(db: Session, version_id: int) -> ParseResult:
+def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) -> ParseResult:
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == version_id).first()
     if not ver:
         raise ValueError("version not found")
@@ -49,19 +51,22 @@ def parse_version(db: Session, version_id: int) -> ParseResult:
     try:
         result = parse_version_file(ver.stored_path, ver.file_ext)
         is_current = material.current_version_id == ver.id and material.status == "ACTIVE"
-        types = db.query(MaterialType).filter(MaterialType.is_active.is_(True)).all()
-        declared = db.query(MaterialType).filter(MaterialType.id == material.declared_type_id).first() if material.declared_type_id else None
+        types = rule_set.rows("material_types") if rule_set else db.query(MaterialType).filter(MaterialType.is_active.is_(True)).all()
+        declared = (rule_set.types.get(material.declared_type_id) if rule_set else
+                    db.query(MaterialType).filter(MaterialType.id == material.declared_type_id).first()) if material.declared_type_id else None
+        threshold = context.classify_confidence_threshold if context else float(get_setting(db, "ai", {}).get("classify_confidence_threshold") or 0.7)
         cls = classify_material(result.get("full_text") or "", declared, types,
-                                float(get_setting(db, "ai", {}).get("classify_confidence_threshold") or 0.7))
+                                threshold)
         if is_current and material.type_status != "CONFIRMED":
             material.type_id = cls["type_id"]
             material.type_source = cls["type_source"]
             material.type_confidence = cls["type_confidence"]
             material.type_status = cls["type_status"]
-        type_row = db.query(MaterialType).filter(MaterialType.id == material.type_id).first() if material.type_id else None
+        type_row = (rule_set.types.get(material.type_id) if rule_set else
+                    db.query(MaterialType).filter(MaterialType.id == material.type_id).first()) if material.type_id else None
         fields = extract_fields(result.get("full_text") or "")
         result["extracted_fields"] = fields
-        nodes = db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
+        nodes = rule_set.rows("time_node_defs") if rule_set else db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
         extractions = extract_nodes(result.get("full_text") or "", result.get("pages") or [], type_row, nodes)
         db.query(TimeNodeExtraction).filter(
             TimeNodeExtraction.material_id == material.id,
@@ -116,23 +121,33 @@ def parse_version(db: Session, version_id: int) -> ParseResult:
         ver.page_count = result.get("page_count") or len(result.get("pages") or [])
         db.flush()
         if is_current:
-            merge_archive_nodes(db, material.archive_id)
+            merge_archive_nodes(db, material.archive_id, node_defs=nodes)
         return pr
     except Exception as e:
+        log_exception("material.parse_failed", e, version_id=version_id)
         ver.parse_status = "FAILED"
-        ver.parse_error = str(e)[:500]
+        ver.parse_error = "材料解析失败，请联系管理员并提供材料版本编号"
         db.flush()
         raise
 
 
-def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK", user_id: Optional[int] = None, job_id: Optional[int] = None, use_llm: bool = True) -> AiReport:
+def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK", user_id: Optional[int] = None, job_id: Optional[int] = None, use_llm: bool = True, *,
+              rule_version_id: int | None = None, evaluation_context: EvaluationContext | None = None) -> AiReport:
     # 行锁串行化同一提交包的并发检查，避免 report_no 冲突与问题表交错写
     sub = db.query(Submission).filter(Submission.id == submission_id).with_for_update().first()
     if not sub:
         raise ValueError("submission not found")
-    rv = db.query(RuleVersion).order_by(RuleVersion.version_no.desc()).first()
+    rv = (db.query(RuleVersion).filter(RuleVersion.id == rule_version_id).first() if rule_version_id is not None else
+          db.query(RuleVersion).order_by(RuleVersion.version_no.desc()).first())
     if not rv:
         raise ValueError("no rule version")
+    rules = RuleSet.from_version(rv)
+    batch = sub.archive.batch if sub.archive else None
+    context = evaluation_context or EvaluationContext.capture(
+        rules, get_setting(db, "calendar", {}), batch.end_date if batch else None,
+        get_setting(db, "ai", {}).get("classify_confidence_threshold") or 0.7,
+    )
+    context.validate(rules)
     last_no = (
         db.query(AiReport.report_no).filter(AiReport.submission_id == submission_id)
         .order_by(AiReport.report_no.desc()).first()
@@ -140,8 +155,8 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
     report_no = (last_no[0] + 1) if last_no else 1
     enabled = bool(use_llm) and llm_enabled(db)
     mode = "RULE_LLM" if enabled else "RULE_ONLY"
-    degrade = None if enabled else "未配置大模型"
-    # 记录实际使用的模型，保证报告可追溯（仅规则模式为空）
+    degrade = None if enabled else ("本次未启用大模型" if not use_llm else "未配置大模型")
+    # 保留尝试使用的模型名称；mode 表示最终报告采用的结果来源。
     model_name = (get_setting(db, "ai", {}) or {}).get("model") if enabled else None
     report = AiReport(
         submission_id=submission_id,
@@ -157,6 +172,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         handover_status="REQUIRED",
         handover_reasons=[],
         started_at=now(),
+        timeline_snapshot={"evaluation_context": context.to_dict()},
     )
     prev = None
     try:
@@ -173,7 +189,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         materials = db.query(Material).filter(Material.submission_id == submission_id, Material.status == "ACTIVE").all()
         versions = {}
         parses = {}
-        types = {t.id: t for t in db.query(MaterialType).all()}
+        types = rules.types
         used_versions = []
         for m in materials:
             if not m.current_version_id:
@@ -183,19 +199,32 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
                 continue
             versions[m.id] = ver
             if ver.parse_status != "DONE":
-                parse_version(db, ver.id)
+                parse_version(db, ver.id, rule_set=rules, context=context)
                 db.refresh(ver)
             pr = db.query(ParseResult).filter(ParseResult.version_id == ver.id).first()
             if pr:
                 parses[ver.id] = pr
             used_versions.append({"material_id": m.id, "version_id": ver.id, "version_no": ver.version_no})
-        node_map = node_map_for_archive(db, sub.archive_id)
-        completeness, d1, r1 = run_completeness(db, sub, materials, _to_nodevals(node_map))
-        snapshot, d2, r2 = run_timeline(db, sub, node_map)
-        d3, r3 = run_format(db, materials, versions, parses, types)
-        d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled)
+        node_map = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows("time_node_defs", active=False))
+        completeness, d1, r1 = run_completeness(db, sub, materials, _to_nodevals(node_map), rule_set=rules, context=context, versions=versions)
+        snapshot, d2, r2 = run_timeline(db, sub, node_map, rule_set=rules, context=context)
+        snapshot["evaluation_context"] = context.to_dict()
+        snapshot["node_inputs"] = node_map
+        d3, r3 = run_format(db, materials, versions, parses, types, rule_set=rules)
+        d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled, rule_set=rules)
+        if enabled:
+            errors = list(dict.fromkeys(r["error"] for r in r4 if r.get("engine") == "LLM" and r.get("error")))
+            if errors:
+                mode = "RULE_ONLY"
+                degrade = "大模型检查失败，已降级为仅规则模式：" + "；".join(errors)
+            elif not any(r.get("engine") == "LLM" and r.get("result") in ("PASS", "FAIL") for r in r4):
+                mode = "RULE_ONLY"
+                degrade = "无适用材料或语义规则，未执行大模型检查"
+                report.llm_model = None
+        report.mode = mode
+        report.degrade_reason = degrade
         drafts = d1 + d2 + d3 + d4
-        fill_suggestions(db, drafts)
+        fill_suggestions(db, drafts, rule_set=rules)
         rule_results = r1 + r2 + r3 + r4
         summary = summarize(drafts, len(materials), rule_results)
         rec = recommend(summary, drafts)
@@ -272,16 +301,25 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
                 )
                 db.add(issue)
             if prev:
-                resolved = unresolved = newc = 0
+                resolved = unresolved = newc = not_rechecked = 0
                 for fp, old in old_by_fp.items():
                     if fp in new_fps:
                         unresolved += 1
+                    elif (old.source == "AI_LLM" and mode == "RULE_ONLY"
+                          and old.review_status != "REJECTED" and old.resolution not in ("RESOLVED", "WAIVED")):
+                        # A skipped/failed model check is not evidence that an old issue was fixed.
+                        old.resolution = "OPEN"
+                        old.resolved_by_report_id = None
+                        unresolved += 1
+                        not_rechecked += 1
                     else:
                         old.resolution = "RESOLVED"
                         old.resolved_by_report_id = report.id
                         resolved += 1
                 newc = sum(1 for d in drafts if issue_fp(d) not in old_by_fp)
                 report.recheck_summary = {"resolved": resolved, "unresolved": unresolved, "new": newc}
+                if not_rechecked:
+                    report.recheck_summary["not_rechecked"] = not_rechecked
             db.flush()
             # fill issue ids into rule_results loosely
             sub.latest_report_id = report.id
@@ -289,8 +327,9 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         db.flush()
         return report
     except Exception as e:
+        log_exception("review.check_failed", e, submission_id=submission_id, report_id=report.id)
         report.status = "FAILED"
-        report.error = str(e)[:800]
+        report.error = "审核执行失败，请联系管理员并提供报告编号"
         report.finished_at = now()
         sub.ai_status = "FAILED"
         db.flush()

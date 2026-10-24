@@ -34,7 +34,7 @@ export default function SuggestionTemplatesPage() {
         可用变量：{VARS}
       </PageHeader>
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} rows={rows} columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={rows} empty="还没有修改建议模板" columns={[
           {
             key: "title",
             title: "标题",

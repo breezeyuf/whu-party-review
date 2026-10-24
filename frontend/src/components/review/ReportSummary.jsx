@@ -10,11 +10,11 @@ export default function ReportSummary({ report }) {
         <span>{report.disclaimer || "AI 结论仅作审核参考，未发现问题不等于审核合格，最终结论以审核人员确认为准。"}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-base-content/50">参考结论</span>
+        <span className="text-xs text-base-content/50">AI 建议</span>
         <RecoBadge code={report.recommendation} />
         <HandoverBadge code={report.handover_status} />
-        {report.effective_recommendation && report.effective_recommendation !== report.recommendation && (
-          <span className="text-xs">人工结论 <RecoBadge code={report.effective_recommendation} /></span>
+        {report.effective_recommendation && (report.handover_status === "DONE" || report.effective_recommendation !== report.recommendation) && (
+          <span className="inline-flex items-center gap-1 rounded-md border border-info/25 bg-info/5 px-2 py-1 text-xs">人工研判 <RecoBadge code={report.effective_recommendation} /></span>
         )}
         {report.is_stale && <span className="badge badge-warning badge-sm">报告已过期，需重跑</span>}
       </div>

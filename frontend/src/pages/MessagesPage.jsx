@@ -1,20 +1,24 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { Mail, MailOpen } from "lucide-react"
 import PageHeader from "../components/layout/PageHeader"
 import DataTable, { Pager } from "../components/common/DataTable"
-import { Loading, ErrorState } from "../components/common/States"
+import { Loading } from "../components/common/States"
 import { useRequest } from "../hooks/useRequest"
 import { usePagination } from "../hooks/usePagination"
 import { listMessages, markAllRead, markRead } from "../api/messages"
 import { fmtDateTime } from "../utils/format"
 import { useAuth } from "../context/AuthContext"
+import { useToast } from "../context/ToastContext"
 
 export default function MessagesPage() {
   const { query, setPage } = usePagination()
   const nav = useNavigate()
   const { activeRole } = useAuth()
+  const toast = useToast()
   const isStudent = activeRole?.role === "STUDENT"
   const [filter, setFilter] = useState("")
+  const [markingAll, setMarkingAll] = useState(false)
   const { data, loading, error, reload } = useRequest(
     () => listMessages({ ...query, is_read: filter === "" ? undefined : filter }),
     [query.page, query.page_size, filter],
@@ -35,11 +39,28 @@ export default function MessagesPage() {
 
   const open = async (row) => {
     if (!row.is_read) {
-      await markRead(row.id).catch(() => {})
+      try {
+        await markRead(row.id)
+      } catch (error) {
+        toast.error(error.message || "标记已读失败，未读提示暂时保留")
+      }
     }
     const to = navTarget(row)
     if (to) nav(to)
-    else reload()
+    else await reload().catch(() => {})
+  }
+
+  const readAll = async () => {
+    setMarkingAll(true)
+    try {
+      await markAllRead()
+      toast.success("全部消息已读")
+      await reload().catch(() => toast.info("消息已标记为已读，但列表刷新失败；请重新加载页面"))
+    } catch (error) {
+      toast.error(error.message || "操作失败，请重试")
+    } finally {
+      setMarkingAll(false)
+    }
   }
 
   return (
@@ -47,7 +68,10 @@ export default function MessagesPage() {
       <PageHeader
         title="消息中心"
         extra={(
-          <button type="button" className="btn btn-ghost btn-sm" onClick={async () => { await markAllRead(); reload() }}>全部已读</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={markingAll} onClick={readAll}>
+            {markingAll ? <span className="loading loading-spinner loading-xs" /> : <MailOpen size={16} strokeWidth={1.8} />}
+            全部已读
+          </button>
         )}
       />
       <div className="mb-3 flex gap-2">
@@ -55,21 +79,26 @@ export default function MessagesPage() {
           <button key={label} type="button" className={`btn btn-xs ${filter === v ? "btn-primary" : "btn-ghost"}`} onClick={() => setFilter(v)}>{label}</button>
         ))}
       </div>
-      {error && <ErrorState error={error} onRetry={reload} />}
-      {loading && !data ? <Loading /> : (
+      {loading && !data ? <Loading label="消息" /> : (
         <div className="surface-card p-2">
           <DataTable
+            error={error}
+            onRetry={reload}
             columns={[
               { key: "title", title: "标题", render: (r) => (
-                <button type="button" className={`text-left ${r.is_read ? "text-base-content/60" : "font-medium"}`} onClick={() => open(r)}>{r.title}</button>
+                <button type="button" className={`flex items-center gap-2 text-left ${r.is_read ? "text-base-content/60" : "font-medium"}`} onClick={() => open(r)}>
+                  {r.is_read ? <MailOpen size={15} strokeWidth={1.8} aria-label="已读" /> : <Mail size={15} strokeWidth={1.8} aria-label="未读" />}
+                  <span>{r.title}</span>
+                  {!r.is_read && <span className="badge badge-primary badge-xs">未读</span>}
+                </button>
               ) },
               { key: "content", title: "内容", render: (r) => <span className="line-clamp-2 text-xs text-base-content/70">{r.content}</span> },
               { key: "time", title: "时间", render: (r) => <span className="mono text-xs">{fmtDateTime(r.created_at)}</span> },
             ]}
             rows={data?.items || []}
-            empty="没有消息"
+            empty={filter === "false" ? "没有未读消息" : filter === "true" ? "没有已读消息" : "没有消息"}
           />
-          <div className="px-2 pb-2"><Pager page={data?.page} pageSize={data?.page_size} total={data?.total} onPage={setPage} /></div>
+          {!error && <div className="px-2 pb-2"><Pager page={data?.page} pageSize={data?.page_size} total={data?.total} onPage={setPage} /></div>}
         </div>
       )}
     </div>

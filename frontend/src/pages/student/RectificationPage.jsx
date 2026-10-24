@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
+import { Link } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import IssueList from "../../components/review/IssueList"
 import IssueResponseForm from "../../components/student/IssueResponseForm"
@@ -12,6 +13,9 @@ import { getNotice, listNotices } from "../../api/notices"
 import { getReport } from "../../api/reports"
 import { getSubmission, submitSubmission } from "../../api/submissions"
 import { useToast } from "../../context/ToastContext"
+import StudentTaskProgress from "../../utils/student/StudentTaskProgress"
+import { isAiPending, issueMaterialId, refreshStudentRequests, studentSubmitReason } from "../../utils/studentWorkflow"
+import { useStudentMaterials } from "../../utils/student/useStudentMaterials"
 
 export default function RectificationPage() {
   const toast = useToast()
@@ -20,80 +24,103 @@ export default function RectificationPage() {
   const subId = archive?.current_submission?.id
   const subReq = useRequest(() => (subId ? getSubmission(subId) : null), [subId], { immediate: !!subId })
   const issueReq = useRequest(() => (subId ? listIssues(subId) : { items: [] }), [subId], { immediate: !!subId })
-  const noticeReq = useRequest(() => listNotices({ submission_id: subId, page_size: 5 }), [subId], { immediate: !!subId })
+  const noticeReq = useRequest(() => listNotices({ submission_id: subId, notice_type: "RECTIFICATION", page_size: 20 }), [subId], { immediate: !!subId })
   const [notice, setNotice] = useState(null)
+  const [noticeLoading, setNoticeLoading] = useState(false)
+  const [noticeError, setNoticeError] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-
-  const reportId = subReq.data?.latest_report?.id
+  const [startedTask, setStartedTask] = useState(null)
+  const [finishedJobId, setFinishedJobId] = useState(null)
+  const [replyWork, setReplyWork] = useState({})
+  const requestLock = useRef(false)
+  const noticeSequence = useRef(0)
+  const sub = subReq.data
+  const reportId = sub?.latest_report?.id
   const reportReq = useRequest(() => (reportId ? getReport(reportId) : null), [reportId], { immediate: !!reportId })
+  const jobId = (isAiPending(sub) ? sub.ai_job_id : null) || (startedTask && startedTask.submissionId === subId ? startedTask.id : null)
+  const taskPending = !!jobId && String(jobId) !== String(finishedJobId)
+  const replyBusy = Object.values(replyWork).some(Boolean)
+  const materialsReq = useStudentMaterials(archive?.id, sub?.stage_code, () => refreshStudentRequests(subReq, issueReq, ...(reportId ? [reportReq] : [])))
+  const refresh = () => refreshStudentRequests(subReq, issueReq, noticeReq, ...(reportId ? [reportReq] : []))
+  const materialBusy = materialsReq.loading || !materialsReq.data || !!materialsReq.error || materialsReq.pending > 0
+  const submitReason = materialBusy ? (materialsReq.pending ? "材料正在解析，请完成后再重新提交。" : "正在核对材料状态，请稍候；加载失败时请重试。") : studentSubmitReason(sub, issueReq.data?.items || [], { ready: !!issueReq.data && !issueReq.loading && !issueReq.error && !subReq.loading, taskPending: taskPending || replyBusy })
 
   const openNotice = async (id) => {
-    setNotice(await getNotice(id))
+    const sequence = ++noticeSequence.current
+    setNotice(null)
+    setNoticeError("")
+    setNoticeLoading(true)
+    try {
+      const data = await getNotice(id)
+      if (sequence === noticeSequence.current) setNotice(data)
+    } catch (e) {
+      if (sequence === noticeSequence.current) setNoticeError(e.message || "通知加载失败")
+    } finally {
+      if (sequence === noticeSequence.current) setNoticeLoading(false)
+    }
   }
 
   const resubmit = async () => {
+    if (requestLock.current || submitReason || sub?.status !== "RETURNED") return
+    requestLock.current = true
     setBusy(true)
     setError("")
     try {
-      await submitSubmission(subId, {})
-      toast.success("已重新提交，系统将自动复核")
-      subReq.reload()
-      issueReq.reload()
+      const res = await submitSubmission(subId, {})
+      if (res?.submission) subReq.setData(res.submission)
+      if (res?.recheck_job_id) {
+        setFinishedJobId(null)
+        setStartedTask({ submissionId: subId, id: res.recheck_job_id })
+      }
+      toast.success("已重新提交，系统正在自动复核")
+      refresh()
     } catch (e) {
       setError(e.message || "还不能重新提交")
+      refresh()
     } finally {
       setBusy(false)
+      requestLock.current = false
     }
   }
 
   if (archiveReq.loading && !archive) return <Loading />
-  if (!subId) {
-    return (
-      <div>
-        <PageHeader title="整改中心" />
-        <p className="text-sm text-base-content/60">当前没有待整改的提交。</p>
-      </div>
-    )
-  }
-
-  const returned = subReq.data?.status === "RETURNED" || subReq.data?.status === "DRAFT"
+  if (archiveReq.error) return <ErrorState error={archiveReq.error} onRetry={() => archiveReq.reload().catch(() => {})} />
+  if (!subId) return <div><PageHeader title="整改中心" /><p className="text-sm text-base-content/60">当前没有待整改的提交。</p></div>
+  if (subReq.loading && !sub) return <Loading />
+  if (subReq.error) return <ErrorState error={subReq.error} onRetry={() => subReq.reload().catch(() => {})} />
+  const returned = sub?.status === "RETURNED"
+  const canReply = !!sub?.can?.submit && ["DRAFT", "RETURNED"].includes(sub?.status) && !taskPending && !isAiPending(sub)
 
   return (
     <div>
-      <PageHeader
-        title="整改中心"
-        extra={<button type="button" className="btn btn-primary btn-sm" disabled={busy || !returned} onClick={resubmit}>重新提交</button>}
-      >
-        逐条回复已确认的问题。全部处理后再提交，系统会自动复核。
+      <PageHeader title="整改中心" extra={<button type="button" className="btn btn-primary btn-sm" disabled={busy || !returned || !!submitReason} onClick={resubmit}>{busy ? "重新提交中…" : "重新提交"}</button>}>
+        逐条回复已确认的问题。全部处理后重新提交，系统会自动复核。
       </PageHeader>
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
-      {reportReq.data?.recheck_summary && (
-        <div className="mb-4"><RecheckSummary summary={reportReq.data.recheck_summary} /></div>
-      )}
+      {materialsReq.error && <ErrorState error={materialsReq.error} onRetry={() => materialsReq.reload().catch(() => {})} />}
+      {returned && submitReason && <div className="alert alert-warning mb-3 text-sm">{replyBusy ? "正在保存整改或解析新版本，请等待完成。" : submitReason}</div>}
+      {!returned && <div className="alert mb-3 text-sm">{sub?.status === "DRAFT" ? <>当前为草稿，请完成自查后从<Link className="link" to={`/my/self-check/${subId}`}>自查页提交审核</Link>。</> : "材料已进入审核，当前可查看整改回复与复核结果。"}</div>}
+      {jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
+      {reportReq.error && <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} />}
+      {reportReq.loading && !reportReq.data && <Loading label="复核报告" />}
+      {reportReq.data?.recheck_summary && <div className="mb-4"><RecheckSummary summary={reportReq.data.recheck_summary} /></div>}
       <div className="grid gap-4 lg:grid-cols-5">
         <section className="lg:col-span-3">
-          {issueReq.loading && !issueReq.data ? <Loading /> : issueReq.error ? <ErrorState error={issueReq.error} onRetry={issueReq.reload} /> : (
-            <IssueList
-              issues={issueReq.data?.items || []}
-              renderFooter={(issue) => returned ? <IssueResponseForm issue={issue} onDone={issueReq.reload} /> : null}
-            />
-          )}
+          {issueReq.loading && !issueReq.data ? <Loading /> : issueReq.error ? <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} /> : <IssueList
+            issues={issueReq.data?.items || []}
+            renderActions={(issue) => issueMaterialId(issue) && <Link className="btn btn-ghost btn-xs" to={`/materials/${issueMaterialId(issue)}?issue_id=${issue.id}`}>查看问题材料</Link>}
+            renderFooter={(issue) => canReply ? <IssueResponseForm compact issue={issue} onDone={() => { refresh(); materialsReq.reload().catch(() => {}) }} onBusyChange={(value) => setReplyWork((previous) => previous[issue.id] === value ? previous : { ...previous, [issue.id]: value })} /> : null}
+          />}
         </section>
         <aside className="lg:col-span-2 space-y-3">
           <h2 className="text-sm font-medium">整改通知</h2>
-          <ul className="space-y-2">
-            {(noticeReq.data?.items || []).map((n) => (
-              <li key={n.id}>
-                <button type="button" className="btn btn-ghost btn-sm h-auto w-full justify-start py-2 text-left" onClick={() => openNotice(n.id)}>
-                  <span>
-                    <span className="block">{n.title}</span>
-                    <span className="text-xs text-base-content/50">{n.item_count} 条 · {n.status}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {noticeReq.loading && !noticeReq.data ? <Loading /> : noticeReq.error ? <ErrorState error={noticeReq.error} onRetry={() => noticeReq.reload().catch(() => {})} /> : <>
+            {!(noticeReq.data?.items || []).length && <p className="text-sm text-base-content/60">暂无整改通知。</p>}
+            <ul className="space-y-2">{(noticeReq.data?.items || []).map((n) => <li key={n.id}><button type="button" className="btn btn-ghost btn-sm h-auto w-full justify-start py-2 text-left" onClick={() => openNotice(n.id)}><span><span className="block">{n.title}</span><span className="text-xs text-base-content/50">{n.item_count} 条 · {n.status}</span></span></button></li>)}</ul>
+          </>}
+          {noticeLoading && <Loading label="通知" />}
+          {noticeError && <div className="alert alert-error text-sm">{noticeError}</div>}
           <NoticePreview notice={notice} />
         </aside>
       </div>

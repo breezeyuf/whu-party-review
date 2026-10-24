@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config import DATABASE_URL
+from migrations import apply_migrations
 
 engine = create_engine(
     DATABASE_URL,
@@ -35,6 +34,7 @@ def get_db():
         db.close()
 
 
+# Compatibility for older isolated test fixtures; startup uses frozen migrations.
 _HANDOVER_PATCH = """
 ALTER TABLE ai_reports ADD COLUMN IF NOT EXISTS handover_status TEXT
     CHECK (handover_status IS NULL OR handover_status IN ('NOT_REQUIRED', 'REQUIRED', 'DONE'));
@@ -64,25 +64,5 @@ CREATE INDEX IF NOT EXISTS ix_handover_records_report ON handover_records(report
 """
 
 
-def _schema_paths() -> list[Path]:
-    here = Path(__file__).resolve().parent
-    candidates = [here / "schema.sql", here.parent.parent / "schema.sql"]
-    return [p for p in candidates if p.is_file()]
-
-
 def init_db() -> None:
-    paths = _schema_paths()
-    if not paths:
-        raise FileNotFoundError("schema.sql not found")
-    sql = paths[0].read_text(encoding="utf-8")
-    raw = engine.raw_connection()
-    try:
-        with raw.cursor() as cur:
-            cur.execute(sql)
-            cur.execute(_HANDOVER_PATCH)
-        raw.commit()
-    except Exception:
-        raw.rollback()
-        raise
-    finally:
-        raw.close()
+    apply_migrations(engine)

@@ -5,11 +5,15 @@ import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
 import { DemoBadge, RecoBadge, StatusBadge } from "../../components/common/Badges"
 import { Modal } from "../../components/common/Modal"
+import { ErrorState } from "../../components/common/States"
 import { usePagination } from "../../hooks/usePagination"
 import { useRequest } from "../../hooks/useRequest"
 import { createArchive, listArchives } from "../../api/archives"
 import { listBatches } from "../../api/batches"
-import { issueCountsText, stageName } from "../../utils/format"
+import { listOrgs } from "../../api/orgs"
+import { issueCountsText, stageShort } from "../../utils/format"
+import { availableBranches, canManageArchive } from "../../utils/archiveWorkflow"
+import { useAuth } from "../../context/AuthContext"
 import { useMeta } from "../../context/MetaContext"
 import { useToast } from "../../context/ToastContext"
 
@@ -20,26 +24,34 @@ const EMPTY = {
 export default function ArchiveListPage() {
   const meta = useMeta()
   const toast = useToast()
+  const { activeRole } = useAuth()
+  const canCreate = canManageArchive(activeRole)
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listArchives(query), [JSON.stringify(query)])
   const batches = useRequest(() => listBatches({ page_size: 50 }), [])
+  const orgs = useRequest(() => listOrgs({ flat: true }), [], { immediate: canCreate })
+  const branches = availableBranches(orgs.data || [], activeRole)
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [password, setPassword] = useState("")
+  const [saving, setSaving] = useState(false)
+  const close = () => { if (!saving) setOpen(false) }
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
   const save = async () => {
-    if (!form.real_name || !form.student_no || !form.branch_id) {
+    if (saving) return
+    if (!form.real_name.trim() || !form.student_no.trim() || !branches.some((b) => Number(b.id) === Number(form.branch_id))) {
       toast.error("请填写姓名、学号并选择支部")
       return
     }
+    setSaving(true)
     try {
       const res = await createArchive({
         student: {
-          real_name: form.real_name,
+          real_name: form.real_name.trim(),
           gender: form.gender,
-          student_no: form.student_no,
+          student_no: form.student_no.trim(),
           major: form.major || undefined,
           class_name: form.class_name || undefined,
         },
@@ -50,19 +62,21 @@ export default function ArchiveListPage() {
       setPassword(res.initial_password || "")
       toast.success("档案已创建")
       if (!res.initial_password) setOpen(false)
-      req.reload()
+      req.reload().catch(() => {})
     } catch (e) {
       toast.error(e.message || "创建失败")
+    } finally {
+      setSaving(false)
     }
   }
 
   return (
     <div>
-      <PageHeader title="发展档案" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => { setPassword(""); setOpen(true) }}>新建档案</button>} />
+      <PageHeader title="发展档案" extra={canCreate && <button type="button" className="btn btn-primary btn-sm" onClick={() => { setForm({ ...EMPTY, branch_id: branches.length === 1 ? String(branches[0].id) : "" }); setPassword(""); setOpen(true) }}>新建档案</button>} />
       <FilterBar
         values={query}
         onChange={setQuery}
-        onReset={() => setQuery({ q: "", stage_code: "", status: "", batch_id: "" })}
+        onReset={() => setQuery({ q: "", stage_code: "", status: "", batch_id: "", submission_status: "" })}
         fields={[
           { key: "q", label: "姓名 / 学号" },
           { key: "batch_id", label: "批次", type: "select", options: (batches.data?.items || []).map((b) => ({ code: b.id, name: b.name })) },
@@ -71,6 +85,9 @@ export default function ArchiveListPage() {
           { key: "submission_status", label: "提交状态", type: "select", metaKey: "submission_statuses" },
         ]}
       />
+      {req.error && <ErrorState error={req.error} onRetry={() => req.reload().catch(() => {})} />}
+      {batches.error && <div className="mb-3"><ErrorState error={batches.error} onRetry={() => batches.reload().catch(() => {})} /></div>}
+      {!req.error && (
       <div className="surface-card p-2">
         <DataTable
           loading={req.loading}
@@ -93,11 +110,12 @@ export default function ArchiveListPage() {
         />
         <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} /></div>
       </div>
-      <Modal open={open} title="新建发展档案" onClose={() => setOpen(false)} footer={
-        password ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(false)}>知道了</button> : (
+      )}
+      <Modal open={open} title="新建发展档案" onClose={close} footer={
+        password ? <button type="button" className="btn btn-primary btn-sm" onClick={close}>知道了</button> : (
           <>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>取消</button>
-            <button type="button" className="btn btn-primary btn-sm" onClick={save}>创建</button>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={close}>取消</button>
+            <button type="button" className="btn btn-primary btn-sm" disabled={saving || orgs.loading || !!orgs.error || !branches.length} onClick={save}>{saving ? "创建中…" : "创建"}</button>
           </>
         )
       }>
@@ -105,12 +123,16 @@ export default function ArchiveListPage() {
           <div className="alert">已创建学生账号，初始密码仅显示一次：<span className="mono font-medium">{password}</span></div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
+            {orgs.error && <div className="sm:col-span-2"><ErrorState error={orgs.error} onRetry={() => orgs.reload().catch(() => {})} /></div>}
             <input className="input input-bordered input-sm" placeholder="姓名" value={form.real_name} onChange={(e) => set("real_name", e.target.value)} />
             <input className="input input-bordered input-sm" placeholder="学号" value={form.student_no} onChange={(e) => set("student_no", e.target.value)} />
             <select className="select select-bordered select-sm" value={form.gender} onChange={(e) => set("gender", e.target.value)}>
               <option>男</option><option>女</option>
             </select>
-            <input className="input input-bordered input-sm" placeholder="支部 ID" value={form.branch_id} onChange={(e) => set("branch_id", e.target.value)} />
+            <select aria-label="所属支部" className="select select-bordered select-sm" value={form.branch_id} disabled={saving || orgs.loading} onChange={(e) => set("branch_id", e.target.value)}>
+              <option value="">{orgs.loading ? "正在加载支部…" : "选择所属支部"}</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
             <select className="select select-bordered select-sm" value={form.batch_id} onChange={(e) => set("batch_id", e.target.value)}>
               <option value="">不指定批次</option>
               {(batches.data?.items || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}

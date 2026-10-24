@@ -1,7 +1,7 @@
 import { useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
 import RuleFormModal from "../../components/rules/RuleFormModal"
-import { Loading, ErrorState } from "../../components/common/States"
+import { Loading, ErrorState, EmptyState } from "../../components/common/States"
 import { ConfirmDialog } from "../../components/common/Modal"
 import { useRequest } from "../../hooks/useRequest"
 import { checklists, materialTypes } from "../../api/rules"
@@ -60,7 +60,7 @@ export default function ChecklistsPage() {
       <PageHeader title="材料清单" extra={writable && <button type="button" className="btn btn-primary btn-sm" onClick={() => setEdit({})}>新增条目</button>}>
         按阶段维护应交材料、份数和是否必需。非组织部角色只读。
       </PageHeader>
-      {req.loading && !req.data ? <Loading /> : req.error ? <ErrorState error={req.error} onRetry={req.reload} /> : (
+      {req.loading && !req.data ? <Loading label="材料清单" /> : req.error ? <ErrorState error={req.error} onRetry={req.reload} /> : !groups.length ? <EmptyState title="还没有材料清单条目" /> : (
         <div className="space-y-4">
           {groups.map((g) => (
             <section key={g.stage_code} className="surface-card overflow-x-auto">

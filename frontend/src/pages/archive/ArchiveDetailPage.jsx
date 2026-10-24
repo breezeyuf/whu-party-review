@@ -1,18 +1,22 @@
-import { useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import StageProgress from "../../components/archive/StageProgress"
 import TimelineView from "../../components/archive/TimelineView"
-import NodeCorrectionModal from "../../components/archive/NodeCorrectionModal"
 import ReviewTrail from "../../components/review/ReviewTrail"
 import { DemoBadge, StatusBadge } from "../../components/common/Badges"
 import { Loading, ErrorState } from "../../components/common/States"
+import { ModalLoading } from "../../components/common/Modal"
+import { lazyWithRetry, whenIdle } from "../../utils/lazyLoad"
 import { useRequest } from "../../hooks/useRequest"
 import { correctNode, getArchive, getHistory, getTimeline, updateArchive } from "../../api/archives"
 import { fmtDate } from "../../utils/format"
 import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
-import { can } from "../../utils/permissions"
+import { canManageArchive } from "../../utils/archiveWorkflow"
+
+// 节点校正弹窗只在校正时使用，不进页面首屏
+const NodeCorrectionModal = lazyWithRetry(() => import("../../components/archive/NodeCorrectionModal"))
 
 export default function ArchiveDetailPage() {
   const { id } = useParams()
@@ -24,9 +28,28 @@ export default function ArchiveDetailPage() {
   const [node, setNode] = useState(null)
   const [editing, setEditing] = useState(false)
   const [major, setMajor] = useState("")
-  const editable = can(activeRole, "archives") && activeRole?.role !== "CROSS_REVIEWER"
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState("")
+  const editable = canManageArchive(activeRole)
+  useEffect(() => (editable ? whenIdle(() => NodeCorrectionModal.preload().catch(() => {}), 0) : undefined), [editable])
 
-  if (arch.loading && !arch.data) return <Loading />
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    setSaveError("")
+    try {
+      await updateArchive(id, { major: major.trim() })
+      toast.success("档案已保存")
+      setEditing(false)
+      arch.reload().catch(() => {})
+    } catch (error) {
+      setSaveError(error.message || "保存失败")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (arch.loading && !arch.data) return <Loading label="发展档案" />
   if (arch.error) return <ErrorState error={arch.error} onRetry={arch.reload} />
   const a = arch.data
   if (!a) return null
@@ -58,9 +81,11 @@ export default function ArchiveDetailPage() {
           </dl>
           {editable && !editing && <button type="button" className="btn btn-ghost btn-xs mt-3" onClick={() => { setMajor(a.major || ""); setEditing(true) }}>编辑</button>}
           {editing && (
-            <div className="mt-3 flex gap-2">
-              <input className="input input-bordered input-xs" value={major} onChange={(e) => setMajor(e.target.value)} placeholder="专业" />
-              <button type="button" className="btn btn-primary btn-xs" onClick={async () => { await updateArchive(id, { major }); setEditing(false); arch.reload() }}>保存</button>
+            <div className="mt-3 space-y-2">
+              <label className="block text-xs">专业<input aria-label="专业" className="input input-bordered input-sm mt-1 w-full" value={major} disabled={saving} onChange={(e) => setMajor(e.target.value)} /></label>
+              <button type="button" className="btn btn-primary btn-xs" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存"}</button>
+              <button type="button" className="btn btn-ghost btn-xs ml-2" disabled={saving} onClick={() => { setEditing(false); setSaveError("") }}>取消</button>
+              {saveError && <p role="alert" className="text-xs text-error">{saveError}</p>}
             </div>
           )}
           <h3 className="mb-2 mt-4 text-sm font-medium">各阶段提交包</h3>
@@ -75,17 +100,21 @@ export default function ArchiveDetailPage() {
         </section>
         <section className="lg:col-span-2">
           <h2 className="mb-2 text-sm font-medium">时间节点</h2>
-          <TimelineView timeline={time.data} onCorrect={editable ? setNode : undefined} />
+          {time.error ? <ErrorState error={time.error} onRetry={() => time.reload().catch(() => {})} /> : time.loading && !time.data ? <Loading /> : <>
+            <TimelineView timeline={time.data} onCorrect={editable ? setNode : undefined} />
+            {time.data?.report_is_stale && <p className="mt-3 text-xs text-warning">时间节点已变更，请重新校验报告。</p>}
+          </>}
         </section>
       </div>
       <h2 className="mb-2 text-sm font-medium">审核与整改历史</h2>
-      <ReviewTrail records={Array.isArray(hist.data) ? hist.data : []} />
+      {hist.error ? <ErrorState error={hist.error} onRetry={() => hist.reload().catch(() => {})} /> : hist.loading && !hist.data ? <Loading /> : <ReviewTrail records={Array.isArray(hist.data) ? hist.data : []} />}
       {node && (
-        <NodeCorrectionModal
+        <Suspense fallback={<ModalLoading />}><NodeCorrectionModal
+          key={node.code}
           node={node}
           onClose={() => setNode(null)}
-          onSave={(body) => correctNode(id, node.code, body).then(() => { toast.success("已校正"); time.reload() })}
-        />
+          onSave={(body) => correctNode(id, node.code, body).then(() => { toast.success("已校正，请重新校验受影响的报告"); time.reload().catch(() => {}); arch.reload().catch(() => {}) })}
+        /></Suspense>
       )}
     </div>
   )

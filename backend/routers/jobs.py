@@ -1,33 +1,17 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
 from deps import Actor, get_current_user
 from errors import conflict, forbidden, not_found
-from models import Job, Material, MaterialVersion, Submission, User
-from services.scope import scoped_submissions
+from models import Job, User
+from services.scope import scoped_jobs as _scoped_jobs
 from schemas.common import ok, page_params
 from utils import now
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
-
-
-def _scoped_jobs(db, actor):
-    query = db.query(Job)
-    if actor.role in ("SYS_ADMIN", "ORG_ADMIN"):
-        return query
-    if actor.role == "STUDENT":
-        return query.filter(Job.created_by == actor.id)
-    submissions = scoped_submissions(db.query(Submission.id), actor, db)
-    versions = db.query(MaterialVersion.id).join(Material).filter(Material.submission_id.in_(submissions))
-    return query.filter(or_(
-        Job.created_by == actor.id,
-        and_(Job.target_type == "submission", Job.target_id.in_(submissions)),
-        and_(Job.target_type == "material_version", Job.target_id.in_(versions)),
-    ))
 
 
 def _job_dict(j: Job, extra=None) -> dict:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -21,10 +22,11 @@ from models import (
 )
 from security import hash_password
 from utils import now
-from config import ADMIN_PASSWORD, ADMIN_USERNAME
+from config import ADMIN_PASSWORD, ADMIN_USERNAME, BACKEND_DIR
 import secrets
 
-SEED_DIR = Path(__file__).resolve().parent / "seed_data"
+SEED_DIR = BACKEND_DIR / "seed_data"
+RESTORE_PASSWORD_MARKER = "!RESET_REQUIRED_AFTER_RESTORE!"
 
 
 def _load(name: str) -> Any:
@@ -128,6 +130,26 @@ def ensure_admin(db: Session) -> str | None:
         db.flush()
     user = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     printed = None
+    restored = bool(user and user.password_hash == RESTORE_PASSWORD_MARKER)
+    # Only a digest of the historically public hash is retained. It cannot be
+    # used as a bcrypt credential or to test password guesses offline.
+    public_legacy_hash = bool(user and sha256(user.password_hash.encode("utf-8")).hexdigest() ==
+                             "2baa999db1fb9db82bfc5798d798723b01686c7038ba9c8fc392e1ad16270346")
+    if user and (restored or public_legacy_hash):
+        # Public demo dumps retain IDs/relations but never a reusable admin hash.
+        pwd = ADMIN_PASSWORD or secrets.token_urlsafe(10) + "A1"
+        printed = None if ADMIN_PASSWORD else pwd
+        user.password_hash = hash_password(pwd)
+        # The restore marker explicitly requests activation; do not reactivate
+        # an administrator intentionally disabled in an existing installation.
+        if restored:
+            user.is_active = True
+        user.must_change_password = True
+        user.token_version = (user.token_version or 0) + 1
+        user.failed_login_count = 0
+        user.locked_until = None
+        user.updated_at = now()
+        db.flush()
     if not user:
         pwd = ADMIN_PASSWORD or secrets.token_urlsafe(10) + "A1"
         printed = None if ADMIN_PASSWORD else pwd

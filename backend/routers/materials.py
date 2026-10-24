@@ -23,11 +23,13 @@ from models import (
 )
 from schemas.common import ok
 from services.audit import log
-from services.importer import assign_batch_items
+from services.extractions import correct_extractions
+from services.importer import assign_batch_items, parse_assign_body, rebuild_job_result
 from services.materials import add_version, create_material_with_file, enqueue_job, file_response, text_diff
-from services.scope import can_review, ensure_archive_access, ensure_submission_access, scoped_archives
-from services.storage import save_tmp
+from services.scope import can_review, ensure_archive_access, ensure_submission_access, scoped_archives, scoped_jobs
+from services import storage as store
 from services.timeline import merge_archive_nodes
+from services.uploads import read_material_upload, save_zip_upload
 from ai.checks.completeness import expected_count, run_completeness
 from ai.parser import render_page_png
 from utils import get_setting, now
@@ -80,7 +82,7 @@ async def upload_material(
         raise not_found("提交包不存在")
     if sub.status not in ("DRAFT", "RETURNED") and actor.role == "STUDENT":
         raise conflict("提交包审核中，不可上传")
-    data = await file.read()
+    data = await read_material_upload(db, file)
     mt = int(material_type_id) if material_type_id else None
     mat, ver, job = create_material_with_file(db, arch, sub, actor, file.filename or "file", data, mt, title, int(stage_code) if stage_code else None)
     log(db, actor, "UPLOAD", "material", mat.id, {"filename": file.filename})
@@ -246,7 +248,7 @@ async def post_version(mid: int, file: UploadFile = File(...), change_note: str 
         raise not_found()
     ensure_archive_access(db, actor, m.archive_id, request)
     _editable_submission(db, actor, m)
-    data = await file.read()
+    data = await read_material_upload(db, file)
     ver, job, responded = add_version(db, m, actor, file.filename or "file", data, change_note, issue_ids)
     return ok({"version": _ver_brief(db, ver, True), "parse_job_id": job.id, "responded_issue_ids": responded})
 
@@ -278,7 +280,7 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
     if vid and not ver:
         raise not_found("材料版本不存在")
     pr = db.query(ParseResult).filter(ParseResult.version_id == vid).first() if vid else None
-    exs = db.query(TimeNodeExtraction).filter(TimeNodeExtraction.material_version_id == vid, TimeNodeExtraction.is_current.is_(True)).all() if vid else []
+    exs = db.query(TimeNodeExtraction).filter(TimeNodeExtraction.material_version_id == vid, TimeNodeExtraction.is_current.is_(True)).order_by(TimeNodeExtraction.id).all() if vid else []
     return ok({
         "material_id": mid, "version_id": vid, "version_no": ver.version_no if ver else None,
         "parser": pr.parser if pr else None, "ocr_engine": pr.ocr_engine if pr else None,
@@ -309,7 +311,7 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
     vid = body.get("version_id") or m.current_version_id
     if vid != m.current_version_id:
         raise conflict("历史材料版本只读")
-    if body.get("extractions") and not (body.get("reason") or "").strip():
+    if body.get("extractions") and (not isinstance(body.get("reason"), str) or not body["reason"].strip()):
         raise unprocessable("时间节点校正须填写原因")
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == vid, MaterialVersion.material_id == mid).first() if vid else None
     if vid and not ver:
@@ -317,6 +319,9 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
     pr = db.query(ParseResult).filter(ParseResult.version_id == vid).first()
     if not pr:
         raise not_found()
+    if ver.parse_status != "DONE":
+        raise conflict("材料完成解析后才能校正")
+    corrections = correct_extractions(db, m, ver, body.get("extractions", []))
     if "corrected_text" in body:
         pr.corrected_text = body.get("corrected_text")
     if "corrected_fields" in body:
@@ -324,33 +329,8 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
     pr.corrected_by = actor.id
     pr.corrected_at = now()
     pr.updated_at = now()
-    for ex in body.get("extractions") or []:
-        if ex.get("delete") and ex.get("extraction_id"):
-            row = db.query(TimeNodeExtraction).filter(
-                TimeNodeExtraction.id == ex["extraction_id"], TimeNodeExtraction.material_version_id == vid
-            ).first()
-            if row:
-                row.is_current = False
-            continue
-        from utils import as_date
-        if ex.get("extraction_id"):
-            row = db.query(TimeNodeExtraction).filter(
-                TimeNodeExtraction.id == ex["extraction_id"], TimeNodeExtraction.material_version_id == vid
-            ).first()
-            if row:
-                row.value_date = as_date(ex.get("date"))
-                row.value_end_date = as_date(ex.get("end_date"))
-                row.hours = ex.get("hours")
-                row.method = "MANUAL"
-        else:
-            db.add(TimeNodeExtraction(
-                archive_id=m.archive_id, node_code=ex["node_code"], material_id=m.id, material_version_id=vid,
-                seq_index=ex.get("seq_index") or 0, value_date=as_date(ex.get("date")),
-                value_end_date=as_date(ex.get("end_date")), hours=ex.get("hours"), method="MANUAL",
-                is_current=True, created_at=now(),
-            ))
     merge_archive_nodes(db, m.archive_id)
-    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid})
+    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid, "extractions": corrections})
     job_id = None
     if body.get("recheck"):
         job = enqueue_job(db, "AI_CHECK", actor.id, "submission", m.submission_id,
@@ -408,23 +388,67 @@ async def batch_upload(file: UploadFile = File(...), batch_id: str | None = Form
                        db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("BRANCH_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN"):
         raise forbidden()
-    data = await file.read()
-    cfg = get_setting(db, "upload", {"max_zip_mb": 500})
-    if len(data) > int(cfg.get("max_zip_mb") or 500) * 1024 * 1024:
-        from errors import too_large
-        raise too_large("ZIP 超过上限")
-    rel = save_tmp(data, file.filename or "batch.zip")
-    job = enqueue_job(db, "BATCH_UPLOAD", actor.id, "batch", int(batch_id) if batch_id else None,
-                      {"zip_path": rel, "batch_id": int(batch_id) if batch_id else None, "stage_code": int(stage_code) if stage_code else None})
+    # 表单参数先校验再读文件：非法请求不会在 storage/tmp 留下文件
+    stage = _stage_param(stage_code)
+    batch = _batch_param(batch_id)
+    rel = await save_zip_upload(db, file)
+    try:
+        job = enqueue_job(db, "BATCH_UPLOAD", actor.id, "batch", batch, {
+            "zip_path": rel, "batch_id": batch, "stage_code": stage,
+            # 记录上传人当时的激活身份，识别时据此计算数据范围
+            "actor_role": actor.role, "actor_org_id": actor.org_id,
+        })
+    except BaseException:
+        store.remove(rel)
+        raise
     return ok({"job_id": job.id})
+
+
+def _stage_param(value: str | None) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        stage = int(value)
+    except (TypeError, ValueError):
+        raise unprocessable("阶段参数无效") from None
+    if stage < 1 or stage > 5:
+        raise unprocessable("阶段参数无效")
+    return stage
+
+
+def _batch_param(value: str | None) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        batch = int(value)
+    except (TypeError, ValueError):
+        raise unprocessable("批次参数无效") from None
+    if batch <= 0:
+        raise unprocessable("批次参数无效")
+    return batch
 
 
 @router.put("/materials/batch-upload/{job_id}/assign")
 def assign(job_id: int, body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("BRANCH_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN"):
         raise forbidden()
-    job = db.query(Job).filter(Job.id == job_id).first()
+    stage_code, assignments, skip_ids = parse_assign_body(body)
+    # 任务行锁：同一任务的并发确认串行执行，第二个请求读到的是已提交的导入结果
+    job = (
+        scoped_jobs(db, actor)
+        .filter(Job.id == job_id, Job.job_type == "BATCH_UPLOAD")
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
     if not job:
-        raise not_found()
-    result = assign_batch_items(db, job, actor, body.get("assignments") or [], body.get("skip_item_ids") or [])
+        # 不存在、不可见或类型不符一律 404，不区分原因，避免泄露其他人的任务
+        raise not_found("任务不存在")
+    if job.status != "SUCCEEDED":
+        raise conflict("文件归属识别尚未完成，请稍后再确认")
+    result = assign_batch_items(db, job, actor, stage_code, assignments, skip_ids)
+    # note 不落库：把本次确认产生的说明带进重建后的 job.result，刷新后仍能看到
+    notes = {row["item_id"]: row["note"] for row in result["items"] if row.get("note")}
+    job.result = rebuild_job_result(db, job, notes)
+    db.flush()
     return ok(result)

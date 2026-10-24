@@ -32,7 +32,13 @@ Copy-Item backend/.env.example backend/.env
 psql -U postgres -d party_review -f database\party_review_20261017.sql
 ```
 
-恢复后演示账号统一密码 `Demo@2026`；管理员 `admin` 的密码为初始化该库时设置的值。注意：仓库未包含 `backend/storage/materials/` 与 `previews/`（各 508 份、约 3.4G，体积原因未入库），备份中的材料记录不会指向实际文件；如需查看材料，请在恢复后于「系统设置」重新初始化演示数据（材料 PDF 自动生成，约 1 分钟）。
+恢复后演示账号统一密码 `Demo@2026`。公开备份不再包含管理员原密码哈希：`admin` 在 SQL 导入后处于禁用、待恢复状态。使用默认 `ADMIN_USERNAME=admin` 首次启动后端时，系统会保留该用户的 ID 和关联记录，使用当前 `ADMIN_PASSWORD` 或生成随机密码重新启用账号，同时使旧令牌失效；两种方式均要求首次登录改密。未设置 `ADMIN_PASSWORD` 时，新随机密码只在这次初始化的启动控制台显示，请妥善保存。重复启动不会重置已有密码；自定义管理员用户名时，备份中的 `admin` 保持禁用。
+
+这项清理不删除 Git 历史中的旧哈希。升级启动时若检测到管理员仍使用历史公开备份中的那一个密码哈希，将更换为当前 `ADMIN_PASSWORD` 或随机初始密码、要求改密并使旧令牌失效；其他自定义密码不受影响，原本停用的管理员不会因此被重新启用。随机初始密码仅在执行更换的那次启动控制台显示，请在升级前安排好管理员登录方式。演示备份仅供演示与验收，不用于生产环境。
+
+登录页账号提示默认关闭；仅在演示环境显式设置 `DEMO_LOGIN_HINT=1` 才会展示演示账号及密码。关闭提示不会删除或禁用已经创建的演示账号。
+
+注意：仓库未包含 `backend/storage/materials/` 与 `previews/`（各 508 份、约 3.4G，体积原因未入库），备份中的材料记录不会指向实际文件；如需查看材料，请在恢复后于「系统设置」重新初始化演示数据（材料 PDF 自动生成，约 1 分钟）。
 
 也可以不使用备份：启动后在系统设置里调用演示数据初始化，材料 PDF 会现场生成（约 1 分钟）。
 
@@ -49,6 +55,14 @@ npm run build
 
 ## 后端验证
 
+数据库结构升级采用带版本、checksum 与事务锁的迁移，空库自动初始化，完整旧版数据库自动接管；重复启动不会重放建表脚本。旧库接管、版本检查和新增迁移步骤见[数据库迁移说明](数据库迁移说明.md)。升级前备份数据库，不能编辑已经应用的迁移文件。
+
+HTTP 请求在 multipart 解析前按实际接收字节执行总体积上限，默认 `MAX_REQUEST_BODY_MB=512`（含表单开销）；材料文件再按 `upload.max_file_mb` 限制读取，ZIP 按 `upload.max_zip_mb` 分块落盘。若提高业务上传上限，应相应调整请求体总上限和反向代理上限。
+
+客户端 IP 默认使用直连来源，忽略 `X-Forwarded-For`。仅在确实使用反向代理时，将该代理的地址/CIDR 填入 `TRUSTED_PROXY_CIDRS`，例如 `127.0.0.1/32,::1/128`；代理必须覆盖传入转发头或追加它实际看到的来源。不要配置不受控网段。自带启动器已关闭 Uvicorn 的隐式代理头处理；若手动启动 Uvicorn，请使用 `python -m uvicorn main:app --no-proxy-headers`，避免在应用校验前改写来源。
+
+服务响应带 `X-Request-ID`；未处理异常返回相同诊断编号。运行日志记录错误类型、调用位置和请求/任务编号，不记录请求正文、密钥、模型提示词或异常原始值。桌面模式沿用 `data/desktop.log`，命令行服务输出到标准日志。
+
 ```powershell
 cd backend
 ..\.venv\Scripts\python.exe -m pytest -q
@@ -62,6 +76,35 @@ $env:TEST_DATABASE_URL='postgresql+psycopg://postgres:PASSWORD@127.0.0.1:5432/pa
 ```
 
 这组用例创建随机 `review_test_*` schema，结束后仅移除该临时 schema，不会隐式使用应用数据库。连接用户需要 CREATE SCHEMA 权限。API 冒烟使用 `DATABASE_URL`，其生命周期会初始化应用结构，因此应指向测试库。
+
+### 没有本机 PostgreSQL 时：临时库跑数据库回归
+
+`pgserver` 自带 PostgreSQL 16.2 二进制，不需要单独安装数据库。它目前没有 Python 3.13 的轮子，
+用一份 3.12 环境单独装它即可（后端仍跑在项目自己的 3.13 环境）：
+
+```powershell
+uv python install 3.12
+uv venv --python 3.12 _pgtools/.venv
+uv pip install --python _pgtools/.venv/Scripts/python.exe pgserver
+_pgtools\.venv\Scripts\python.exe _tools\pg_run.py _tmp\pgdata   # 打印并常驻一个临时实例
+```
+
+拿到连接串后，把 `TEST_DATABASE_URL` 指向该实例的 `postgres` 库、`DATABASE_URL` 指向同实例的
+应用库（用于 API 冒烟），即可跑全量回归：
+
+```powershell
+$env:TEST_DATABASE_URL='postgresql+psycopg://postgres:@127.0.0.1:<port>/postgres'
+$env:DATABASE_URL='postgresql+psycopg://postgres:@127.0.0.1:<port>/party_review'
+$env:APP_SECRET_KEY='test-key-0123456789abcdef'
+$env:WORKER_ENABLED='0'
+cd backend
+..\.venv\Scripts\python.exe -m pytest -q
+```
+
+数据库用例为每个测试模块新建随机 schema（`pytest_*` / `zipconc_*`），测试在事务里跑完即回滚，
+结束后 `DROP SCHEMA`，从不连接应用库；`TEST_DATABASE_URL` 未设置时这些用例跳过，跳过不计为通过。
+本轮实测：278 passed / 0 skipped。
+
 
 请求竞态测试：先在前端运行 `npm run dev`，浏览器访问 http://127.0.0.1:5173/tests/hooks.html ，页面显示 4 项实际 React Hook 测试结果。
 

@@ -1,5 +1,6 @@
 # 版本于 2026-10-17 在 Python 3.13 / Windows 上实测通过（原有锁定版本在 PyPI 不存在，已更新）
 fastapi==0.143.3
+starlette==1.9.0
 uvicorn==0.54.0
 SQLAlchemy==2.1.5
 psycopg[binary]==3.3.6
@@ -14,6 +15,7 @@ python-dateutil==2.9.0.post0
 PyMuPDF==1.28.2
 python-docx==1.2.0
 openpyxl==3.1.5
+msoffcrypto-tool==6.0.0
 numpy==2.5.4
 opencv-python-headless==5.0.0.93
 pytest==9.1.1
