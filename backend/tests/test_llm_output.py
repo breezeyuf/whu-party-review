@@ -47,7 +47,8 @@ def content(*issues):
 def endpoint(monkeypatch):
     requests = []
     responses = []
-    settings = {"base_url": "https://model.test/v1", "model": "test-model", "max_attempts": 3}
+    settings = {"base_url": "https://model.test/v1", "model": "test-model", "max_attempts": 3,
+                "api_key_enc": "synthetic-encrypted-key"}
     real_client = httpx.Client
 
     def respond(request):
@@ -63,7 +64,7 @@ def endpoint(monkeypatch):
 
     monkeypatch.setattr(llm.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
     monkeypatch.setattr(llm, "llm_config", lambda db: settings)
-    monkeypatch.setattr(llm, "llm_api_key", lambda db: "test-key")
+    monkeypatch.setattr(llm, "decrypt_field", lambda encrypted: "test-key")
     monkeypatch.setattr(llm.time, "sleep", lambda seconds: None)
 
     def configure(*items, **config):

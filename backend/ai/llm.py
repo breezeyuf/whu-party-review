@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from ai.desensitize import desensitize_text
 from ai.llm_output import ChatCompletionOutput, validate_task_output
+from errors import unprocessable
 from models import Archive, PromptTemplate
 from security import decrypt_field
 from utils import get_setting
@@ -25,12 +26,13 @@ def llm_enabled(db) -> bool:
     return bool(cfg.get("llm_enabled") and (cfg.get("base_url") or "") and cfg.get("api_key_enc"))
 
 
-def llm_api_key(db) -> str:
-    cfg = llm_config(db)
-    enc = cfg.get("api_key_enc") or ""
-    if not enc:
-        return ""
-    return decrypt_field(enc) or ""
+def validate_credential_options(options) -> None:
+    if not isinstance(options, dict):
+        raise unprocessable("大模型配置必须是对象")
+    for field in ("base_url", "api_key"):
+        value = options.get(field)
+        if value is not None and not isinstance(value, str):
+            raise unprocessable(f"{field} 必须是字符串或 null")
 
 
 def chat_json(
@@ -38,19 +40,31 @@ def chat_json(
     archive: Optional[Archive] = None,
     rule_set=None,
 ) -> tuple[Optional[dict], Optional[str], float]:
+    if override is not None:
+        validate_credential_options(override)
     cfg = dict(llm_config(db))
-    saved_base = (cfg.get("base_url") or "").rstrip("/")
+    if cfg.get("base_url") is not None and not isinstance(cfg["base_url"], str):
+        return None, "大模型接口地址配置无效", 0
+    saved_base = (cfg.get("base_url") or "").strip().rstrip("/")
+    if cfg.get("api_key_base_url") is not None and not isinstance(cfg["api_key_base_url"], str):
+        return None, "大模型密钥绑定配置无效", 0
+    credential_base = (cfg.get("api_key_base_url") or saved_base).strip().rstrip("/")
+    saved_key_enc = cfg.get("api_key_enc")
     if override:
         cfg.update({k: v for k, v in override.items() if v is not None})
-    base = (cfg.get("base_url") or "").rstrip("/")
+    base = (cfg.get("base_url") or "").strip().rstrip("/")
     model = cfg.get("model") or ""
     if not base or not model:
         return None, "未配置大模型", 0
     if override is not None and override.get("api_key") is not None:
         # An explicit empty key means an unauthenticated endpoint, never fallback.
         key = override["api_key"]
-    elif base == saved_base:
-        key = llm_api_key(db)
+    elif base == saved_base == credential_base:
+        if saved_key_enc is not None and not isinstance(saved_key_enc, str):
+            return None, "大模型密钥配置无效", 0
+        # Decrypt the same snapshot whose destination was checked above. A new
+        # settings read could pair another endpoint's key with this request URL.
+        key = (decrypt_field(saved_key_enc) or "") if saved_key_enc else ""
     else:
         # Bind stored credentials to the complete configured endpoint, including
         # scheme and path. Do not decrypt or send them to an overridden URL.

@@ -23,12 +23,12 @@ TEXT = (
 @pytest.fixture
 def model_endpoint(monkeypatch):
     requests = []
-    settings = {"base_url": "https://model.example.invalid/v1", "model": "test-model"}
+    settings = {"base_url": "https://model.example.invalid/v1", "model": "test-model", "api_key_enc": "synthetic-encrypted-key"}
     template = SimpleNamespace(system_prompt="核查材料并输出 JSON。", user_prompt="{rules}\n{text}")
     db = Mock()
     db.query.return_value.filter.return_value.first.side_effect = lambda: template
     monkeypatch.setattr(llm, "llm_config", lambda _: settings)
-    monkeypatch.setattr(llm, "llm_api_key", lambda _: "test-api-key")
+    monkeypatch.setattr(llm, "decrypt_field", lambda _: "test-api-key")
     client_class = httpx.Client
 
     def respond(request):
