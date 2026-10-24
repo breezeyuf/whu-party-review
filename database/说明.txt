@@ -1,5 +1,7 @@
 本备份为演示数据库 party_review 的完整结构与数据（PostgreSQL 16，pg_dump 生成）。
 恢复：createdb -U postgres party_review
       psql -U postgres -d party_review -f party_review_20261017.sql
-演示账号统一密码 Demo@2026；管理员密码为本库初始化时设置的值。
+演示账号统一密码 Demo@2026，登录页账号提示默认关闭。
+管理员 admin 的原密码哈希已移除，导入后账号禁用。以 ADMIN_USERNAME=admin 首次启动后端时，使用当前 ADMIN_PASSWORD 或控制台显示的新随机密码恢复账号，首次登录必须改密；用户 ID 和关联记录保留，旧令牌失效。重复启动不会再次重置密码。
+历史提交中的旧哈希仍存在；使用过旧备份管理员密码的部署需另行更换密码。完整步骤见 docs/RUN.md。
 仅用于演示与验收，请勿用于生产环境。

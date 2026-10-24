@@ -590,8 +590,17 @@ def test_version_upload_issue_ids_must_belong_to_material(case, as_client, monke
     assert r.json()["data"]["responded_issue_ids"] == [own.id]
 
 
-def test_spa_fallback_preserves_api_and_asset_errors():
-    from main import app
+def test_spa_fallback_preserves_api_and_asset_errors(tmp_path):
+    from fastapi import FastAPI
+    from services.frontend import mount_frontend
+
+    # A source checkout intentionally has no frontend fallback. Exercise the
+    # production SPA with its own build fixture, independent of a local dist.
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("production-spa", encoding="utf-8")
+    app = FastAPI()
+    mount_frontend(app, tmp_path)
     client = TestClient(app)
     assert client.get("/review/tasks").status_code == 200
     assert client.get("/api/does-not-exist").status_code == 404

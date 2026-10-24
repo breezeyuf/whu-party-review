@@ -1,5 +1,6 @@
 # 版本于 2026-10-17 在 Python 3.13 / Windows 上实测通过（原有锁定版本在 PyPI 不存在，已更新）
 fastapi==0.143.3
+starlette==1.9.0
 uvicorn==0.54.0
 SQLAlchemy==2.1.5
 psycopg[binary]==3.3.6

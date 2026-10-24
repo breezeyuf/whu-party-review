@@ -48,7 +48,7 @@ export default function SettingsPage() {
       <PageHeader title="系统配置" />
       <section className="surface-card space-y-3 p-4">
         <h2 className="text-sm font-medium">大模型</h2>
-        <p className="text-xs text-base-content/55">密钥只显示是否已设置，不会回显。未配置时审核降级为仅规则模式。</p>
+        <p className="text-xs text-base-content/55">密钥只显示是否已设置，不会回显。更换接口地址时请重新填写密钥。未配置时审核降级为仅规则模式。</p>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="toggle toggle-sm" checked={!!ai.llm_enabled} disabled={!isAdmin} onChange={(e) => setAi({ ...ai, llm_enabled: e.target.checked })} />启用</label>
         <input className="input input-bordered input-sm w-full" placeholder="接口地址" disabled={!isAdmin} value={ai.base_url || ""} onChange={(e) => setAi({ ...ai, base_url: e.target.value })} />
         <input className="input input-bordered input-sm w-full" placeholder="模型名" disabled={!isAdmin} value={ai.model || ""} onChange={(e) => setAi({ ...ai, model: e.target.value })} />

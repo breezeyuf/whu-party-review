@@ -27,8 +27,9 @@ from services.extractions import correct_extractions
 from services.importer import assign_batch_items, parse_assign_body, rebuild_job_result
 from services.materials import add_version, create_material_with_file, enqueue_job, file_response, text_diff
 from services.scope import can_review, ensure_archive_access, ensure_submission_access, scoped_archives, scoped_jobs
-from services.storage import save_tmp
+from services import storage as store
 from services.timeline import merge_archive_nodes
+from services.uploads import read_material_upload, save_zip_upload
 from ai.checks.completeness import expected_count, run_completeness
 from ai.parser import render_page_png
 from utils import get_setting, now
@@ -81,7 +82,7 @@ async def upload_material(
         raise not_found("提交包不存在")
     if sub.status not in ("DRAFT", "RETURNED") and actor.role == "STUDENT":
         raise conflict("提交包审核中，不可上传")
-    data = await file.read()
+    data = await read_material_upload(db, file)
     mt = int(material_type_id) if material_type_id else None
     mat, ver, job = create_material_with_file(db, arch, sub, actor, file.filename or "file", data, mt, title, int(stage_code) if stage_code else None)
     log(db, actor, "UPLOAD", "material", mat.id, {"filename": file.filename})
@@ -247,7 +248,7 @@ async def post_version(mid: int, file: UploadFile = File(...), change_note: str 
         raise not_found()
     ensure_archive_access(db, actor, m.archive_id, request)
     _editable_submission(db, actor, m)
-    data = await file.read()
+    data = await read_material_upload(db, file)
     ver, job, responded = add_version(db, m, actor, file.filename or "file", data, change_note, issue_ids)
     return ok({"version": _ver_brief(db, ver, True), "parse_job_id": job.id, "responded_issue_ids": responded})
 
@@ -390,17 +391,16 @@ async def batch_upload(file: UploadFile = File(...), batch_id: str | None = Form
     # 表单参数先校验再读文件：非法请求不会在 storage/tmp 留下文件
     stage = _stage_param(stage_code)
     batch = _batch_param(batch_id)
-    data = await file.read()
-    cfg = get_setting(db, "upload", {"max_zip_mb": 500})
-    if len(data) > int(cfg.get("max_zip_mb") or 500) * 1024 * 1024:
-        from errors import too_large
-        raise too_large("ZIP 超过上限")
-    rel = save_tmp(data, file.filename or "batch.zip")
-    job = enqueue_job(db, "BATCH_UPLOAD", actor.id, "batch", batch, {
-        "zip_path": rel, "batch_id": batch, "stage_code": stage,
-        # 记录上传人当时的激活身份，识别时据此计算数据范围
-        "actor_role": actor.role, "actor_org_id": actor.org_id,
-    })
+    rel = await save_zip_upload(db, file)
+    try:
+        job = enqueue_job(db, "BATCH_UPLOAD", actor.id, "batch", batch, {
+            "zip_path": rel, "batch_id": batch, "stage_code": stage,
+            # 记录上传人当时的激活身份，识别时据此计算数据范围
+            "actor_role": actor.role, "actor_org_id": actor.org_id,
+        })
+    except BaseException:
+        store.remove(rel)
+        raise
     return ok({"job_id": job.id})
 
 

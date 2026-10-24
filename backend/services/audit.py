@@ -5,6 +5,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from models import AuditLog
+from services.client_ip import client_ip
 from utils import now
 
 
@@ -29,8 +30,7 @@ def log(
         ip = getattr(actor, "ip", None)
         ua = getattr(actor, "user_agent", None)
     if request is not None:
-        forwarded = request.headers.get("x-forwarded-for") if hasattr(request, "headers") else None
-        ip = (forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else ip))
+        ip = client_ip(request) or None
         ua = request.headers.get("user-agent", ua)
     db.add(
         AuditLog(

@@ -95,7 +95,9 @@ def _apply_llm_rule(db, rule, m, ver, text: str, archive=None, *, rule_set=None)
         parsed, err, _ms = chat_json(
             db, "CONTENT_CHECK", variables, override={"max_attempts": 1}, archive=archive, rule_set=rule_set,
         )
-    except Exception:  # 大模型异常不得中断检查，也不回传可能包含敏感信息的异常原文
+    except Exception as exc:  # 大模型异常不得中断检查，也不回传可能包含敏感信息的异常原文
+        from diagnostics import log_exception
+        log_exception("model.content_check_failed", exc, material_id=m.id)
         return [], "大模型调用异常"
     if err:
         return [], err
