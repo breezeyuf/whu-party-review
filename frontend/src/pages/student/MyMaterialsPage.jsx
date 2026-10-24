@@ -80,7 +80,7 @@ export default function MyMaterialsPage() {
         title="我的材料"
         extra={(
           <div className="flex flex-wrap gap-2">
-            <Link className="btn btn-ghost btn-sm gap-2" to="/my/progress"><Clock3 size={15} strokeWidth={1.8} />发展进度</Link>
+            <Link className="btn btn-ghost btn-sm gap-2" to="/my/progress"><Clock3 size={15} strokeWidth={1.8} />我的发展进度</Link>
             {sub?.id && <Link className="btn btn-ghost btn-sm gap-2" to="/my/rectification"><ListChecks size={15} strokeWidth={1.8} />整改中心</Link>}
             {sub?.id && <Link className="btn btn-primary btn-sm gap-2" to={`/my/self-check/${sub.id}`}><FileCheck2 size={15} strokeWidth={1.8} />AI 自查与提交</Link>}
           </div>

@@ -30,7 +30,7 @@ export default function SuggestionTemplatesPage() {
 
   return (
     <div>
-      <PageHeader title="修改建议模板" extra={writable && <button type="button" className="btn btn-primary btn-sm" onClick={() => setEdit({ is_active: true })}>新增</button>}>
+      <PageHeader title="整改建议模板" extra={writable && <button type="button" className="btn btn-primary btn-sm" onClick={() => setEdit({ is_active: true })}>新增</button>}>
         可用变量：{VARS}
       </PageHeader>
       <div className="surface-card p-2">

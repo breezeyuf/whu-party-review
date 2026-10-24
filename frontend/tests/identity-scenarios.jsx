@@ -90,7 +90,7 @@ export async function runIdentityScenarios() {
     await mount({ roles: [{ role: "SYS_ADMIN", org_id: 1 }] }); await login()
     assert.equal(router.state.location.pathname, "/admin")
     assert.match(text(), /系统管理员工作台/)
-    assert.match(nav(), /用户管理.*系统配置/)
+    assert.match(nav(), /用户与权限.*系统配置/)
     assert.doesNotMatch(nav(), /我的材料|整改中心|审核待办/)
     assert.ok(document.querySelector('a[href="/admin/users"]'))
   })
@@ -197,7 +197,7 @@ export async function runIdentityScenarios() {
   })
   await test("退出后重新登录另一身份，不残留前一个身份的页面和菜单", async () => {
     await mount({ roles: [{ role: "SYS_ADMIN", org_id: 1 }], session: true })
-    assert.match(nav(), /用户管理/)
+    assert.match(nav(), /用户与权限/)
     await click(button("退出登录"))
     assert.equal(router.state.location.pathname, "/login")
     assert.equal(document.querySelector('nav[aria-label="主要导航"]'), null)

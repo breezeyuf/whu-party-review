@@ -31,6 +31,7 @@ const BatchUploadPage = shellPage("BatchUploadPage")
 const MaterialDetailPage = shellPage("MaterialDetailPage")
 const NoticesPage = shellPage("NoticesPage")
 const ChecklistsPage = shellPage("ChecklistsPage")
+const RuleSectionLayout = shellPage("RuleSectionLayout")
 const MaterialTypesPage = shellPage("MaterialTypesPage")
 const TimeRulesPage = shellPage("TimeRulesPage")
 const CheckRulesPage = shellPage("CheckRulesPage")
@@ -135,16 +136,19 @@ const shellPages = [
   },
   {
     element: <RequireRole allow="rulesRead" />,
-    children: [
-      { path: "/rules/checklists", ...page(<ChecklistsPage />) },
-      { path: "/rules/material-types", ...page(<MaterialTypesPage />) },
-      { path: "/rules/time-rules", ...page(<TimeRulesPage />) },
-      { path: "/rules/check-rules", ...page(<CheckRulesPage />) },
-      { path: "/rules/terms", ...page(<TermsPage />) },
-      { path: "/rules/sensitive", ...page(<SensitivePhrasesPage />) },
-      { path: "/rules/suggestions", ...page(<SuggestionTemplatesPage />) },
-      { path: "/rules/versions", ...page(<RuleVersionsPage />) },
-    ],
+    children: [{
+      element: <Gate><RuleSectionLayout /></Gate>,
+      children: [
+        { path: "/rules/checklists", ...page(<ChecklistsPage />) },
+        { path: "/rules/material-types", ...page(<MaterialTypesPage />) },
+        { path: "/rules/time-rules", ...page(<TimeRulesPage />) },
+        { path: "/rules/check-rules", ...page(<CheckRulesPage />) },
+        { path: "/rules/terms", ...page(<TermsPage />) },
+        { path: "/rules/sensitive", ...page(<SensitivePhrasesPage />) },
+        { path: "/rules/suggestions", ...page(<SuggestionTemplatesPage />) },
+        { path: "/rules/versions", ...page(<RuleVersionsPage />) },
+      ],
+    }],
   },
   {
     element: <RequireRole allow="stats" />,

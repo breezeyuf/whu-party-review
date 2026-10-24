@@ -13,10 +13,10 @@ function Node({ node, depth, onEdit, onAdd, onRemove }) {
     <li>
       <div className="flex items-center gap-2 py-1" style={{ paddingLeft: depth * 16 }}>
         {children.length > 0 ? (
-          <button type="button" className="btn btn-ghost btn-xs" onClick={() => setOpen((v) => !v)} aria-label="展开">{open ? "−" : "+"}</button>
+          <button type="button" className="btn btn-ghost btn-xs" onClick={() => setOpen((v) => !v)} aria-label={`${open ? "收起" : "展开"}${node.name}`} aria-expanded={open}>{open ? "−" : "+"}</button>
         ) : <span className="w-6" />}
         <span className="text-sm">{node.name}</span>
-        <span className="badge badge-ghost badge-xs">{node.org_type}</span>
+        <span className="badge badge-ghost badge-xs">{ORG_TYPE_NAME[node.org_type] || node.org_type}</span>
         {!node.is_active && <span className="badge badge-outline badge-xs">停用</span>}
         {node.is_demo && <span className="badge badge-outline badge-xs">演示</span>}
         <button type="button" className="btn btn-ghost btn-xs" onClick={() => onEdit(node)}>编辑</button>
@@ -31,23 +31,31 @@ function Node({ node, depth, onEdit, onAdd, onRemove }) {
 }
 
 const CHILD = { SCHOOL: "COLLEGE", COLLEGE: "BRANCH" }
+const ORG_TYPE_NAME = { SCHOOL: "学校", COLLEGE: "学院", BRANCH: "党支部" }
 
 export default function OrgsPage() {
   const toast = useToast()
   const req = useRequest(() => listOrgs({ flat: false }), [])
   const [edit, setEdit] = useState(null)
   const [remove, setRemove] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [removing, setRemoving] = useState(false)
   const tree = Array.isArray(req.data) ? req.data : []
 
   const save = async () => {
+    if (saving) return
+    if (!String(edit?.name || "").trim()) { toast.error("请填写组织名称"); return }
+    setSaving(true)
     try {
-      if (edit.id) await updateOrg(edit.id, { name: edit.name, code: edit.code, is_active: edit.is_active })
-      else await createOrg({ parent_id: edit.parent_id, org_type: edit.org_type, name: edit.name, code: edit.code || undefined })
+      if (edit.id) await updateOrg(edit.id, { name: edit.name.trim(), code: edit.code?.trim(), is_active: edit.is_active })
+      else await createOrg({ parent_id: edit.parent_id, org_type: edit.org_type, name: edit.name.trim(), code: edit.code?.trim() || undefined })
       toast.success("已保存")
       setEdit(null)
-      req.reload()
+      req.reload().catch((e) => toast.error(`组织已保存，但列表刷新失败：${e.message || "请重试"}`))
     } catch (e) {
       toast.error(e.message || "保存失败")
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -59,26 +67,31 @@ export default function OrgsPage() {
       )}
       <Modal open={!!edit} title={edit?.id ? "编辑组织" : "新增组织"} onClose={() => setEdit(null)} footer={
         <>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEdit(null)}>取消</button>
-          <button type="button" className="btn btn-primary btn-sm" onClick={save}>保存</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setEdit(null)}>取消</button>
+          <button type="button" className="btn btn-primary btn-sm" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存"}</button>
         </>
       }>
         {edit && (
           <div className="space-y-2">
-            <div className="text-xs text-base-content/50">类型 {edit.org_type}</div>
+            <div className="text-xs text-base-content/50">组织类型：{ORG_TYPE_NAME[edit.org_type] || edit.org_type}</div>
             <input className="input input-bordered input-sm w-full" placeholder="名称" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
             <input className="input input-bordered input-sm w-full" placeholder="编码" value={edit.code || ""} onChange={(e) => setEdit({ ...edit, code: e.target.value })} />
             {edit.id && <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="toggle toggle-sm" checked={edit.is_active !== false} onChange={(e) => setEdit({ ...edit, is_active: e.target.checked })} />启用</label>}
           </div>
         )}
       </Modal>
-      <ConfirmDialog open={!!remove} danger title="删除组织" message={`${remove?.name || ""} 若仍有下级、用户或档案，后端会要求改为停用。`} onClose={() => setRemove(null)} onConfirm={async () => {
+      <ConfirmDialog open={!!remove} danger busy={removing} title="删除组织" message={`${remove?.name || ""} 若仍有下级、用户或档案，后端会要求改为停用。`} onClose={() => { if (!removing) setRemove(null) }} onConfirm={async () => {
+        if (removing) return
+        setRemoving(true)
         try {
           await deleteOrg(remove.id)
           setRemove(null)
-          req.reload()
+          toast.success("组织已删除")
+          req.reload().catch((e) => toast.error(`删除成功，但列表刷新失败：${e.message || "请重试"}`))
         } catch (e) {
           toast.error(e.message || "删除失败")
+        } finally {
+          setRemoving(false)
         }
       }} />
     </div>

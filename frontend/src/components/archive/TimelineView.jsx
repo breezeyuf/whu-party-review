@@ -1,21 +1,25 @@
-import { Link } from "react-router-dom"
 import { fmtDate } from "../../utils/format"
 import { SeverityBadge } from "../common/Badges"
+import { Link } from "react-router-dom"
 import { timelineSourceLink } from "../../utils/archiveWorkflow"
 
 function valueText(node) {
   const eff = node.effective || {}
   if (node.value_kind === "DATE_SEQ") {
-    const items = node.items || []
+    let items = node.items || []
+    if (node.code === "T06" && (node.sources || []).length) {
+      const reportSources = node.sources.filter((source) => /思想汇报/.test(source.material_title || ""))
+      if (reportSources.length) items = reportSources.map((source) => ({ date: source.date }))
+    }
     if (!items.length) return "未提取"
-    return items.map((it) => fmtDate(it.date)).join("、")
+    return [...new Set(items.map((it) => it.date).filter(Boolean))].sort().map((date) => fmtDate(date)).join("、")
   }
   if (!eff.date && !eff.end_date) return "未提取"
   if (eff.end_date) return `${fmtDate(eff.date)} 至 ${fmtDate(eff.end_date)}${eff.hours ? ` · ${eff.hours} 学时` : ""}`
   return fmtDate(eff.date)
 }
 
-export default function TimelineView({ timeline, onCorrect, onLocate, hidePersonalInfo = false }) {
+export default function TimelineView({ timeline, onCorrect, onLocate, hidePersonalInfo = false, hideSources = false, compact = false }) {
   const allNodes = timeline?.nodes || []
   const nodes = hidePersonalInfo
     ? allNodes.filter((node) => node.code !== "T01" && !/出生日期|出生年月/.test(node.name || ""))
@@ -26,14 +30,14 @@ export default function TimelineView({ timeline, onCorrect, onLocate, hidePerson
   }
   const conflictCount = nodes.filter((node) => node.has_conflict || (node.anomalies || []).some((a) => a.severity === "BLOCK")).length
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 text-xs text-base-content/65">
+    <div className={compact ? "space-y-2" : "space-y-3"}>
+      {!compact && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 text-xs text-base-content/65">
         <span>共 {nodes.length + derived.length} 个时间节点</span>
         {conflictCount > 0
           ? <span className="badge badge-error badge-sm">{conflictCount} 项需关注</span>
           : <span className="badge badge-success badge-sm">暂未发现阻断异常</span>}
-      </div>
-      <ol className="relative space-y-3 border-l-2 border-base-300/80 pl-4 sm:pl-5">
+      </div>}
+      <ol className={compact ? "space-y-2" : "relative space-y-3 border-l-2 border-base-300/80 pl-4 sm:pl-5"}>
       {nodes.map((node) => {
         const bad = node.has_conflict || (node.anomalies || []).some((a) => a.severity === "BLOCK")
         return (
@@ -55,7 +59,7 @@ export default function TimelineView({ timeline, onCorrect, onLocate, hidePerson
                   {onCorrect && !node.locked && <button type="button" className="btn btn-ghost btn-xs" onClick={() => onCorrect(node)}>校正</button>}
                 </div>
               </div>
-              {(node.sources || []).length > 0 && (
+              {!hideSources && (node.sources || []).length > 0 && (
                 <ul className="space-y-1 border-t border-base-200 bg-base-200/35 px-3 py-2 text-xs text-base-content/70 sm:px-4">
                   {node.sources.map((s, i) => (
                     <li key={s.extraction_id || i} className="flex flex-wrap items-center gap-x-1.5 gap-y-1">

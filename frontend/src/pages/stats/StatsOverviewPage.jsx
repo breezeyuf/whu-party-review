@@ -21,7 +21,7 @@ function Card({ title, value, hint }) {
 
 export default function StatsOverviewPage() {
   const meta = useMeta()
-  const batches = useRequest(() => listBatches({ page_size: 50 }), [])
+  const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const [filters, setFilters] = useState({})
   const dataReq = useRequest(() => overview(filters), [JSON.stringify(filters)])
   const topReq = useRequest(() => topIssues({ ...filters, limit: 10, group_by: "rule" }), [JSON.stringify(filters)])
@@ -63,7 +63,7 @@ export default function StatsOverviewPage() {
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">问题级别</h2>
-              <BarChart data={sev} />
+              <PieChart data={sev} />
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">各支部提交量</h2>
@@ -71,7 +71,7 @@ export default function StatsOverviewPage() {
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">各阶段提交量</h2>
-              <BarChart data={byStage} />
+              <PieChart data={byStage} />
             </section>
             <section className="surface-card p-4 lg:col-span-2">
               <h2 className="mb-2 text-sm font-medium">流转趋势</h2>
