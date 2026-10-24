@@ -39,13 +39,22 @@ def chat_json(
     rule_set=None,
 ) -> tuple[Optional[dict], Optional[str], float]:
     cfg = dict(llm_config(db))
+    saved_base = (cfg.get("base_url") or "").rstrip("/")
     if override:
         cfg.update({k: v for k, v in override.items() if v is not None})
     base = (cfg.get("base_url") or "").rstrip("/")
     model = cfg.get("model") or ""
-    key = override.get("api_key") if override and override.get("api_key") else llm_api_key(db)
     if not base or not model:
         return None, "未配置大模型", 0
+    if override is not None and override.get("api_key") is not None:
+        # An explicit empty key means an unauthenticated endpoint, never fallback.
+        key = override["api_key"]
+    elif base == saved_base:
+        key = llm_api_key(db)
+    else:
+        # Bind stored credentials to the complete configured endpoint, including
+        # scheme and path. Do not decrypt or send them to an overridden URL.
+        return None, "更换大模型接口地址时，请显式提供 API 密钥（无认证接口请传空字符串）", 0
     redact = cfg.get("desensitize") is not False
     # 先替换完整变量中的身份信息，再截取长度，避免截断后留下身份信息片段。
     safe_variables = _prepare_variables(variables, archive, redact)
