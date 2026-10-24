@@ -182,7 +182,7 @@ class Runtime:
         import uvicorn
         main = importlib.import_module("main")
         config = uvicorn.Config(main.app, host="127.0.0.1", port=cfg["http_port"], log_config=None,
-                                access_log=False, loop="asyncio", http="h11", lifespan="on")
+                                access_log=False, loop="asyncio", http="h11", lifespan="on", proxy_headers=False)
         self.server = uvicorn.Server(config)
         self.thread = threading.Thread(target=self.server.run, kwargs={"sockets": [self.listener]}, daemon=True)
         self.thread.start()

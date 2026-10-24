@@ -144,4 +144,4 @@ if os.path.isdir(_FRONT):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host=os.getenv("HOST", HOST), port=int(os.getenv("PORT", str(PORT))))
+    uvicorn.run("main:app", host=os.getenv("HOST", HOST), port=int(os.getenv("PORT", str(PORT))), proxy_headers=False)

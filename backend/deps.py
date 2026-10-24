@@ -11,6 +11,7 @@ from database import get_db
 from errors import forbidden, unauthorized
 from models import RevokedToken, User, UserRole
 from security import decode_token
+from request_ip import client_ip
 import jwt
 
 
@@ -46,13 +47,6 @@ ROLE_PRIORITY = [
     "BRANCH_REVIEWER",
     "STUDENT",
 ]
-
-
-def client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
 
 
 def _load_user(db: Session, user_id: int) -> User:
