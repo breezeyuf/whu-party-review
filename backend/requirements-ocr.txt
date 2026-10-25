@@ -1,0 +1,6 @@
+# Optional CPU OCR runtime. Install after requirements.txt.
+paddlepaddle==3.3.1
+paddleocr==3.3.2
+paddlex==3.3.13
+opencv-contrib-python==4.10.0.84
+wcwidth==0.6.0

@@ -83,7 +83,7 @@ def test_ai(db: Session, target: str, override: dict | None = None) -> dict:
     import time
     t0 = time.time()
     if target == "ocr":
-        engines = available_engines()
-        return {"ok": bool(engines), "latency_ms": int((time.time() - t0) * 1000), "message": "可用引擎：" + (",".join(engines) or "无")}
+        from ai.ocr import probe
+        return probe()
     parsed, err, ms = chat_json(db, "CLASSIFY", {"types": "TEST", "text": "ping"}, override)
     return {"ok": err is None, "latency_ms": int(ms), "model": (override or {}).get("model") or get_setting(db, "ai", {}).get("model"), "message": err or "ok"}

@@ -120,13 +120,18 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
         ver.parsed_at = now()
         ver.page_count = result.get("page_count") or len(result.get("pages") or [])
         db.flush()
+        if result.get("ocr_failed"):
+            from ai.ocr import OCRProcessingError
+            raise OCRProcessingError("OCR 识别未完成，请检查引擎后重试解析；部分结果已保留")
         if is_current:
             merge_archive_nodes(db, material.archive_id, node_defs=nodes)
         return pr
     except Exception as e:
         log_exception("material.parse_failed", e, version_id=version_id)
         ver.parse_status = "FAILED"
-        ver.parse_error = "材料解析失败，请联系管理员并提供材料版本编号"
+        from ai.ocr import OCRProcessingError
+        ver.parse_error = (str(e) if isinstance(e, OCRProcessingError) else
+                           "材料解析失败，请联系管理员并提供材料版本编号")
         db.flush()
         raise
 

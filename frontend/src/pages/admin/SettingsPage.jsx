@@ -4,6 +4,7 @@ import { Loading, ErrorState } from "../../components/common/States"
 import { getSettings, putSettings, seedDemo, testAi } from "../../api/settings"
 import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
+import OcrStatusPanel from "../../components/common/OcrStatusPanel"
 
 export default function SettingsPage() {
   const toast = useToast()
@@ -59,11 +60,7 @@ export default function SettingsPage() {
         </div>
         {test && <p className={`text-xs ${test.ok ? "text-success" : "text-error"}`}>{test.ok ? "连通" : "失败"} · {test.latency_ms ?? "—"} ms · {test.message}</p>}
       </section>
-      <section className="surface-card space-y-2 p-4">
-        <h2 className="text-sm font-medium">OCR</h2>
-        <p className="text-xs">当前引擎 {ocr.engine || "—"} · 可用 {(ocr.available_engines || []).join("、") || "无"}</p>
-        <button type="button" className="btn btn-outline btn-sm" disabled={!isAdmin} onClick={async () => { const r = await testAi({ target: "ocr" }); toast.info(r.ok ? "OCR 可用" : (r.message || "OCR 不可用")) }}>测试 OCR</button>
-      </section>
+      <OcrStatusPanel settings={ocr} disabled={!isAdmin} />
       <section className="surface-card space-y-2 p-4">
         <h2 className="text-sm font-medium">上传限制</h2>
         <input className="input input-bordered input-sm w-40" type="number" value={upload.max_mb || ""} onChange={(e) => setUpload({ ...upload, max_mb: Number(e.target.value) })} />

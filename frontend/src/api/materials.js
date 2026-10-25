@@ -30,6 +30,7 @@ export const materialPage = (id, n, params) => getBlob(`/materials/${id}/pages/$
 
 export const uploadVersion = (id, file, fields = {}) => api.post(`/materials/${id}/versions`, form(file, fields))
 export const listVersions = (id) => api.get(`/materials/${id}/versions`)
+export const retryParse = (id) => api.post(`/materials/${id}/retry-parse`)
 export const getParsed = (id, params) => api.get(`/materials/${id}/parsed`, { params })
 export const putParsed = (id, body) => api.put(`/materials/${id}/parsed`, body)
 export const setType = (id, materialTypeId) => api.put(`/materials/${id}/type`, { material_type_id: materialTypeId })

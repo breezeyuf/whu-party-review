@@ -19,6 +19,7 @@ import IssueActions from "../src/components/review/IssueActions"
 import FileUploader from "../src/components/common/FileUploader"
 import MaterialViewer from "../src/components/material/MaterialViewer"
 import ParsedTextPanel from "../src/components/material/ParsedTextPanel"
+import OcrStatusPanel from "../src/components/common/OcrStatusPanel"
 import AddIssueModal from "../src/components/review/AddIssueModal"
 import ReviewWorkspacePage from "../src/pages/review/ReviewWorkspacePage"
 import IssueResponseForm from "../src/components/student/IssueResponseForm"
@@ -121,6 +122,54 @@ export async function runUiScenarios() {
     try { await run(); results.push({ name, passed: true }) }
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
+
+  await test("OCR 自检等待真实识别，禁止重复点击并显示识别文本", async () => {
+    let finish
+    await mount(<OcrStatusPanel settings={{ available_engines: ["paddleocr"] }} />, { handler: (config) => {
+      if (config.url === "/settings/ai/test") return new Promise((resolve) => { finish = resolve })
+    } })
+    assert.match(text(), /已安装引擎 paddleocr/)
+    await click(button("测试 OCR"))
+    assert.equal(button("正在加载模型并识别…").disabled, true)
+    assert.equal(requests.filter((item) => item.url === "/settings/ai/test").length, 1)
+    await act(async () => finish({ ok: true, recognized_text: "OCR 12345", latency_ms: 120, message: "识别成功" }))
+    await flush()
+    assert.match(text(), /识别自检通过/)
+    assert.match(text(), /OCR 12345/)
+  })
+
+  await test("OCR 自检异常可见并允许再次测试", async () => {
+    await mount(<OcrStatusPanel />, { handler: (config) => {
+      if (config.url === "/settings/ai/test") throw new Error("模型不可用")
+    } })
+    await click(button("测试 OCR"))
+    assert.match(text(), /识别自检失败.*模型不可用/)
+    assert.equal(button("测试 OCR").disabled, false)
+  })
+
+  await test("OCR 中文结果与警告在解析面板中展示", async () => {
+    await mount(<ParsedTextPanel parsed={{ parser: "OCR", ocr_engine: "paddleocr", page_count: 1,
+      full_text: "入党申请书 测试材料 OCR 20260001", warnings: ["印章和手写签名需人工复核"], extracted_fields: {} }} editable={false} />)
+    assert.match(text(), /OCR paddleocr/)
+    assert.match(text(), /印章和手写签名需人工复核/)
+    assert.match(document.querySelector("textarea").value, /申请书.*20260001/)
+  })
+
+  await test("当前失败版本可重试解析并进入任务轮询", async () => {
+    let retried = false
+    await mount(<MaterialDetailPage />, { path: "/materials/12", pattern: "/materials/:id", handler: (config) => {
+      const version = { ...currentVersion, parse_status: retried ? "PENDING" : "FAILED", parse_error: "OCR 识别失败" }
+      if (config.url === "/materials/12") return { ...baseMaterial, current_version: version }
+      if (config.url === "/materials/12/versions") return [version]
+      if (config.url === "/submissions/101") return { ...baseSubmission, can: { upload: true } }
+      if (config.url === "/materials/12/retry-parse") { retried = true; return { parse_job_id: 789 } }
+      if (config.url === "/jobs/789") return { id: 789, job_type: "PARSE", status: "RUNNING", progress: 10 }
+    } })
+    await click(button("重试解析"))
+    assert.ok(requests.some((item) => item.url === "/materials/12/retry-parse"))
+    assert.ok(requests.some((item) => item.url === "/jobs/789"))
+    assert.match(text(), /正在解析/)
+  })
 
   for (const retryFirst of [false, true]) {
     await test(retryFirst ? "密码文件下载失败保留口令并可重试" : "导入后下载加密密码文件并禁止再次领取", async () => {

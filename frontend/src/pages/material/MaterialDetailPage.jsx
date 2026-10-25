@@ -10,7 +10,7 @@ import FileUploader from "../../components/common/FileUploader"
 import { Loading, ErrorState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
 import { useJobPolling } from "../../hooks/useJobPolling"
-import { getDiff, getMaterial, getParsed, listVersions, putParsed, setType, uploadVersion } from "../../api/materials"
+import { getDiff, getMaterial, getParsed, listVersions, putParsed, setType, uploadVersion, retryParse } from "../../api/materials"
 import { listIssues } from "../../api/issues"
 import { getSubmission } from "../../api/submissions"
 import IssueList from "../../components/review/IssueList"
@@ -42,6 +42,7 @@ export default function MaterialDetailPage() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [refreshError, setRefreshError] = useState("")
   const [uploading, setUploading] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const initialized = useRef("")
   const diffRequest = useRef(0)
   const m = mat.data
@@ -171,7 +172,15 @@ export default function MaterialDetailPage() {
     <div className="mb-4"><TypeConfirmSelect value={m.type?.id} disabled={historical || (!canUpload && !canCorrect)} onConfirm={async (typeId) => { const updated = await setType(id, typeId); mat.setData(updated); toast.success("类型已确认") }} /></div>
     {submission.error && <p role="alert" className="mb-2 text-xs text-error">材料操作权限加载失败：{submission.error.message} <button type="button" className="link" onClick={() => submission.reload().catch(() => {})}>重试</button></p>}
     {PARSE_PENDING.has(m.current_version?.parse_status) && <p role="status" className="mb-3 text-xs text-info">当前版本正在解析，完成后会自动刷新预览和解析文本。</p>}
-    {selectedVersion?.parse_status === "FAILED" && <div role="alert" className="alert alert-error mb-3 py-2 text-xs">材料解析失败：{selectedVersion.parse_error || "请检查文件是否完整，并重新上传。"}</div>}
+    {selectedVersion?.parse_status === "FAILED" && <div role="alert" className="alert alert-error mb-3 py-2 text-xs">
+      <span>材料解析失败：{selectedVersion.parse_error || "请检查文件是否完整，并重新上传。"}</span>
+      {canUpload && !historical && !selectedVersion.is_frozen && <button type="button" className="btn btn-sm" disabled={retrying} onClick={async () => {
+        setRetrying(true)
+        try { const result = await retryParse(id); setTaskId(result.parse_job_id); await refresh() }
+        catch (error) { toast.error(error.message || "重试失败") }
+        finally { setRetrying(false) }
+      }}>{retrying ? "正在提交…" : "重试解析"}</button>}
+    </div>}
     {taskId && Number(job?.id) === Number(taskId) && <div role="status" aria-live="polite" className="surface-card mb-3 p-3 text-xs">
       <p>{job.stage_text || "材料处理任务"} · {({ QUEUED: "排队中", RUNNING: "处理中", SUCCEEDED: "已完成", FAILED: "失败", PARTIAL: "部分失败", CANCELLED: "已取消" })[job.status] || job.status}</p>
       <progress className="progress progress-primary mt-2 w-full" value={job.progress ?? 0} max="100" />

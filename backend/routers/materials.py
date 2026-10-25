@@ -268,6 +268,29 @@ def list_versions(mid: int, request: Request, db: Session = Depends(get_db), act
     return ok(out)
 
 
+@router.post("/materials/{mid}/retry-parse")
+def retry_parse(mid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    material = db.query(Material).filter(Material.id == mid).first()
+    if not material:
+        raise not_found()
+    ensure_archive_access(db, actor, material.archive_id, request)
+    _editable_submission(db, actor, material)
+    version = db.query(MaterialVersion).filter(MaterialVersion.id == material.current_version_id).first()
+    if not version or version.is_frozen:
+        raise conflict("仅可重试当前未冻结的材料版本")
+    pending = db.query(Job).filter(Job.job_type == "PARSE", Job.target_id == version.id,
+                                   Job.status.in_(["QUEUED", "RUNNING"])).first()
+    if pending:
+        return ok({"parse_job_id": pending.id})
+    if version.parse_status != "FAILED":
+        raise conflict("仅失败的材料解析可重试")
+    job = enqueue_job(db, "PARSE", actor.id, "material_version", version.id, {"version_id": version.id})
+    version.parse_status = "PENDING"
+    version.parse_error = None
+    log(db, actor, "RETRY_PARSE", "material_version", version.id)
+    return ok({"parse_job_id": job.id})
+
+
 @router.get("/materials/{mid}/parsed")
 def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
                db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):

@@ -50,6 +50,7 @@ def _parse_pdf(path: Path) -> dict:
     parser = "PDF_TEXT"
     ocr_engine = None
     warnings = []
+    ocr_failed = False
     for i, page in enumerate(doc):
         info = page.get_text("dict")
         blocks = []
@@ -70,11 +71,11 @@ def _parse_pdf(path: Path) -> dict:
             ocr_text, ocr_blocks, engine, warn = _ocr_page(page)
             if warn:
                 warnings.append(warn)
+                ocr_failed = True
             if ocr_text:
                 page_text = ocr_text
                 blocks = ocr_blocks
                 source = "ocr"
-                parser = "MIXED" if parser == "PDF_TEXT" else "OCR"
                 ocr_engine = engine
             else:
                 warnings.append(f"第 {i+1} 页文本过少，可能为扫描件，需人工核对")
@@ -99,6 +100,8 @@ def _parse_pdf(path: Path) -> dict:
         except OSError:
             rel_preview = str(path.relative_to(STORAGE_DIR)).replace("\\", "/")
     full = "\n".join(texts)
+    sources = {page["source"] for page in pages}
+    parser = "OCR" if sources == {"ocr"} else ("MIXED" if "ocr" in sources else "PDF_TEXT")
     visual = _visual_from_pdf(doc)
     doc.close()
     return {
@@ -112,6 +115,7 @@ def _parse_pdf(path: Path) -> dict:
         "extracted_fields": {},
         "format_features": {},
         "warnings": warnings,
+        "ocr_failed": ocr_failed,
         "page_count": len(pages),
     }
 
@@ -150,7 +154,7 @@ def _parse_image(path: Path, ext: str) -> dict:
     ocr_text, blocks, engine, warn = _ocr_page(page)
     warnings = [warn] if warn else []
     if not ocr_text:
-        warnings.append("图片型材料未启用 OCR，需人工核对文本")
+        warnings.append("图片型材料未识别到文字，需人工核对文本")
     visual = _visual_from_pdf(doc)
     quality = _page_quality(page)
     pages = [{
@@ -174,6 +178,7 @@ def _parse_image(path: Path, ext: str) -> dict:
         "extracted_fields": {},
         "format_features": {},
         "warnings": warnings,
+        "ocr_failed": bool(warn),
         "page_count": 1,
     }
 
@@ -276,11 +281,24 @@ def _docx_preview_pages(path: Path) -> list[dict]:
 
 def _ocr_page(page) -> tuple[str, list, Optional[str], Optional[str]]:
     try:
+        import fitz
         from ai.ocr import ocr_pixmap
-        pix = page.get_pixmap(dpi=150)
-        return ocr_pixmap(pix)
+        pix = page.get_pixmap(dpi=150, colorspace=fitz.csRGB, alpha=False)
+        text, blocks, engine, warning = ocr_pixmap(pix)
+        # OCR uses image pixels; every page block is stored in PDF points.
+        sx, sy = page.rect.width / pix.width, page.rect.height / pix.height
+        normalized = []
+        for block in blocks:
+            item = dict(block)
+            box = item.get("bbox")
+            if box and len(box) == 4:
+                item["bbox"] = [box[0] * sx, box[1] * sy, box[2] * sx, box[3] * sy]
+            normalized.append(item)
+        return text, normalized, engine, warning
     except Exception as e:
-        return "", [], None, f"OCR 不可用：{e}"
+        from diagnostics import log_exception
+        log_exception("ocr.page_failed", e)
+        return "", [], None, "OCR 页面渲染或识别失败，请检查材料后重试"
 
 
 def _visual_from_pdf(doc) -> dict:
