@@ -13,18 +13,22 @@ from ai.llm import chat_json, validate_credential_options
 
 
 ORG_KEYS = {"upload", "retention", "notification", "calendar"}
-ADMIN_ONLY = {"ai", "ocr", "security", "worker"}
+ADMIN_ONLY = {"ai", "ocr", "ocr_vision", "security", "worker"}
 
 
 def public_settings(db: Session) -> dict:
     out = {}
-    for key in ("upload", "retention", "notification", "ai", "ocr", "security", "worker", "calendar"):
+    for key in ("upload", "retention", "notification", "ai", "ocr", "ocr_vision", "security", "worker", "calendar"):
         val = deepcopy(get_setting(db, key, {}))
-        if key == "ai":
+        if key == 'ocr_vision':
+            from ai.ocr_review import DEFAULTS
+            val = {**DEFAULTS, **val}
+        if key in ("ai", "ocr_vision"):
             enc = val.pop("api_key_enc", None)
             val.pop("api_key_base_url", None)
             val["api_key_set"] = bool(enc)
-            val["llm_enabled"] = bool(val.get("llm_enabled"))
+            if key == 'ai':
+                val["llm_enabled"] = bool(val.get("llm_enabled"))
         if key == "ocr":
             val["available_engines"] = available_engines()
         out[key] = val
@@ -40,11 +44,14 @@ def update_settings(db: Session, actor, body: dict) -> dict:
         row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
         cur = deepcopy(row.value) if row and isinstance(row.value, dict) else {}
         if not isinstance(patch, dict):
-            if key == "ai":
+            if key in ("ai", "ocr_vision"):
                 raise unprocessable("大模型配置必须是对象")
             continue
         patch = dict(patch)
-        if key == "ai":
+        if key == 'ocr_vision':
+            from ai.ocr_review import validate_config
+            validate_config(patch)
+        if key in ("ai", "ocr_vision"):
             validate_credential_options(patch)
             # A stored credential belongs to its saved destination, including
             # scheme, port and tenant path. Saving settings must not rebind it.
@@ -62,7 +69,7 @@ def update_settings(db: Session, actor, body: dict) -> dict:
                 cur.setdefault("api_key_base_url", previous_base)
             if patch.get("api_key") is not None:
                 cur["api_key_base_url"] = next_base if patch["api_key"] else ""
-        if key == "ai" and "api_key" in patch:
+        if key in ("ai", "ocr_vision") and "api_key" in patch:
             raw = patch.pop("api_key")
             if raw == "":
                 cur["api_key_enc"] = ""
@@ -82,6 +89,11 @@ def update_settings(db: Session, actor, body: dict) -> dict:
 def test_ai(db: Session, target: str, override: dict | None = None) -> dict:
     import time
     t0 = time.time()
+    if target == 'ocr_vision':
+        if override is not None:
+            raise unprocessable('视觉 OCR 测试使用已保存配置，请先保存')
+        from ai.ocr_review import test_connection
+        return test_connection(db)
     if target == "ocr":
         engines = available_engines()
         if not engines:

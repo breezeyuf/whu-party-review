@@ -55,6 +55,9 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
             result = parse_version_file(ver.stored_path, ver.file_ext)
         finally:
             ocr_settings.reset(token)
+        if use_llm:
+            from ai.ocr_review import review_result
+            review_result(db, result)
         is_current = material.current_version_id == ver.id and material.status == "ACTIVE"
         types = rule_set.rows("material_types") if rule_set else db.query(MaterialType).filter(MaterialType.is_active.is_(True)).all()
         declared = (rule_set.types.get(material.declared_type_id) if rule_set else

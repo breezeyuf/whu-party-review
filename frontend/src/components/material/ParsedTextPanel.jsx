@@ -3,6 +3,8 @@ import { fmtDate } from "../../utils/format"
 import { timeNodes } from "../../api/rules"
 import { useRequest } from "../../hooks/useRequest"
 import { extractionChanges, extractionDraft } from "../../utils/extractionWorkflow"
+import { applyOcrSuggestion } from "../../utils/ocrReview"
+import MaterialViewer from "./MaterialViewer"
 
 export default function ParsedTextPanel({ parsed, editable, onSave }) {
   const [text, setText] = useState("")
@@ -11,6 +13,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
   const [error, setError] = useState("")
   const [drafts, setDrafts] = useState([])
   const [reason, setReason] = useState("")
+  const [reviewSource, setReviewSource] = useState(null)
   const nextKey = useRef(0)
   const defsReq = useRequest(() => timeNodes.list(), [editable], { immediate: !!editable })
   const definitions = defsReq.data || []
@@ -22,6 +25,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
     setDrafts((parsed?.extractions || []).map((ex) => extractionDraft(ex)))
     setReason("")
     setError("")
+    setReviewSource(null)
   }, [parsed])
 
   if (!parsed) return <p className="text-sm text-base-content/50">解析尚未完成。</p>
@@ -53,6 +57,27 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
     <div className="space-y-3">
       {(parsed.warnings || []).map((w, i) => <div key={i} className="alert alert-warning py-2 text-xs">{typeof w === "string" ? w : w.message}</div>)}
       <div className="text-xs text-base-content/55">解析器 {parsed.parser || "—"} · OCR {parsed.ocr_engine || "未启用"} · {parsed.page_count || 0} 页</div>
+      {(parsed.pages || []).some((page) => page.vision_reviews?.length) && <section className="space-y-2 rounded border border-base-300 p-3" aria-label="视觉 OCR 复核结果">
+        <h3 className="text-sm font-medium">视觉 OCR 复核建议</h3>
+        <p className="text-xs text-base-content/60">以下为模型原始建议记录，不代表已采纳。请对照对应页原图，尤其核对姓名和日期；填入后仍须保存校正。已保存的校正以解析文本为准。</p>
+        {reviewSource && <div className="rounded border border-base-300 p-2">
+          <button type="button" className="btn btn-ghost btn-xs mb-2" onClick={() => setReviewSource(null)}>收起复核原图</button>
+          <MaterialViewer materialId={parsed.material_id} versionId={parsed.version_id} page={reviewSource.page_no} pageCount={parsed.page_count} highlights={[reviewSource]} activeId="ocr-review" />
+        </div>}
+        {(parsed.pages || []).flatMap((page) => (page.vision_reviews || []).map((review, index) => <div key={`${page.page_no}-${index}`} className="space-y-1 border-t border-base-300 pt-2 text-xs">
+          <p>第 {page.page_no} 页 · {review.block_index == null ? "整页" : `文字块 ${review.block_index + 1}`} · {review.model} · {review.status === "failed" ? "复核失败" : review.status === "unchanged" ? "与本地结果一致" : "需人工核对"}</p>
+          {parsed.material_id && <button type="button" className="btn btn-ghost btn-xs" onClick={() => setReviewSource({ id: "ocr-review", page_no: page.page_no, bbox: review.bbox, version_id: parsed.version_id, title: "视觉 OCR 复核区域" })}>查看原图区域</button>}
+          {review.error ? <p className="text-warning">{review.error}</p> : <>
+            <p className="whitespace-pre-wrap">本地原文：{review.original_text || "（未识别到文字）"}</p>
+            <p className="whitespace-pre-wrap">模型建议：{review.candidate_text || "（空白）"}</p>
+            <p>模型自报置信度：{Math.round((review.confidence || 0) * 100)}%{review.uncertain ? " · 存在无法辨认的文字" : ""}</p>
+            {editable && review.status === "pending" && <button type="button" className="btn btn-outline btn-xs" disabled={busy} onClick={() => {
+              try { setText(applyOcrSuggestion(text, parsed, page, review)); setError("") }
+              catch (e) { setError(e.message) }
+            }}>核对后填入校正文本</button>}
+          </>}
+        </div>))}
+      </section>}
       <label className="form-control">
         <span className="label-text text-xs">解析文本</span>
         <textarea className="textarea textarea-bordered font-mono text-xs" rows={10} value={text} readOnly={!editable || busy} onChange={(e) => setText(e.target.value)} />

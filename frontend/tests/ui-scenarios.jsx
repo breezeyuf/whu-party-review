@@ -127,6 +127,39 @@ export async function runUiScenarios() {
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
 
+  await test("视觉 OCR 配置使用独立密钥且测试已保存配置", async () => {
+    const settings = { ocr_vision: { enabled: false, allow_image_upload: false, model: "vision-test", base_url: "https://vision.invalid/v1", confidence_threshold: 0.9 } }
+    await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: (c) => c.url === "/settings" ? settings : c.url === "/settings/ai/test" ? { ok: true, message: "图片识别通过", latency_ms: 1 } : undefined })
+    await input(document.querySelector('[aria-label="视觉模型 API 密钥"]'), "synthetic-vision-key")
+    await click(button("保存视觉 OCR 复核"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal(body.ocr_vision.api_key, "synthetic-vision-key")
+    assert.equal(body.ai, undefined)
+    assert.equal(document.querySelector('[aria-label="视觉模型 API 密钥"]').value, "")
+    await click(button("测试视觉 OCR 复核"))
+    assert.deepEqual(JSON.parse(requests.find((c) => c.url === "/settings/ai/test").data), { target: "ocr_vision" })
+    assert.match(text(), /图片识别通过/)
+  })
+  await test("视觉 OCR 建议先对照后保存，不自动覆盖原文", async () => {
+    let saved
+    const parsed = { material_id: 12, version_id: 401, full_text: "申请日期2026年10月2日", extracted_fields: {}, extractions: [], pages: [{ page_no: 1, text: "申请日期2026年10月2日", vision_reviews: [{ block_index: 0, bbox: [10, 20, 90, 50], status: "pending", original_text: "申请日期2026年10月2日", candidate_text: "申请日期2026年10月24日", confidence: 0.95, uncertain: false, model: "vision-test" }] }] }
+    await mount(<ParsedTextPanel parsed={parsed} editable onSave={(body) => { saved = body }} />, { roleCode: "BRANCH_REVIEWER" })
+    assert.equal(document.querySelector("textarea").value, parsed.full_text)
+    assert.equal(saved, undefined)
+    await click(button("核对后填入校正文本"))
+    assert.equal(document.querySelector("textarea").value, "申请日期2026年10月24日")
+    assert.equal(saved, undefined)
+    await click(button("查看原图区域"))
+    assert.ok(requests.some((r) => r.url === "/materials/12/pages/1" && r.params.version_id === 401))
+    assert.equal(document.querySelector("textarea").value, "申请日期2026年10月24日")
+    await click(button("收起复核原图"))
+    await click(button("保存校正"))
+    assert.equal(saved.corrected_text, "申请日期2026年10月24日")
+    assert.equal(parsed.full_text, "申请日期2026年10月2日")
+    await mount(<ParsedTextPanel parsed={parsed} editable={false} />)
+    assert.equal(button("核对后填入校正文本"), undefined)
+  })
+
   for (const retryFirst of [false, true]) {
     await test(retryFirst ? "密码文件下载失败保留口令并可重试" : "导入后下载加密密码文件并禁止再次领取", async () => {
       let downloads = 0
