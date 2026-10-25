@@ -55,6 +55,22 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
             result = parse_version_file(ver.stored_path, ver.file_ext)
         finally:
             ocr_settings.reset(token)
+        if result.get('ocr_failed'):
+            # Keep diagnostic evidence, but do not replace current classification
+            # or time-node extractions with an incomplete OCR attempt.
+            partial=db.query(ParseResult).filter(ParseResult.version_id==ver.id).first()
+            if partial is None:
+                partial=ParseResult(version_id=ver.id,created_at=now())
+                db.add(partial)
+            for field,default in [('parser','NONE'),('ocr_engine',None),('preview_pdf_path',None),('full_text',''),
+                                  ('char_count',0),('pages',[]),('visual_marks',{}),('format_features',{}),('warnings',[])]:
+                setattr(partial,field,result.get(field,default))
+            partial.extracted_fields=extract_fields(result.get('full_text') or '')
+            partial.updated_at=now()
+            ver.page_count=result.get('page_count') or len(result.get('pages') or [])
+            db.flush()
+            from ai.ocr import OCRProcessingError
+            raise OCRProcessingError('本地 OCR 识别未完成，部分结果已保留；请检查引擎后重新解析')
         if use_llm:
             from ai.ocr_review import review_result
             review_result(db, result)
@@ -145,7 +161,8 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
     except Exception as e:
         log_exception("material.parse_failed", e, version_id=version_id)
         ver.parse_status = "FAILED"
-        ver.parse_error = "材料解析失败，请联系管理员并提供材料版本编号"
+        from ai.ocr import OCRProcessingError
+        ver.parse_error = str(e) if isinstance(e, OCRProcessingError) else "材料解析失败，请联系管理员并提供材料版本编号"
         db.flush()
         raise
 
@@ -230,7 +247,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         snapshot["evaluation_context"] = context.to_dict()
         snapshot["node_inputs"] = node_map
         d3, r3 = run_format(db, materials, versions, parses, types, rule_set=rules)
-        d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled, rule_set=rules)
+        d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled, rule_set=rules, timeline=node_map)
         if enabled:
             errors = list(dict.fromkeys(r["error"] for r in r4 if r.get("engine") == "LLM" and r.get("error")))
             if errors:

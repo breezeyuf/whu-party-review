@@ -8,12 +8,17 @@ from typing import Optional
 # runtime terminated the whole server (exit code 1, no Python traceback) during model init.
 _POOL = None
 _POOL_LOCK = threading.Lock()
+_RUN_LOCK = threading.Lock()
 _OCR_TIMEOUT_S = 600
 
 _ENGINE = None  # child-process only
 _ENGINE_V3 = False
 _RAPID = None
 settings = ContextVar('ocr_settings', default={})
+
+
+class OCRProcessingError(RuntimeError):
+    pass
 
 
 def available_engines() -> list[str]:
@@ -31,6 +36,16 @@ def available_engines() -> list[str]:
 
 
 def ocr_pixmap(pix) -> tuple[str, list, Optional[str], Optional[str]]:
+    timeout = max(1, float(settings.get().get('timeout_s') or _OCR_TIMEOUT_S))
+    if not _RUN_LOCK.acquire(timeout=timeout):
+        return '', [], None, 'OCR 排队超时，请重试'
+    try:
+        return _ocr_pixmap(pix)
+    finally:
+        _RUN_LOCK.release()
+
+
+def _ocr_pixmap(pix):
     cfg = settings.get()
     engines = available_engines()
     selected = cfg.get('engine', 'auto')
@@ -47,8 +62,8 @@ def ocr_pixmap(pix) -> tuple[str, list, Optional[str], Optional[str]]:
     except BrokenProcessPool:
         _reset_pool()
         return "", [], None, "OCR 进程异常退出，扫描件需人工核对文本"
-    except Exception as e:
-        return "", [], None, f"OCR 失败：{e}"
+    except Exception:
+        return "", [], None, "OCR 引擎执行失败，请检查模型后重试"
     if err:
         return "", [], None, err
     blocks = [{"text": t, "bbox": b, "conf": c} for t, b, c in lines]

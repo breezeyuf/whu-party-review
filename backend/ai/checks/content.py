@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import re
+import math
 from collections import defaultdict
 
 from ai.types import IssueDraft, loc
+from ai.evidence import effective_text, effective_fields
 from models import CheckRule, ParseResult, PoliticalTerm, SensitivePhrase
 
 
-def run_content(db, submission, materials, versions, parses: dict[int, ParseResult], types, llm_enabled: bool, *, rule_set=None):
+def run_content(db, submission, materials, versions, parses: dict[int, ParseResult], types, llm_enabled: bool, *, rule_set=None, timeline=None):
     rules = [r for r in rule_set.rows("check_rules") if r.category == "CONTENT"] if rule_set else (
         db.query(CheckRule)
         .filter(CheckRule.category == "CONTENT", CheckRule.is_active.is_(True))
@@ -19,16 +21,21 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
     drafts: list[IssueDraft] = []
     results = []
     texts = {}
+    field_sets = {}
     for m in materials:
         if m.status != "ACTIVE":
             continue
         ver = versions.get(m.id)
         pr = parses.get(ver.id) if ver else None
-        texts[m.id] = (pr.corrected_text or pr.full_text or "") if pr else ""
+        texts[m.id] = effective_text(pr)
+        field_sets[m.id] = effective_fields(pr)
     llm_error = None
     # Keep rule evidence and semantic evidence as separate results for mixed rules.
     expanded = []
     for rule in rules:
+        if rule.engine not in ('RULE', 'LLM', 'RULE_LLM'):
+            results.append({'rule_code': rule.code, 'result': 'SKIPPED', 'reason': '不支持的规则引擎'})
+            continue
         if rule.engine == 'RULE_LLM':
             from types import SimpleNamespace
             values = {key: getattr(rule, key, None) for key in ('code','name','basis','message_template','severity','applies_to','params','needs_human_judgement')}
@@ -43,6 +50,7 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
         hit = False
         is_llm = (rule.engine or "RULE") == "LLM"
         checked = False
+        skipped = False
         applies = rule.applies_to or []
         for m in materials:
             if m.status != "ACTIVE":
@@ -61,10 +69,31 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
                 if llm_error:
                     found = []
                 else:
-                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text, submission.archive, rule_set=rule_set)
+                    found, llm_error = _apply_llm_rule(db, rule, m, ver, text, submission.archive, rule_set=rule_set, timeline=timeline)
                     checked = True
             else:
-                found = _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types)
+                if rule.code == 'R-C10':
+                    from ai.similarity import compare_batch
+                    try:
+                        threshold = float((rule.params or {}).get('threshold', 0.8))
+                    except (TypeError, ValueError, AttributeError):
+                        skipped = True
+                        continue
+                    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+                        skipped = True
+                        continue
+                    compared = compare_batch(db, submission, m, text, threshold)
+                    found = None if compared is None else []
+                    if compared and compared['score'] >= threshold:
+                        found = [_d(rule, m, ver, f"与同批次其他学生同类材料的最高相似度 {compared['score']:.2f}，请人工核对",
+                                    f"{compared['score']:.2f}", f'<{threshold}')]
+                        found[0].needs_human_judgement = True
+                else:
+                    found = _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types, field_sets)
+                if found is None:
+                    skipped = True
+                    continue
+                checked = True
             for d in found:
                 drafts.append(d)
                 hit = True
@@ -72,9 +101,9 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
             # 大模型不可用时降级为跳过，不产生语义结论，也不中断整份报告
             results.append({"rule_code": rule.code, "engine": "LLM", "result": "SKIPPED",
                             "reason": f"大模型调用失败：{llm_error}", "error": llm_error})
-        elif is_llm and not checked:
-            results.append({"rule_code": rule.code, "engine": "LLM", "result": "SKIPPED",
-                            "reason": "无适用材料或可检查文本"})
+        elif not checked or (skipped and not hit):
+            results.append({"rule_code": rule.code, "engine": rule.engine, "result": "SKIPPED",
+                            "reason": "无适用材料、必要参数或可验证证据"})
         else:
             result = {"rule_code": rule.code, "result": "FAIL" if hit else "PASS"}
             if is_llm:
@@ -90,7 +119,7 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
     return drafts, results
 
 
-def _apply_llm_rule(db, rule, m, ver, text: str, archive=None, *, rule_set=None) -> tuple[list[IssueDraft], "str | None"]:
+def _apply_llm_rule(db, rule, m, ver, text: str, archive=None, *, rule_set=None, timeline=None) -> tuple[list[IssueDraft], "str | None"]:
     """按 CONTENT_CHECK 模板做语义核查。返回为空表示未发现或不可用。"""
     text = (text or "").strip()
     if not text:
@@ -101,6 +130,8 @@ def _apply_llm_rule(db, rule, m, ver, text: str, archive=None, *, rule_set=None)
         "rules": f"{rule.code} {rule.name}：{rule.basis or rule.message_template or ''}",
         "text": text,
     }
+    if rule.code == 'R-C07':
+        variables['timeline'] = timeline or {}
     try:
         parsed, err, _ms = chat_json(
             db, "CONTENT_CHECK", variables, archive=archive, rule_set=rule_set,
@@ -136,7 +167,7 @@ def _apply_llm_rule(db, rule, m, ver, text: str, archive=None, *, rule_set=None)
     return out, None
 
 
-def _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types) -> list[IssueDraft]:
+def _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types, field_sets=None) -> list[IssueDraft]:
     code = rule.code
     out = []
     if code == "R-C01":
@@ -190,29 +221,52 @@ def _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, ty
         return out
     if code == "R-C06":
         arch = submission.archive
-        fields = (pr.corrected_fields or pr.extracted_fields or {}) if pr else {}
-        if fields.get("name") and arch.real_name and fields["name"] != arch.real_name:
-            out.append(_d(rule, m, ver, "姓名与档案不一致", fields["name"], arch.real_name))
-        if fields.get("student_no") and arch.student_no and fields["student_no"] != arch.student_no:
-            out.append(_d(rule, m, ver, "学号与档案不一致", fields["student_no"], arch.student_no))
-        if fields.get("birth_date") and arch.birth_date and fields["birth_date"] != arch.birth_date.isoformat():
-            out.append(_d(rule, m, ver, "出生日期与档案不一致", str(fields["birth_date"]), arch.birth_date.isoformat()))
-        if fields.get("gender") and arch.gender and fields["gender"] != arch.gender:
-            out.append(_d(rule, m, ver, "性别与档案不一致", fields["gender"], arch.gender))
+        fields = effective_fields(pr)
+        for field,attr,label in [('name','real_name','姓名'),('student_no','student_no','学号'),('birth_date','birth_date','出生日期'),
+                                 ('gender','gender','性别'),('ethnicity','ethnicity','民族'),('native_place','native_place','籍贯'),('branch','branch','支部')]:
+            expected=getattr(arch,attr,None)
+            if field=='birth_date' and expected: expected=expected.isoformat()
+            if field=='branch' and expected: expected=getattr(expected,'name',None)
+            actual=fields.get(field)
+            if not actual: continue
+            normalize=lambda value: re.sub(r'\s+','',str(value))
+            if expected and normalize(actual)!=normalize(expected):
+                issue=_d(rule,m,ver,f'{label}与档案不一致，请人工核对',str(actual),str(expected))
+                issue.location['field']=field; issue.needs_human_judgement=True
+                out.append(issue)
+            elif not expected:
+                peers={normalize(f[field]) for mid,f in (field_sets or {}).items() if mid!=m.id and f.get(field)}
+                if any(value!=normalize(actual) for value in peers):
+                    issue=_d(rule,m,ver,f'{label}在同一提交包材料间存在冲突，档案尚未提供基准',str(actual),'核对原件并完善档案基准')
+                    issue.location['field']=field; issue.needs_human_judgement=True
+                    out.append(issue)
         return out
     if code == "R-C10":
-        th = float((rule.params or {}).get("threshold") or 0.8)
-        grams = _ngrams(text)
-        if not grams:
-            return out
-        for oid, ot in texts.items():
-            if oid == m.id:
+        return None  # Requires the batch query performed by run_content.
+    if code == 'R-C09':
+        # Compare only explicitly attributed quotations to administrator-provided references.
+        references = rule.params.get('references') if isinstance(rule.params, dict) else None
+        if not isinstance(references, list):
+            return None
+        checked = False
+        for ref in references:
+            if not isinstance(ref, dict):
                 continue
-            sim = _jaccard(grams, _ngrams(ot))
-            if sim >= th:
-                out.append(_d(rule, m, ver, f"与材料 {oid} 文本相似度 {sim:.2f}", f"{sim:.2f}", f"<{th}"))
-        return out
-    return out
+            title, standard = ref.get('title'), ref.get('text')
+            if not all(isinstance(value, str) and value.strip() for value in (title, standard, ref.get('source'))):
+                continue
+            pattern = r'《' + re.escape(title) + r'》[^“”"\n]{0,40}[“"]([^”"\n]+)[”"]'
+            for match in re.finditer(pattern, text):
+                checked = True
+                quote = match.group(1)
+                normalize = lambda value: re.sub(r'\s+', '', value)
+                if normalize(quote) not in normalize(standard):
+                    issue = _d(rule, m, ver, f'《{title}》引用与配置原文不一致，请人工核对', quote, standard[:500])
+                    issue.needs_human_judgement = True
+                    issue.rule_basis = str(ref['source'])
+                    out.append(issue)
+        return out if checked else None
+    return None
 
 
 def _match_phrase(ph, text: str) -> bool:

@@ -11,7 +11,7 @@ import { severityName } from "../../utils/format"
 import { can } from "../../utils/permissions"
 import { useToast } from "../../context/ToastContext"
 
-const ENGINE_NAME = { RULE: "规则引擎", AI: "智能识别", OCR: "图像识别" }
+const ENGINE_NAME = { RULE: "规则引擎", LLM: "大模型", RULE_LLM: "规则与大模型" }
 
 export default function CheckRulesPage() {
   const toast = useToast()
@@ -92,7 +92,7 @@ export default function CheckRulesPage() {
               <option value="FORMAT">形式</option><option value="CONTENT">内容</option>
             </select>
             <select className="select select-bordered select-sm" value={edit.engine || "RULE"} onChange={(e) => setEdit({ ...edit, engine: e.target.value })}>
-              <option value="RULE">规则</option><option value="LLM">大模型</option><option value="HYBRID">混合</option>
+              <option value="RULE">规则</option><option value="LLM">大模型</option><option value="RULE_LLM">混合</option>
             </select>
             <select className="select select-bordered select-sm" value={edit.severity || "WARN"} onChange={(e) => setEdit({ ...edit, severity: e.target.value })}>
               <option value="BLOCK">阻断</option><option value="WARN">警告</option><option value="INFO">提示</option>

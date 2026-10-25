@@ -269,6 +269,28 @@ def list_versions(mid: int, request: Request, db: Session = Depends(get_db), act
     return ok(out)
 
 
+@router.post('/materials/{mid}/retry-parse')
+def retry_parse(mid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    material = db.query(Material).filter(Material.id == mid).first()
+    if not material:
+        raise not_found()
+    ensure_archive_access(db, actor, material.archive_id, request)
+    _editable_submission(db, actor, material)
+    version = db.query(MaterialVersion).filter(MaterialVersion.id == material.current_version_id).with_for_update().first()
+    if not version or version.is_frozen:
+        raise conflict('仅可重新解析当前未冻结材料')
+    pending = db.query(Job).filter(Job.job_type == 'PARSE', Job.target_id == version.id,
+                                    Job.status.in_(['QUEUED','RUNNING'])).first()
+    if pending:
+        return ok({'parse_job_id': pending.id})
+    job = enqueue_job(db, 'PARSE', actor.id, 'material_version', version.id, {'version_id': version.id})
+    version.parse_status = 'PENDING'
+    version.parse_error = None
+    material.updated_at = now()
+    log(db, actor, 'RETRY_PARSE', 'material_version', version.id)
+    return ok({'parse_job_id': job.id})
+
+
 @router.get("/materials/{mid}/parsed")
 def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
                db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
@@ -322,10 +344,29 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         raise not_found()
     if ver.parse_status != "DONE":
         raise conflict("材料完成解析后才能校正")
+    if 'corrected_text' in body and body['corrected_text'] is not None and not isinstance(body['corrected_text'], str):
+        raise unprocessable('校正文本须为文字或 null')
+    if 'corrected_fields' in body and body['corrected_fields'] is not None and not isinstance(body['corrected_fields'], dict):
+        raise unprocessable('校正字段须为对象或 null')
+    from ai.evidence import effective_fields
+    previous_fields = effective_fields(pr)
     corrections = correct_extractions(db, m, ver, body.get("extractions", []))
     if "corrected_text" in body:
         pr.corrected_text = body.get("corrected_text")
-    if "corrected_fields" in body:
+        if pr.corrected_text is not None:
+            from ai.extract import extract_fields
+            derived = extract_fields(pr.corrected_text)
+            # The UI submits the displayed fields even when untouched. Only
+            # intentional field edits override fields freshly derived from text.
+            requested = body.get('corrected_fields')
+            if isinstance(requested, dict):
+                derived.update({k:v for k,v in requested.items() if previous_fields.get(k) != v})
+                for k in previous_fields.keys() - requested.keys():
+                    derived.pop(k, None)
+            pr.corrected_fields = derived
+        elif 'corrected_fields' not in body:
+            pr.corrected_fields = None
+    if "corrected_fields" in body and ("corrected_text" not in body or body['corrected_text'] is None):
         pr.corrected_fields = body.get("corrected_fields")
     pr.corrected_by = actor.id
     pr.corrected_at = now()

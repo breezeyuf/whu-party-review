@@ -62,9 +62,9 @@ def trial_rules(db, body, actor):
         nodes = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows('time_node_defs', active=False))
         _, d1, _ = run_completeness(db, sub, mats, _to_nodevals(nodes), rule_set=rules, context=context, versions=versions)
         _, d2, _ = run_timeline(db, sub, nodes, rule_set=rules, context=context)
-        d3, _ = run_format(db, mats, versions, parses, rules.types, rule_set=rules)
+        d3, format_results = run_format(db, mats, versions, parses, rules.types, rule_set=rules)
         d4, content_results = run_content(db, sub, mats, versions, parses, rules.types, False, rule_set=rules)
-        skipped = {r['rule_code'] for r in content_results if r.get('result') == 'SKIPPED'}
+        skipped = {r['rule_code'] for r in content_results + format_results if r.get('result') == 'SKIPPED'}
         skipped -= {r['rule_code'] for r in content_results if r.get('result') in ('PASS', 'FAIL')}
         old = db.query(Issue).filter(Issue.report_id == sub.latest_report_id, Issue.source != 'MANUAL').all() if sub.latest_report_id else []
         current = {i.fingerprint: {'fingerprint':i.fingerprint,'rule_code':i.rule_code,'title':i.title,'description':i.description}

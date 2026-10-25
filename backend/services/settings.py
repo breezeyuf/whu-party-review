@@ -13,13 +13,16 @@ from ai.llm import chat_json, validate_credential_options
 
 
 ORG_KEYS = {"upload", "retention", "notification", "calendar"}
-ADMIN_ONLY = {"ai", "ocr", "ocr_vision", "security", "worker"}
+ADMIN_ONLY = {"ai", "ocr", "ocr_vision", "security", "worker", "delivery"}
 
 
 def public_settings(db: Session) -> dict:
     out = {}
-    for key in ("upload", "retention", "notification", "ai", "ocr", "ocr_vision", "security", "worker", "calendar"):
+    for key in ("upload", "retention", "notification", "ai", "ocr", "ocr_vision", "security", "worker", "calendar", "delivery"):
         val = deepcopy(get_setting(db, key, {}))
+        if key == 'delivery':
+            from services.delivery import public_config
+            val=public_config(val)
         if key == 'ocr_vision':
             from ai.ocr_review import DEFAULTS
             val = {**DEFAULTS, **val}
@@ -48,6 +51,20 @@ def update_settings(db: Session, actor, body: dict) -> dict:
                 raise unprocessable("大模型配置必须是对象")
             continue
         patch = dict(patch)
+        if key == 'retention' and 'material_years' in patch:
+            if type(patch['material_years']) is not int or not 1<=patch['material_years']<=100:
+                raise unprocessable('材料保留年数须为 1 至 100 的整数')
+        if key == 'delivery':
+            from services.delivery import update_config
+            cur=update_config(cur,patch)
+            patch={}
+        if key == 'ocr':
+            import math
+            if 'engine' in patch and patch['engine'] not in ('none','auto','rapidocr','paddleocr'):
+                raise unprocessable('不支持的 OCR 引擎')
+            for name, lower, upper in [('min_dpi',72,300),('blur_threshold',0,100000),('timeout_s',1,600)]:
+                if name in patch and (type(patch[name]) not in (int,float) or not math.isfinite(patch[name]) or not lower <= patch[name] <= upper):
+                    raise unprocessable(f'{name} 超出允许范围')
         if key == 'ocr_vision':
             from ai.ocr_review import validate_config
             validate_config(patch)

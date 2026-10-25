@@ -32,6 +32,26 @@ def chat_json(db, code, variables, override=None, *, archive=None, rule_set=None
             _CALLS.wait()
         _ACTIVE_CALLS += 1
     try:
+        text = variables.get('text') or ''
+        if code in ('CONTENT_CHECK','EXTRACT') and cfg.get('desensitize') is not False:
+            text = desensitize_text(text,archive)
+        if code in ('CONTENT_CHECK', 'EXTRACT') and len(text) > 5500:
+            # Redact BEFORE splitting so a boundary cannot expose part of a name/ID.
+            chunks = [text[i:i+5000] for i in range(0,len(text),4800)]
+            if len(chunks)>40:
+                return None, '材料超过单次全文检查上限，请拆分材料；未返回部分检查通过结论', 0
+            field = 'issues' if code=='CONTENT_CHECK' else 'dates'
+            combined, seen, elapsed = [], set(), 0
+            for chunk in chunks:
+                result,error,ms = _chat_json(db,code,{**variables,'text':chunk},override,archive=archive,
+                                           rule_set=rule_set,config_snapshot=saved_cfg)
+                elapsed += ms
+                if error: return None,error,elapsed
+                for item in result[field]:
+                    key=json.dumps(item,sort_keys=True,ensure_ascii=False)
+                    if key not in seen:
+                        seen.add(key); combined.append(item)
+            return {field:combined},None,elapsed
         return _chat_json(db, code, variables, override, archive=archive, rule_set=rule_set,
                           config_snapshot=saved_cfg)
     finally:
@@ -116,6 +136,8 @@ def _chat_json(
         'SUGGEST': '输出 {"suggestion":"建议"}，必须原样保留模板中的修改要求，不得添加新事实。',
     }
     user_p += '\n' + contracts.get(code, '')
+    if code == 'CONTENT_CHECK' and 'timeline' in safe_variables:
+        user_p += '\n档案已知时间节点（仅依据已知值核对，空值不得推测）：' + json.dumps(safe_variables['timeline'],ensure_ascii=False)
     payload = {
         "model": model,
         "temperature": float(cfg.get("temperature") or 0.1),

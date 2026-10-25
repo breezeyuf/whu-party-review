@@ -8,6 +8,11 @@ from typing import Any, Optional
 from config import STORAGE_DIR, ensure_storage
 
 
+def _ocr_enabled():
+    from ai.ocr import settings
+    return settings.get().get('engine', 'auto') != 'none'
+
+
 def parse_version_file(stored_path: str, file_ext: str) -> dict[str, Any]:
     ensure_storage()
     path = STORAGE_DIR / stored_path
@@ -50,6 +55,7 @@ def _parse_pdf(path: Path) -> dict:
     parser = "PDF_TEXT"
     ocr_engine = None
     warnings = []
+    ocr_failed = False
     for i, page in enumerate(doc):
         info = page.get_text("dict")
         blocks = []
@@ -70,11 +76,11 @@ def _parse_pdf(path: Path) -> dict:
             ocr_text, ocr_blocks, engine, warn = _ocr_page(page)
             if warn:
                 warnings.append(warn)
+                ocr_failed |= _ocr_enabled()
             if ocr_text:
                 page_text = ocr_text
                 blocks = ocr_blocks
                 source = "ocr"
-                parser = "MIXED" if parser == "PDF_TEXT" else "OCR"
                 ocr_engine = engine
             else:
                 warnings.append(f"第 {i+1} 页文本过少，可能为扫描件，需人工核对")
@@ -84,10 +90,11 @@ def _parse_pdf(path: Path) -> dict:
             "page_no": i + 1,
             "width": float(page.rect.width),
             "height": float(page.rect.height),
+            "rotation": page.rotation,
             "text": page_text,
             "source": source,
             "blocks": blocks,
-            "quality": {"dpi": None, "blur_score": None, "is_blurry": False},
+            "quality": _page_quality(page) if source != 'text' else {},
         })
     rel_preview = stored_rel_preview(path, "pdf")
     preview = STORAGE_DIR / rel_preview
@@ -99,10 +106,13 @@ def _parse_pdf(path: Path) -> dict:
         except OSError:
             rel_preview = str(path.relative_to(STORAGE_DIR)).replace("\\", "/")
     full = "\n".join(texts)
-    visual = _visual_from_pdf(doc)
+    sources = {p['source'] for p in pages}
+    parser = 'MIXED' if 'text' in sources and 'ocr' in sources else 'OCR' if 'ocr' in sources else 'PDF_TEXT' if 'text' in sources else 'NONE'
+    visual = _visual_from_pdf(doc, pages)
     doc.close()
     return {
         "parser": parser if pages else "NONE",
+        "ocr_failed": ocr_failed,
         "ocr_engine": ocr_engine,
         "preview_pdf_path": rel_preview,
         "full_text": full,
@@ -150,9 +160,10 @@ def _parse_image(path: Path, ext: str) -> dict:
     ocr_text, blocks, engine, warn = _ocr_page(page)
     warnings = [warn] if warn else []
     if not ocr_text:
-        warnings.append("图片型材料未启用 OCR，需人工核对文本")
-    visual = _visual_from_pdf(doc)
+        warnings.append("图片未识别到文字，请对照原图人工核对")
     quality = _page_quality(page)
+    # A standalone image's PDF canvas is synthetic, not evidence of its print DPI.
+    quality['source_dpi'] = None
     pages = [{
         "page_no": 1,
         "width": float(page.rect.width),
@@ -162,9 +173,11 @@ def _parse_image(path: Path, ext: str) -> dict:
         "blocks": blocks,
         "quality": quality,
     }]
+    visual = _visual_from_pdf(doc, pages)
     doc.close()
     return {
         "parser": "OCR" if ocr_text else "NONE",
+        "ocr_failed": bool(warn) and _ocr_enabled(),
         "ocr_engine": engine,
         "preview_pdf_path": rel,
         "full_text": ocr_text,
@@ -198,27 +211,8 @@ def _parse_docx(path: Path) -> dict:
             for row in block.rows:
                 paras.append("\t".join(c.text.strip() for c in row.cells))
     full = "\n".join(paras)
-    fonts, sizes, spacings = [], [], []
-    for p in doc.paragraphs:
-        if p.runs:
-            for r in p.runs:
-                if r.font.name:
-                    fonts.append(r.font.name)
-                if r.font.size:
-                    sizes.append(round(r.font.size.pt, 1))
-        if p.paragraph_format.line_spacing:
-            spacings.append(p.paragraph_format.line_spacing)
-    section = doc.sections[0] if doc.sections else None
-    margin = None
-    if section:
-        margin = round((section.left_margin.cm + section.right_margin.cm) / 2, 2) if section.left_margin else None
-    features = {
-        "font": fonts[0] if fonts else None,
-        "size_pt": sizes[0] if sizes else None,
-        "line_spacing": spacings[0] if spacings else None,
-        "margin_cm": margin,
-        "converted_from": "docx",
-    }
+    from ai.layout import docx_features
+    features = docx_features(doc)
     rel = _docx_to_preview_pdf(path, full)
     pages = _docx_preview_pages(STORAGE_DIR / rel)
     return {
@@ -277,7 +271,9 @@ def _docx_preview_pages(path: Path) -> list[dict]:
 def _ocr_page(page) -> tuple[str, list, Optional[str], Optional[str]]:
     try:
         from ai.ocr import ocr_pixmap
-        pix = page.get_pixmap(dpi=150)
+        from ai.ocr import settings
+        dpi = max(72, min(300, int(settings.get().get('min_dpi') or 150)))
+        pix = page.get_pixmap(dpi=dpi)
         text, blocks, engine, warning = ocr_pixmap(pix)
         sx, sy = page.rect.width / pix.width, page.rect.height / pix.height
         for block in blocks:
@@ -289,10 +285,10 @@ def _ocr_page(page) -> tuple[str, list, Optional[str], Optional[str]]:
         return "", [], None, f"OCR 不可用：{e}"
 
 
-def _visual_from_pdf(doc) -> dict:
+def _visual_from_pdf(doc, pages=None) -> dict:
     try:
         from ai.vision import detect_visual
-        return detect_visual(doc)
+        return detect_visual(doc, pages)
     except Exception:
         return {"seals": [], "signatures": []}
 

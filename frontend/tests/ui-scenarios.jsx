@@ -127,6 +127,38 @@ export async function runUiScenarios() {
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
 
+  await test("可编辑材料可重新解析，接口失败保留页面供重试", async () => {
+    await mount(<MaterialDetailPage />, { path: "/materials/12", pattern: "/materials/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+      if (c.url === "/submissions/101") return { ...baseSubmission, can: { upload: true } }
+      if (c.url === "/materials/12/retry-parse") throw new Error("解析服务暂不可用")
+    } })
+    await click(button("重新解析（使用当前模型配置）"))
+    assert.match(text(), /解析服务暂不可用/)
+    assert.equal(button("重新解析（使用当前模型配置）").disabled, false)
+    assert.equal(requests.filter(c => c.url === "/materials/12/retry-parse").length, 1)
+  })
+  await test("投递检查只检查配置并明确不发送", async () => {
+    await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : c.url === "/settings/delivery/test" ? { message: "未发送任何消息", email_ready: false, sms_ready: false, sent: false } : undefined })
+    await click(button("检查投递配置（不发送）"))
+    assert.match(text(), /未发送任何消息/)
+    assert.equal(requests.filter(c => c.method === "post").length, 1)
+    await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : undefined })
+    assert.equal(button("检查投递配置（不发送）").disabled, true)
+  })
+  await test("到期材料确认保留带原因并刷新待处理清单", async () => {
+    let kept = false
+    await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => {
+      if (c.url === "/settings") return {}
+      if (c.url === "/settings/retention/materials/402/keep") { kept = true; return { preserved: true } }
+      if (c.url === "/settings/retention/materials") return { items: kept ? [] : [{ id: 402, title: "测试材料", filename: "原件.pdf", version_no: 2, due_at: "2026-01-01" }], total: kept ? 0 : 1, material_years: 10, page: 1, page_size: 20 }
+    } })
+    await click(button("查看到期待处理材料"))
+    await input(document.querySelector('[aria-label="到期材料保留原因"]'), "仍需核查，保留原件")
+    await click(button("确认保留原件"))
+    assert.deepEqual(JSON.parse(requests.find(c => c.method === "post").data), { reason: "仍需核查，保留原件" })
+    assert.match(text(), /暂无符合条件的材料/)
+    assert.equal(requests.some(c => c.method === "delete"), false)
+  })
   await test("视觉 OCR 配置使用独立密钥且测试已保存配置", async () => {
     const settings = { ocr_vision: { enabled: false, allow_image_upload: false, model: "vision-test", base_url: "https://vision.invalid/v1", confidence_threshold: 0.9 } }
     await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: (c) => c.url === "/settings" ? settings : c.url === "/settings/ai/test" ? { ok: true, message: "图片识别通过", latency_ms: 1 } : undefined })
