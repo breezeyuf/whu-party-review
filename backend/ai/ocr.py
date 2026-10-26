@@ -36,6 +36,10 @@ def available_engines() -> list[str]:
 
 
 def ocr_pixmap(pix) -> tuple[str, list, Optional[str], Optional[str]]:
+    # An explicitly disabled engine must not queue behind another document's
+    # native OCR request (which may take several minutes or need termination).
+    if settings.get().get('engine') == 'none':
+        return '', [], None, '未启用 OCR，扫描件需人工核对文本'
     timeout = max(1, float(settings.get().get('timeout_s') or _OCR_TIMEOUT_S))
     if not _RUN_LOCK.acquire(timeout=timeout):
         return '', [], None, 'OCR 排队超时，请重试'
@@ -65,7 +69,9 @@ def _ocr_pixmap(pix):
     except Exception:
         return "", [], None, "OCR 引擎执行失败，请检查模型后重试"
     if err:
-        return "", [], None, err
+        # Child errors can contain material text, local paths, or native runtime
+        # details. Only a fixed message may become persisted parse diagnostics.
+        return "", [], None, 'OCR 引擎识别失败，请检查模型后重试'
     blocks = [{"text": t, "bbox": b, "conf": c} for t, b, c in lines]
     return "\n".join(t for t, _, _ in lines), blocks, selected, None
 
@@ -122,8 +128,8 @@ def _child_ocr(samples: bytes, width: int, height: int, n: int, selected='paddle
         return [], "未启用 OCR，扫描件需人工核对文本"
     try:
         return (_run_v3(engine, img) if _ENGINE_V3 else _run_v2(engine, img)), None
-    except Exception as e:
-        return [], f"OCR 失败：{e}"
+    except Exception:
+        return [], 'OCR 引擎识别失败，请检查模型后重试'
 
 
 def _child_engine():

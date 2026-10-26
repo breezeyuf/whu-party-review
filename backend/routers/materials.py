@@ -350,12 +350,21 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         raise unprocessable('校正字段须为对象或 null')
     from ai.evidence import effective_fields
     previous_fields = effective_fields(pr)
+    previous_text = pr.corrected_text if pr.corrected_text is not None else (pr.full_text or '')
     corrections = correct_extractions(db, m, ver, body.get("extractions", []))
     if "corrected_text" in body:
         pr.corrected_text = body.get("corrected_text")
         if pr.corrected_text is not None:
             from ai.extract import extract_fields
             derived = extract_fields(pr.corrected_text)
+            # Preserve prior manual overrides (including deliberate field removal)
+            # when the UI resubmits the same displayed values. Derived values may
+            # follow edited text, but an earlier explicit field edit must survive.
+            if pr.corrected_fields is not None and body.get('corrected_fields', {}) is not None:
+                baseline = extract_fields(previous_text)
+                derived.update({k:v for k,v in previous_fields.items() if baseline.get(k) != v})
+                for k in baseline.keys() - previous_fields.keys():
+                    derived.pop(k, None)
             # The UI submits the displayed fields even when untouched. Only
             # intentional field edits override fields freshly derived from text.
             requested = body.get('corrected_fields')

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 
 from sqlalchemy.orm import Session
 
@@ -47,10 +48,20 @@ def update_settings(db: Session, actor, body: dict) -> dict:
         row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
         cur = deepcopy(row.value) if row and isinstance(row.value, dict) else {}
         if not isinstance(patch, dict):
-            if key in ("ai", "ocr_vision"):
-                raise unprocessable("大模型配置必须是对象")
-            continue
+            raise unprocessable("配置组必须是对象")
         patch = dict(patch)
+        if key == 'ai':
+            for name in ('llm_enabled', 'desensitize'):
+                if name in patch and type(patch[name]) is not bool:
+                    raise unprocessable(f'{name} 须为开关值')
+            for name, lower, upper in [('timeout_s',1,600),('max_concurrency',1,32),
+                                       ('temperature',0,2),('classify_confidence_threshold',0,1)]:
+                if name in patch and (type(patch[name]) not in (int,float) or not math.isfinite(patch[name]) or not lower <= patch[name] <= upper):
+                    raise unprocessable(f'{name} 超出允许范围')
+            if 'max_concurrency' in patch and type(patch['max_concurrency']) is not int:
+                raise unprocessable('最大并发须为整数')
+            if 'model' in patch and not isinstance(patch['model'], str):
+                raise unprocessable('模型名须为文字')
         if key == 'retention' and 'material_years' in patch:
             if type(patch['material_years']) is not int or not 1<=patch['material_years']<=100:
                 raise unprocessable('材料保留年数须为 1 至 100 的整数')
@@ -59,7 +70,6 @@ def update_settings(db: Session, actor, body: dict) -> dict:
             cur=update_config(cur,patch)
             patch={}
         if key == 'ocr':
-            import math
             if 'engine' in patch and patch['engine'] not in ('none','auto','rapidocr','paddleocr'):
                 raise unprocessable('不支持的 OCR 引擎')
             for name, lower, upper in [('min_dpi',72,300),('blur_threshold',0,100000),('timeout_s',1,600)]:

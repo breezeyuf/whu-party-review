@@ -140,7 +140,7 @@ def _chat_json(
         user_p += '\n档案已知时间节点（仅依据已知值核对，空值不得推测）：' + json.dumps(safe_variables['timeline'],ensure_ascii=False)
     payload = {
         "model": model,
-        "temperature": float(cfg.get("temperature") or 0.1),
+        "temperature": float(cfg["temperature"] if cfg.get("temperature") is not None else 0.1),
         "messages": [
             {"role": "system", "content": sys_p},
             {"role": "user", "content": user_p + "\n只输出 JSON。"},

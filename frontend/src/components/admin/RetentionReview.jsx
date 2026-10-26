@@ -23,7 +23,9 @@ export default function RetentionReview() {
       {status==="pending" && <label className="form-control text-xs">保留原因<input aria-label="到期材料保留原因" className="input input-bordered input-sm" value={reason} maxLength={500} onChange={e=>setReason(e.target.value)} /></label>}
       {!data.items.length && <p className="text-xs">暂无符合条件的材料。</p>}
       {data.items.map(row=><div key={row.id} className="flex items-center justify-between gap-3 border-t border-base-300 pt-2 text-xs">
-        <span>{row.title} · {row.filename} · 第 {row.version_no} 版 · 到期 {row.due_at.slice(0,10)}</span>
+        <div><p>{row.title} · {row.filename} · 第 {row.version_no} 版 · 到期 {row.due_at.slice(0,10)}</p>
+          {row.confirmation && <p className="mt-1 text-base-content/60">{row.confirmation.confirmed_by} · {row.confirmation.confirmed_at.slice(0,10)} 确认保留 · {row.confirmation.reason}</p>}
+        </div>
         {status==="pending" && <button className="btn btn-outline btn-xs" disabled={busy || !reason.trim()} onClick={async()=>{
           setBusy(true); setError("")
           try { await keepExpiredMaterial(row.id,{reason}); await load(data.page) }

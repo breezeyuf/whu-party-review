@@ -51,8 +51,15 @@ def validate_config(patch):
             if field != 'confidence_threshold' and int(value) != value:
                 raise unprocessable(f'{field} 必须是整数')
     if patch.get('base_url'):
-        url = urlsplit(patch['base_url'])
-        if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password or url.query or url.fragment:
+        try:
+            url = urlsplit(patch['base_url'])
+            valid = (url.scheme in ('http', 'https') and url.hostname
+                     and not any((url.username, url.password, url.query, url.fragment))
+                     and not any(c.isspace() for c in patch['base_url'])
+                     and (url.port is None or 1 <= url.port <= 65535))
+        except ValueError:
+            valid = False
+        if not valid:
             raise unprocessable('视觉 OCR 接口地址须为不含凭据、查询或片段的 HTTP(S) 地址')
 
 

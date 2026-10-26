@@ -3,6 +3,7 @@ from __future__ import annotations
 from ai.types import IssueDraft, loc
 from ai.evidence import effective_text, effective_fields, char_count
 from models import CheckRule, ParseResult
+from ai.layout import _measurement
 
 
 def _applies(rule: CheckRule, type_code: str | None) -> bool:
@@ -39,7 +40,7 @@ def run_format(db, materials: list, versions: dict, parses: dict[int, ParseResul
             pr = parses.get(ver.id) if ver else None
             try:
                 issues = _check_one(rule, m, ver, pr, t)
-            except (TypeError, ValueError, KeyError):
+            except (TypeError, ValueError, KeyError, AttributeError, OverflowError):
                 issues = None
             if issues is None:
                 skipped = True
@@ -73,6 +74,8 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
     code = rule.code
     if code == "R-F01":
         need = (fmt.get("doc_elements") or [])
+        if not isinstance(need, list) or not need:
+            return None
         missing = []
         mapping = {
             "title": fields.get("title") or (text.splitlines()[0] if text.strip() else None),
@@ -82,6 +85,8 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
             "signature": fields.get("signature_name") or any(k in text[-200:] for k in ("签名", "汇报人", "申请人")),
             "date": fields.get("signature_date") or any(ch in text[-120:] for ch in ("年", "-")),
         }
+        if any(not isinstance(k, str) or k not in mapping for k in need):
+            return None
         for k in need:
             if not mapping.get(k):
                 missing.append(k)
@@ -90,22 +95,24 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
         return []
     if code == "R-F02":
         raw = fields.get("signature_date_raw") or ""
+        if not fields.get('signature_date') or not raw:
+            return None
         if fields.get("signature_date") and "年" not in str(raw) and raw:
             return [_draft(rule, m, ver, "落款日期未按“××××年××月××日”书写", raw, "××××年××月××日")]
         return []
     if code == "R-F03":
         slots = fmt.get("signature_slots") or []
         if not slots:
-            return []
+            return None
         return _check_marks(rule,m,ver,slots,visual,'signature')
     if code == "R-F04":
         slots = fmt.get("seal_slots") or []
         if not slots:
-            return []
+            return None
         return _check_marks(rule,m,ver,slots,visual,'seal')
     if code == "R-F05":
         if not fmt.get("handwriting_required"):
-            return []
+            return None
         if char_count(text) < 80:
             return [_draft(rule, m, ver, "手写材料可识别文本过少", str(char_count(text)), "可辨识正文")]
         return []
@@ -113,10 +120,11 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
         mins = (rule.params or {}).get("min_chars") or {}
         tcode = t.code if t else None
         need = mins.get(tcode)
-        if not need:
+        required = _measurement(need)
+        if required is None or not required.is_integer():
             return None
         n = char_count(text)
-        if n < int(need):
+        if n < required:
             return [_draft(rule, m, ver, f"正文字数 {n}，不足 {need}", str(n), str(need))]
         return []
     if code == "R-F07":
@@ -126,14 +134,19 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
             q = p.get("quality") or {}
             if p.get('source') not in ('scan','image','ocr'):
                 continue
-            blur_th = q.get('blur_threshold', params.get('blur_threshold',60))
-            min_dpi = q.get('min_dpi',params.get('min_dpi',150))
-            measured |= q.get('blur_score') is not None
-            unknown |= q.get('blur_score') is None
-            source_dpi = q.get('source_dpi')
-            if source_dpi is not None and source_dpi < float(min_dpi):
+            blur_th = _measurement(q.get('blur_threshold', params.get('blur_threshold',60)), allow_zero=True)
+            min_dpi = _measurement(q.get('min_dpi',params.get('min_dpi',150)))
+            if blur_th is None or min_dpi is None:
+                return None
+            score = _measurement(q.get('blur_score'), allow_zero=True)
+            measured |= score is not None
+            unknown |= score is None
+            source_dpi = _measurement(q.get('source_dpi'))
+            if q.get('source_dpi') is not None and source_dpi is None:
+                unknown = True
+            if source_dpi is not None and source_dpi < min_dpi:
                 return [_draft(rule, m, ver, f"第 {p.get('page_no')} 页原始扫描分辨率不足", f'{source_dpi:.0f} DPI', f"≥ {min_dpi} DPI")]
-            if q.get("is_blurry") or (q.get("blur_score") is not None and q["blur_score"] < blur_th):
+            if q.get("is_blurry") or (score is not None and score < blur_th):
                 return [_draft(rule, m, ver, f"第 {p.get('page_no')} 页清晰度不足", str(q.get("blur_score")), f"拉普拉斯方差 ≥ {blur_th}")]
             if p.get("source") in ("scan", "image") and not (p.get("text") or "").strip():
                 d = _draft(rule, m, ver, "扫描件文本缺失，需人工核对", "空", "可识别文本")
@@ -157,17 +170,21 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
             return None
         if not orientation and minimum is None:
             return None
+        if minimum is not None:
+            minimum = _measurement(minimum, allow_zero=True)
+            if minimum is None:
+                return None
         complete, problems = True, []
         sections = features.get('sections') or []
         if orientation:
             measured = [s.get('orientation') for s in sections] if sections else [
                 ('landscape' if p['width'] > p['height'] else 'portrait') for p in pages if p.get('width') and p.get('height') and p.get('source') != 'docx']
-            if not measured: complete = False
-            if any(value != orientation for value in measured): problems.append('页面方向不符合要求')
+            if not measured or any(value not in ('portrait', 'landscape') for value in measured): complete = False
+            if any(value in ('portrait', 'landscape') and value != orientation for value in measured): problems.append('页面方向不符合要求')
         if minimum is not None:
-            margins = [(s.get('margins_cm') or {}).get(side) for s in sections]
+            margins = [_measurement((s.get('margins_cm') or {}).get(side), allow_zero=True) for s in sections]
             if not margins or any(value is None for value in margins): complete = False
-            if any(value is not None and value < float(minimum) for value in margins): problems.append('装订侧页边距不足')
+            if any(value is not None and value < minimum for value in margins): problems.append('装订侧页边距不足')
         if problems:
             return [_draft(rule, m, ver, '；'.join(problems), '；'.join(problems), str(params))]
         return [] if complete else None

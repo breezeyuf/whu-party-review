@@ -145,6 +145,20 @@ export async function runUiScenarios() {
     await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : undefined })
     assert.equal(button("检查投递配置（不发送）").disabled, true)
   })
+  await test("清空已保存的短信地址和密钥会发送明确清空值", async () => {
+    await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: c => {
+      if (c.url === "/settings" && c.method === "get") return { delivery: { sms_url: "https://sms.invalid/send", sms_api_key_set: true } }
+      if (c.url === "/settings" && c.method === "put") return { delivery: { sms_url: "", sms_api_key_set: false } }
+    } })
+    await input(document.querySelector('[aria-label="短信服务 HTTPS 接口"]'), "")
+    const clearKey = [...document.querySelectorAll('input[type="checkbox"]')].find(node => node.parentElement.textContent.includes("清除短信 API 密钥"))
+    await click(clearKey)
+    await click(button("保存邮件与短信服务配置"))
+    const body = JSON.parse(requests.find(c => c.method === "put").data)
+    assert.equal(body.delivery.sms_url, "")
+    assert.equal(body.delivery.sms_api_key, "")
+    assert.equal(document.querySelector('[aria-label="短信服务 HTTPS 接口"]').value, "")
+  })
   await test("到期材料确认保留带原因并刷新待处理清单", async () => {
     let kept = false
     await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => {
@@ -158,6 +172,16 @@ export async function runUiScenarios() {
     assert.deepEqual(JSON.parse(requests.find(c => c.method === "post").data), { reason: "仍需核查，保留原件" })
     assert.match(text(), /暂无符合条件的材料/)
     assert.equal(requests.some(c => c.method === "delete"), false)
+  })
+  await test("已确认保留材料可查看确认人、时间和原因", async () => {
+    await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => {
+      if (c.url === "/settings") return {}
+      if (c.url === "/settings/retention/materials") return { items: [{ id: 402, title: "测试材料", filename: "原件.pdf", version_no: 2, due_at: "2026-01-01", confirmation: { confirmed_by: "测试管理员", confirmed_at: "2026-10-26T10:00:00+08:00", reason: "仍需核查" } }], total: 1, material_years: 10, page: 1, page_size: 20 }
+    } })
+    await click(button("查看已确认保留"))
+    assert.match(text(), /测试管理员.*2026-10-26.*仍需核查/)
+    assert.equal(button("确认保留原件"), undefined)
+    assert.equal(requests.find(c => c.url === "/settings/retention/materials").params.status, "confirmed")
   })
   await test("视觉 OCR 配置使用独立密钥且测试已保存配置", async () => {
     const settings = { ocr_vision: { enabled: false, allow_image_upload: false, model: "vision-test", base_url: "https://vision.invalid/v1", confidence_threshold: 0.9 } }

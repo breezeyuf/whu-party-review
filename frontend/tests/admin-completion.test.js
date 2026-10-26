@@ -46,3 +46,10 @@ test("配置保存使用真实字段并验证日历日期、整数和概率范�
   assert.throws(() => settingsPatch("worker",{concurrency:1.2}))
   assert.equal(settingsPatch("upload",{max_file_mb:"25"}).max_file_mb,25)
 })
+
+test("清空服务地址会明确保存空值，配置边界与服务端一致", () => {
+  assert.deepEqual(settingsPatch("delivery",{smtp_host:"",sms_url:""}),{smtp_host:"",sms_url:""})
+  assert.deepEqual(settingsPatch("ai",{base_url:"",model:""}),{base_url:"",model:""})
+  assert.throws(() => settingsPatch("ai",{max_concurrency:33}))
+  assert.throws(() => settingsPatch("ocr",{timeout_s:601}))
+})

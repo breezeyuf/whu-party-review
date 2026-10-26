@@ -19,6 +19,7 @@ from ai.rule_snapshot import EvaluationContext, RuleSet
 from ai.suggest import fill_suggestions
 from models import (
     AiReport,
+    AuditLog,
     Archive,
     ArchiveTimeNode,
     CheckRule,
@@ -59,18 +60,25 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
             # Keep diagnostic evidence, but do not replace current classification
             # or time-node extractions with an incomplete OCR attempt.
             partial=db.query(ParseResult).filter(ParseResult.version_id==ver.id).first()
+            kept_previous = partial is not None
             if partial is None:
                 partial=ParseResult(version_id=ver.id,created_at=now())
                 db.add(partial)
-            for field,default in [('parser','NONE'),('ocr_engine',None),('preview_pdf_path',None),('full_text',''),
-                                  ('char_count',0),('pages',[]),('visual_marks',{}),('format_features',{}),('warnings',[])]:
-                setattr(partial,field,result.get(field,default))
-            partial.extracted_fields=extract_fields(result.get('full_text') or '')
+                for field,default in [('parser','NONE'),('ocr_engine',None),('preview_pdf_path',None),('full_text',''),
+                                      ('char_count',0),('pages',[]),('visual_marks',{}),('format_features',{}),('warnings',[])]:
+                    setattr(partial,field,result.get(field,default))
+                partial.extracted_fields=extract_fields(result.get('full_text') or '')
+                ver.page_count=result.get('page_count') or len(result.get('pages') or [])
+            else:
+                warning='本次重新解析未完成，当前显示此前保留的解析及人工校正；请重试解析'
+                warnings = list(partial.warnings or [])
+                if warning not in warnings:
+                    warnings.append(warning)
+                partial.warnings = warnings
             partial.updated_at=now()
-            ver.page_count=result.get('page_count') or len(result.get('pages') or [])
             db.flush()
             from ai.ocr import OCRProcessingError
-            raise OCRProcessingError('本地 OCR 识别未完成，部分结果已保留；请检查引擎后重新解析')
+            raise OCRProcessingError('本地 OCR 识别未完成，' + ('此前解析及人工校正已保留' if kept_previous else '部分结果已保留') + '；请检查引擎后重新解析')
         if use_llm:
             from ai.ocr_review import review_result
             review_result(db, result)
@@ -103,12 +111,40 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
             extractions, error = extract_fallback(db, result.get('full_text') or '', result.get('pages') or [], extractions, nodes,
                 archive=material.archive, rule_set=rule_set)
             if error: result.setdefault('warnings', []).append('模型补抽未采用：'+error)
+        # A retry of the same file must keep manually checked node values. New
+        # file versions still replace all sources from the old version.
+        manual = db.query(TimeNodeExtraction).filter(
+            TimeNodeExtraction.material_version_id == ver.id,
+            TimeNodeExtraction.is_current.is_(True),
+            TimeNodeExtraction.method == 'MANUAL',
+        ).all()
+        manual_keys = {(row.node_code, row.seq_index or 0) for row in manual}
+        deleted_keys = set()
+        for entry in db.query(AuditLog).filter(AuditLog.action == 'PARSE_CORRECT',
+                AuditLog.object_type == 'material', AuditLog.object_id == str(material.id)).order_by(AuditLog.id).all():
+            detail = entry.detail if isinstance(entry.detail, dict) else {}
+            if detail.get('version_id') != ver.id:
+                continue
+            for change in detail.get('extractions') or []:
+                if not isinstance(change, dict):
+                    continue
+                before = change.get('before') or {}
+                if change.get('action') == 'DELETE' and before.get('node_code'):
+                    deleted_keys.add((before['node_code'], before.get('seq_index') or 0))
+                after = change.get('after') or {}
+                if change.get('action') in ('CREATE', 'UPDATE') and after.get('node_code'):
+                    deleted_keys.discard((after['node_code'], after.get('seq_index') or 0))
         db.query(TimeNodeExtraction).filter(
             TimeNodeExtraction.material_id == material.id,
             TimeNodeExtraction.is_current.is_(True),
             True if is_current else TimeNodeExtraction.material_version_id == ver.id,
         ).update({"is_current": False})
+        for row in manual:
+            row.is_current = is_current
         for ex in extractions:
+            key = (ex['node_code'], ex.get('seq_index') or 0)
+            if key in manual_keys or key in deleted_keys:
+                continue
             db.add(TimeNodeExtraction(
                 archive_id=material.archive_id,
                 node_code=ex["node_code"],

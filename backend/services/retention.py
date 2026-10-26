@@ -20,13 +20,22 @@ def list_expired(db,actor,page=1,page_size=20,status='pending'):
                 AuditLog.object_id==cast(MaterialVersion.id,String)).exists()
     query=query.filter(confirmed if status=='confirmed' else ~confirmed)
     total=query.count()
+    page=min(page,max(1,(total+page_size-1)//page_size))
     rows=query.order_by(MaterialVersion.uploaded_at,MaterialVersion.id).offset((page-1)*page_size).limit(page_size).all()
+    confirmations={}
+    if status=='confirmed' and rows:
+        logs=db.query(AuditLog).filter(AuditLog.action=='RETENTION_KEEP',AuditLog.object_type=='material_version',
+                  AuditLog.object_id.in_([str(row.id) for row in rows])).order_by(AuditLog.id).all()
+        for entry in logs:
+            confirmations.setdefault(entry.object_id,{'confirmed_at':entry.created_at.isoformat(),
+                 'confirmed_by':entry.username or '管理员','reason':(entry.detail or {}).get('reason','')})
     items=[]
     for row in rows:
         material=db.get(Material,row.material_id)
         items.append({'id':row.id,'material_id':row.material_id,'title':material.title if material else '',
                       'filename':row.original_filename,'version_no':row.version_no,'uploaded_at':row.uploaded_at.isoformat(),
-                      'due_at':(row.uploaded_at+relativedelta(years=years)).isoformat(),'status':status})
+                      'due_at':(row.uploaded_at+relativedelta(years=years)).isoformat(),'status':status,
+                      'confirmation':confirmations.get(str(row.id))})
     return {'items':items,'total':total,'page':page,'page_size':page_size,'material_years':years,
             'policy':'按版本上传日期计算；管理员确认后继续保留原件，不删除文件'}
 

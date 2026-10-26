@@ -62,6 +62,9 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
             ver = versions.get(m.id)
             pr = parses.get(ver.id) if ver else None
             text = texts.get(m.id) or ""
+            if pr is None:
+                skipped = True
+                continue
             if is_llm:
                 if not text.strip():
                     continue
@@ -89,7 +92,10 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
                                     f"{compared['score']:.2f}", f'<{threshold}')]
                         found[0].needs_human_judgement = True
                 else:
-                    found = _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types, field_sets)
+                    try:
+                        found = _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, types, field_sets)
+                    except (TypeError, ValueError, KeyError, AttributeError, OverflowError):
+                        found = None
                 if found is None:
                     skipped = True
                     continue
@@ -209,19 +215,28 @@ def _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, ty
         return out
     if code == "R-C05":
         elems = (t.element_template if t else None) or []
+        if not isinstance(elems, list) or any(not isinstance(el, dict) for el in elems):
+            return None
+        required = [el for el in elems if el.get('required')]
+        if not required:
+            return None
         missing = []
-        for el in elems:
-            if not el.get("required"):
-                continue
+        for el in required:
             kws = el.get("keywords") or [el.get("name")]
+            if not isinstance(kws, list) or not kws or any(not isinstance(k, str) or not k for k in kws):
+                return None
+            label = el.get('name') or el.get('key')
+            if not isinstance(label, str) or not label:
+                return None
             if not any(k and k in text for k in kws):
-                missing.append(el.get("name") or el.get("key"))
+                missing.append(label)
         if missing:
             out.append(_d(rule, m, ver, f"缺少内容要素：{'、'.join(missing)}", "缺", "应包含 " + "、".join(missing)))
         return out
     if code == "R-C06":
         arch = submission.archive
         fields = effective_fields(pr)
+        compared = False
         for field,attr,label in [('name','real_name','姓名'),('student_no','student_no','学号'),('birth_date','birth_date','出生日期'),
                                  ('gender','gender','性别'),('ethnicity','ethnicity','民族'),('native_place','native_place','籍贯'),('branch','branch','支部')]:
             expected=getattr(arch,attr,None)
@@ -230,17 +245,20 @@ def _apply_rule(rule, m, ver, pr, t, text, terms, phrases, submission, texts, ty
             actual=fields.get(field)
             if not actual: continue
             normalize=lambda value: re.sub(r'\s+','',str(value))
+            if expected:
+                compared = True
             if expected and normalize(actual)!=normalize(expected):
                 issue=_d(rule,m,ver,f'{label}与档案不一致，请人工核对',str(actual),str(expected))
                 issue.location['field']=field; issue.needs_human_judgement=True
                 out.append(issue)
             elif not expected:
                 peers={normalize(f[field]) for mid,f in (field_sets or {}).items() if mid!=m.id and f.get(field)}
+                compared |= bool(peers)
                 if any(value!=normalize(actual) for value in peers):
                     issue=_d(rule,m,ver,f'{label}在同一提交包材料间存在冲突，档案尚未提供基准',str(actual),'核对原件并完善档案基准')
                     issue.location['field']=field; issue.needs_human_judgement=True
                     out.append(issue)
-        return out
+        return out if compared else None
     if code == "R-C10":
         return None  # Requires the batch query performed by run_content.
     if code == 'R-C09':

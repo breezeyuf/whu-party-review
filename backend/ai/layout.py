@@ -1,4 +1,17 @@
 """Measured layout properties: unknown values are not presumed compliant."""
+import math
+
+
+def _measurement(value, *, allow_zero=False):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) and (number >= 0 if allow_zero else number > 0) else None
+
+
 def _styles(style):
     seen = set()
     while style is not None and style.style_id not in seen:
@@ -49,7 +62,18 @@ def docx_features(doc):
 
 
 def check_layout(features, layout):
-    if not set(layout).intersection({'font','size_pt','line_spacing','margin_cm'}):
+    allowed = {'font','size_pt','line_spacing','line_spacing_unit','margin_cm'}
+    if not isinstance(features, dict) or not isinstance(layout, dict) or set(layout) - allowed:
+        return [],False
+    if not set(layout).intersection(allowed - {'line_spacing_unit'}):
+        return [],False
+    if 'font' in layout and (not isinstance(layout['font'], str) or not layout['font'].strip()):
+        return [],False
+    if layout.get('line_spacing_unit', 'multiple') not in ('multiple', 'pt'):
+        return [],False
+    expected = {key: _measurement(layout[key], allow_zero=key == 'margin_cm')
+                for key in ('size_pt','line_spacing','margin_cm') if key in layout}
+    if any(value is None for value in expected.values()):
         return [],False
     problems, complete = [], True
     for key in ('font', 'size_pt', 'line_spacing'):
@@ -57,11 +81,12 @@ def check_layout(features, layout):
             continue
         for sample in features.get('samples') or [features]:
             actual = sample.get(key)
-            if actual is None:
+            measured = actual if key == 'font' else _measurement(actual)
+            if measured is None:
                 complete = False
             elif key == 'line_spacing' and sample.get('line_spacing_unit', 'multiple') != layout.get('line_spacing_unit', 'multiple'):
                 problems.append('行距单位不一致')
-            elif (str(actual) != str(layout[key]) if key == 'font' else abs(float(actual)-float(layout[key])) > 0.05):
+            elif (str(actual) != str(layout[key]) if key == 'font' else abs(measured-expected[key]) > 0.05):
                 problems.append(f'{key}: {actual}（要求 {layout[key]}）')
     if 'margin_cm' in layout:
         sections = features.get('sections') or []
@@ -70,8 +95,9 @@ def check_layout(features, layout):
         for section in sections:
             for side in ('left','right','top','bottom'):
                 actual = (section.get('margins_cm') or {}).get(side)
-                if actual is None:
+                measured = _measurement(actual, allow_zero=True)
+                if measured is None:
                     complete = False
-                elif abs(actual-float(layout['margin_cm'])) > 0.05:
+                elif abs(measured-expected['margin_cm']) > 0.05:
                     problems.append(f'{side} 页边距 {actual} cm（要求 {layout["margin_cm"]}）')
     return list(dict.fromkeys(problems)), complete

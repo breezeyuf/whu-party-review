@@ -23,10 +23,16 @@ def update_config(current, patch):
         raise unprocessable('SMTP 仅支持 SSL 或 STARTTLS')
     if any('\n' in str(v) or '\r' in str(v) for v in patch.values()):
         raise unprocessable('投递配置不得包含换行')
+    patch={k:(v.strip() if isinstance(v,str) and k not in SECRETS else v) for k,v in patch.items()}
     next_cfg={**result,**{k:v for k,v in patch.items() if k not in SECRETS}}
     if next_cfg['sms_url']:
-        url=urlsplit(next_cfg['sms_url'])
-        if url.scheme!='https' or not url.hostname or url.username or url.password or url.query or url.fragment:
+        try:
+            url=urlsplit(next_cfg['sms_url'])
+            valid=(url.scheme=='https' and url.hostname and not any((url.username,url.password,url.query,url.fragment))
+                   and not any(c.isspace() for c in next_cfg['sms_url']) and (url.port is None or 1<=url.port<=65535))
+        except ValueError:
+            valid=False
+        if not valid:
             raise unprocessable('短信接口须为不含凭据或查询参数的 HTTPS 地址')
     for secret, destination in [('smtp_password',('smtp_host','smtp_port','smtp_username')),('sms_api_key',('sms_url',))]:
         if result.get(secret+'_enc') and any(next_cfg.get(k)!=result.get(k) for k in destination) and secret not in patch:
@@ -46,8 +52,11 @@ def public_config(value):
 
 def check_config(value):
     public=public_config(value)
-    missing_email=[k for k in ('smtp_host','smtp_username','smtp_sender','smtp_password_set') if not public.get(k)]
-    missing_sms=[k for k in ('sms_url','sms_sender','sms_template_id','sms_api_key_set') if not public.get(k)]
+    def present(key):
+        v=public.get(key)
+        return bool(v.strip()) if isinstance(v,str) else bool(v)
+    missing_email=[k for k in ('smtp_host','smtp_username','smtp_sender','smtp_password_set') if not present(k)]
+    missing_sms=[k for k in ('sms_url','sms_sender','sms_template_id','sms_api_key_set') if not present(k)]
     return {'mode':'configuration_only','sent':False,'email_ready':not missing_email,'sms_ready':not missing_sms,
             'missing_email':missing_email,'missing_sms':missing_sms,'message':'仅检查已保存配置；未连接服务、未发送邮件或短信'}
 
