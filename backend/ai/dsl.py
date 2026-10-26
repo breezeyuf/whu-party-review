@@ -216,10 +216,8 @@ def _seq_max_gap(ctx: DSLContext, p: dict) -> CheckResult:
     seq = ctx.seq(p.get("seq", "T06[*]"))
     start, m1 = ctx.resolve(p.get("from"))
     end, m2 = ctx.resolve(p.get("to"))
-    if m1:
-        start = seq[0] if seq else None
-    if m2:
-        end = seq[-1] if seq else None
+    if m1 or m2:
+        return CheckResult(ok=True, skipped=True, reason="节点缺失")
     if start:
         seq = [d for d in seq if d >= start]
     if end:

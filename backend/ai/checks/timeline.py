@@ -79,6 +79,9 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "不适用当前阶段"})
             continue
         checks = (rule.params or {}).get("checks") or []
+        if not checks:
+            results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "未配置校验条件"})
+            continue
         # inject stage for required
         cres = []
         skip_all = False
@@ -105,10 +108,6 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                     last_fail = r
                     if chk.get("op") == "valid_date" and source is not None:
                         date_failures.append((r, source))
-        if any(chk.get("op") == "derive" for chk in checks):
-            derived.update({k: v.isoformat() for k, v in ctx.derived.items()})
-            results.append({"rule_code": rule.code, "result": "PASS", "derived": derived})
-            continue
         if fail:
             msg = (rule.message_template or rule.name)
             for code, n in ctx.nodes.items():
@@ -141,10 +140,14 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
             results.append({"rule_code": rule.code, "result": "FAIL", "issue_ids": []})
         elif date_incomplete:
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "缺少真实材料上传日期或日期来源"})
-        elif skip_all and not any(not x.skipped and x.ok for x in cres):
+        elif skip_all:
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "节点缺失"})
         else:
-            results.append({"rule_code": rule.code, "result": "PASS"})
+            passed = {"rule_code": rule.code, "result": "PASS"}
+            if any(chk.get("op") == "derive" for chk in checks):
+                derived.update({k: v.isoformat() for k, v in ctx.derived.items()})
+                passed["derived"] = dict(derived)
+            results.append(passed)
     snapshot = {
         "nodes": {c: (n.date.isoformat() if n.date else None) for c, n in ctx.nodes.items()},
         "date_inputs": [source for node in node_map.values() for source in (node.get("sources") or [])],
