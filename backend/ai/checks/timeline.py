@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from ai.dsl import CheckResult, DSLContext, NodeVal, required_for_stage, run_checks
@@ -61,6 +62,45 @@ def _valid_date_sources(ctx: DSLContext, node_map: dict, check: dict):
     return results
 
 
+def _issue_evidence(node_map: dict, check: dict, result: CheckResult, source: dict | None):
+    """Locate a failed check in the extraction records used for its nodes."""
+    if source is not None:
+        codes = [result.node_code or source.get("node_code")]
+        sources = [source]
+    else:
+        actual_codes = re.findall(r"\bT\d{2}\b", result.actual or "")
+        refs = actual_codes + [result.node_code]
+        refs += [check.get(key) for key in ("b", "node", "x", "at", "seq", "a", "birth", "from", "to")]
+        refs += check.get("nodes") if isinstance(check.get("nodes"), list) else []
+        codes = []
+        for ref in refs:
+            if not isinstance(ref, str):
+                continue
+            code = ref.split(".", 1)[0].replace("[*]", "")
+            if code in node_map and code not in codes:
+                codes.append(code)
+        sources = []
+        for code in codes:
+            node = node_map.get(code) or {}
+            candidates = node.get("sources") or []
+            effective = node.get("date") or node.get("value_date")
+            candidates = sorted(candidates, key=lambda item: item.get("date") != effective)
+            sources.extend(candidates)
+    primary = sources[0] if sources else None
+    code = codes[0] if codes else result.node_code
+    location = loc(node_code=code,
+                   extraction_id=primary.get("extraction_id") if primary else None,
+                   material_id=primary.get("material_id") if primary else None,
+                   version_id=primary.get("version_id") if primary else None,
+                   page_no=primary.get("page_no") if primary else None,
+                   bbox=primary.get("bbox") if primary else None)
+    if len(sources) > 1:
+        location["related_sources"] = [loc(node_code=row.get("node_code"), extraction_id=row.get("extraction_id"),
+                                           material_id=row.get("material_id"), version_id=row.get("version_id"),
+                                           page_no=row.get("page_no"), bbox=row.get("bbox")) for row in sources]
+    return primary, location
+
+
 def run_timeline(db, submission, node_map: dict, upload_date: date | None = None, *, rule_set=None, context=None):
     cal = context.calendar if context else get_setting(db, "calendar", {})
     holidays = {as_date(x) for x in (cal.get("holidays") or []) if as_date(x)}
@@ -105,16 +145,17 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                     continue
                 if not r.ok:
                     fail = True
-                    last_fail = r
+                    last_fail = (r, source, chk)
                     if chk.get("op") == "valid_date" and source is not None:
-                        date_failures.append((r, source))
+                        date_failures.append((r, source, chk))
         if fail:
             msg = (rule.message_template or rule.name)
             for code, n in ctx.nodes.items():
                 if n.date:
                     msg = msg.replace("{" + code + "}", n.date.isoformat())
-            failures = date_failures or [(last_fail, None)]
-            for r, source in failures:
+            failures = date_failures or [last_fail]
+            for r, source, chk in failures:
+                primary, location = _issue_evidence(node_map, chk, r, source)
                 sourced = source is not None
                 drafts.append(IssueDraft(
                     category="TIME",
@@ -123,12 +164,9 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                     description=r.reason or msg,
                     rule_code=rule.code,
                     rule_basis=rule.basis,
-                    material_id=source.get("material_id") if sourced else None,
-                    material_version_id=source.get("version_id") if sourced else None,
-                    location=loc(node_code=r.node_code, material_id=source.get("material_id") if sourced else None,
-                                 version_id=source.get("version_id") if sourced else None,
-                                 page_no=source.get("page_no") if sourced else None,
-                                 bbox=source.get("bbox") if sourced else None),
+                    material_id=primary.get("material_id") if primary else None,
+                    material_version_id=primary.get("version_id") if primary else None,
+                    location=location,
                     actual_value=r.actual,
                     expected_value=r.expected,
                     fingerprint_parts=(rule.code, r.node_code or "", source.get("material_id"),

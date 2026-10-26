@@ -45,3 +45,31 @@ def test_empty_rule_is_not_reported_as_passed():
     _, issues, results = _evaluate("R-T99", [], {})
     assert not issues
     assert results[0]["result"] == "SKIPPED"
+
+
+def test_order_failure_points_to_the_original_material_page():
+    nodes = {
+        "T02": {"date": "2026-01-10", "sources": [{"node_code": "T02", "extraction_id": 5,
+            "material_id": 20, "version_id": 30, "page_no": 1, "bbox": [1, 2, 3, 4], "date": "2026-01-10"}]},
+        "T03": {"date": "2026-01-05", "sources": [{"node_code": "T03", "extraction_id": 6,
+            "material_id": 21, "version_id": 31, "page_no": 2, "bbox": [5, 6, 7, 8], "date": "2026-01-05"}]},
+    }
+    _, issues, results = _evaluate("R-T03", [{"op": "before", "a": "T02", "b": "T03", "strict": False}], nodes)
+    assert results[0]["result"] == "FAIL"
+    assert issues[0].material_id == 21 and issues[0].material_version_id == 31
+    assert issues[0].location["node_code"] == "T03"
+    assert issues[0].location["extraction_id"] == 6
+    assert issues[0].location["page_no"] == 2 and issues[0].location["bbox"] == [5, 6, 7, 8]
+    assert len(issues[0].location["related_sources"]) == 2
+
+
+def test_conflict_keeps_all_source_locations():
+    nodes = {"T04": {"date": "2025-01-01", "has_conflict": True, "sources": [
+        {"node_code": "T04", "extraction_id": 7, "material_id": 22, "version_id": 32,
+         "page_no": 3, "bbox": [1, 1, 2, 2], "date": "2025-01-01"},
+        {"node_code": "T04", "extraction_id": 8, "material_id": 23, "version_id": 33,
+         "page_no": 4, "bbox": [3, 3, 4, 4], "date": "2025-02-01"},
+    ]}}
+    _, issues, _ = _evaluate("R-T20", [{"op": "consistent", "nodes": "*"}], nodes)
+    assert issues[0].location["node_code"] == "T04"
+    assert {row["extraction_id"] for row in issues[0].location["related_sources"]} == {7, 8}
