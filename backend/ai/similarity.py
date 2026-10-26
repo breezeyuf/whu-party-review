@@ -1,4 +1,6 @@
 """Server-side batch comparison; other students' text never enters issue output."""
+from hashlib import sha256
+
 from sqlalchemy.orm import aliased
 from models import Archive, Material, MaterialVersion, ParseResult, Submission
 from ai.evidence import effective_text
@@ -28,9 +30,24 @@ def compare_batch(db, submission, material, text, threshold):
     if not own or not submission.batch_id:
         return None
     best, total = 0.0, 0
+    candidates = []
     for _, _, candidate in batch_candidates(db, submission, material):
         if not candidate.strip():
             continue
         total += 1
-        best = max(best, _jaccard(own, _ngrams(candidate)))
-    return {'score': best, 'count': total} if total else None
+        score = _jaccard(own, _ngrams(candidate))
+        best = max(best, score)
+        # Keep the exact comparison scores and text fingerprints in the report,
+        # without disclosing another student's text, name, or material ID.
+        candidates.append({'text_sha256': sha256(candidate.encode('utf-8')).hexdigest(), 'score': score})
+    if not total:
+        return None
+    return {
+        'score': best,
+        'count': total,
+        'comparison': {
+            'algorithm': 'char_3gram_jaccard',
+            'own_text_sha256': sha256(text.encode('utf-8')).hexdigest(),
+            'candidates': sorted(candidates, key=lambda item: (item['text_sha256'], item['score'])),
+        },
+    }

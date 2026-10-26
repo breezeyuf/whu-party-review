@@ -51,6 +51,7 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
         is_llm = (rule.engine or "RULE") == "LLM"
         checked = False
         skipped = False
+        similarity_evidence = []
         applies = rule.applies_to or []
         for m in materials:
             if m.status != "ACTIVE":
@@ -86,6 +87,12 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
                         skipped = True
                         continue
                     compared = compare_batch(db, submission, m, text, threshold)
+                    if compared:
+                        similarity_evidence.append({
+                            'material_id': m.id, 'version_id': ver.id,
+                            'threshold': threshold, 'score': compared['score'], 'count': compared['count'],
+                            **compared['comparison'],
+                        })
                     found = None if compared is None else []
                     if compared and compared['score'] >= threshold:
                         found = [_d(rule, m, ver, f"与同批次其他学生同类材料的最高相似度 {compared['score']:.2f}，请人工核对",
@@ -108,12 +115,17 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
             results.append({"rule_code": rule.code, "engine": "LLM", "result": "SKIPPED",
                             "reason": f"大模型调用失败：{llm_error}", "error": llm_error})
         elif not checked or (skipped and not hit):
-            results.append({"rule_code": rule.code, "engine": rule.engine, "result": "SKIPPED",
-                            "reason": "无适用材料、必要参数或可验证证据"})
+            result = {"rule_code": rule.code, "engine": rule.engine, "result": "SKIPPED",
+                      "reason": "无适用材料、必要参数或可验证证据"}
+            if similarity_evidence:
+                result["comparison_snapshot"] = similarity_evidence
+            results.append(result)
         else:
             result = {"rule_code": rule.code, "result": "FAIL" if hit else "PASS"}
             if is_llm:
                 result["engine"] = "LLM"
+            if similarity_evidence:
+                result["comparison_snapshot"] = similarity_evidence
             results.append(result)
     if llm_error:
         # A RULE_ONLY report must not retain partial semantic findings or claim they passed.
