@@ -126,6 +126,7 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
         cres = []
         skip_all = False
         fail = False
+        required_failed = False
         last_fail = None
         date_failures = []
         date_incomplete = False
@@ -145,9 +146,16 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                     continue
                 if not r.ok:
                     fail = True
+                    required_failed = required_failed or chk.get("op") == "required"
                     last_fail = (r, source, chk)
                     if chk.get("op") == "valid_date" and source is not None:
                         date_failures.append((r, source, chk))
+        # Missing inputs make a composite rule unevaluable. The required-node
+        # rule itself must still report missing mandatory nodes as failures.
+        if skip_all and not required_failed:
+            reason = "缺少真实材料上传日期或日期来源" if date_incomplete else "节点缺失"
+            results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": reason})
+            continue
         if fail:
             msg = (rule.message_template or rule.name)
             for code, n in ctx.nodes.items():

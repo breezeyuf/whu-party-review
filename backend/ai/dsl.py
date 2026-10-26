@@ -288,10 +288,8 @@ def _seq_in_range(ctx: DSLContext, p: dict) -> CheckResult:
     seq = ctx.seq(p.get("seq", "T06[*]"))
     start, m1 = ctx.resolve(p.get("from"))
     end, m2 = ctx.resolve(p.get("to"))
-    if m1 or not seq:
+    if m1 or m2 or not seq:
         return CheckResult(ok=True, skipped=True, reason="节点缺失或无序列")
-    if m2 or not end:
-        end = ctx.today
     bad = [d for d in seq if d < start or d > end]
     ok = not bad
     return CheckResult(ok=ok, actual=f"{len(bad)} 份越界" if bad else "均在区间内",

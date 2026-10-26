@@ -47,6 +47,28 @@ def test_empty_rule_is_not_reported_as_passed():
     assert results[0]["result"] == "SKIPPED"
 
 
+def test_failed_composite_with_missing_operand_is_skipped():
+    checks = [{"op": "before", "a": "T02", "b": "T03"},
+              {"op": "before", "a": "T04", "b": "T08"}]
+    _, issues, results = _evaluate("R-T99", checks, {
+        "T02": {"date": "2026-01-10"}, "T03": {"date": "2026-01-01"}})
+    assert not issues and results[0]["result"] == "SKIPPED"
+
+
+def test_required_nodes_still_report_missing_values():
+    _, issues, results = _evaluate("R-T22", [
+        {"op": "required", "nodes_by_stage": {"4": ["T04"]}},
+        {"op": "before", "a": "T04", "b": "T08"}], {})
+    assert issues and results[0]["result"] == "FAIL"
+
+
+def test_sequence_range_does_not_replace_missing_end_with_today():
+    _, issues, results = _evaluate("R-T23", [
+        {"op": "seq_in_range", "seq": "T06[*]", "from": "T04", "to": "T08"}],
+        {"T04": {"date": "2025-01-01"}, "T06": {"seq": ["2025-02-01"]}})
+    assert not issues and results[0]["result"] == "SKIPPED"
+
+
 def test_order_failure_points_to_the_original_material_page():
     nodes = {
         "T02": {"date": "2026-01-10", "sources": [{"node_code": "T02", "extraction_id": 5,
