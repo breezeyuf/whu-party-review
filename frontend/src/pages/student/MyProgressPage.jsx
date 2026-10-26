@@ -50,11 +50,11 @@ export default function MyProgressPage() {
           <div className="mb-4 flex flex-wrap items-end justify-between gap-2 border-b border-base-200 pb-3">
             <div>
               <h2 className="text-base font-semibold">时间节点</h2>
-              <p className="mt-1 text-xs text-base-content/55">按培养流程展示已识别的时间与来源材料</p>
+              <p className="mt-1 text-xs text-base-content/55">仅展示与党员发展流程相关的关键时间</p>
             </div>
             {visibleNodeCount > 0 && <span className="text-xs text-base-content/50">{visibleNodeCount} 个已识别节点</span>}
           </div>
-          {timelineReq.loading && !timelineReq.data ? <Loading /> : timelineReq.error ? <ErrorState error={timelineReq.error} onRetry={() => timelineReq.reload().catch(() => {})} /> : <TimelineView timeline={timelineReq.data} hidePersonalInfo />}
+          {timelineReq.loading && !timelineReq.data ? <Loading /> : timelineReq.error ? <ErrorState error={timelineReq.error} onRetry={() => timelineReq.reload().catch(() => {})} /> : <TimelineView timeline={timelineReq.data} hidePersonalInfo hideSources compact />}
         </section>
         <section className="surface-card min-w-0 p-4 sm:col-span-2 sm:p-5">
           <h2 className="mb-3 border-b border-base-200 pb-3 text-base font-semibold">审核轨迹</h2>

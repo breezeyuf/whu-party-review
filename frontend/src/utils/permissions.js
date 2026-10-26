@@ -37,8 +37,8 @@ export function can(active, key) {
   return (map[key] || []).includes(r)
 }
 
-function item(to, label) {
-  return { to, label }
+function item(to, label, activePaths) {
+  return { to, label, ...(activePaths ? { activePaths } : {}) }
 }
 
 export function menusFor(active) {
@@ -47,61 +47,56 @@ export function menusFor(active) {
     return [{
       group: "我的",
       items: [
-        item("/", "工作台"),
-        item("/my/progress", "发展进度"),
+        item("/", "我的办理事项"),
+        item("/my/progress", "我的发展进度"),
         item("/my/materials", "我的材料"),
         item("/my/rectification", "整改中心"),
-        item("/messages", "消息"),
+        item("/messages", "消息中心"),
       ],
     }]
   }
   const groups = []
   const adminIdentity = ["SYS_ADMIN", "ORG_ADMIN"].includes(r)
-  const work = [item("/", "工作台")]
+  const work = [item("/", adminIdentity ? "管理工作台" : "审核工作台")]
   if (!adminIdentity && can(active, "review")) work.push(item("/review/tasks", "审核待办"))
   if (!adminIdentity && can(active, "archives")) work.push(item("/archives", "发展档案"))
-  work.push(item("/messages", "消息"))
-  groups.push({ group: adminIdentity ? "工作台" : "日常办理", items: work })
+  work.push(item("/messages", "消息中心"))
+  groups.push({ group: adminIdentity ? "工作概览" : "日常办理", items: work })
 
   const tools = []
   if (adminIdentity && can(active, "review")) tools.push(item("/review/tasks", "备案待办"))
   if (adminIdentity && can(active, "archives")) tools.push(item("/archives", "发展档案"))
-  if (can(active, "batchUpload")) tools.push(item("/materials/batch-upload", "批量上传"))
-  if (can(active, "notices")) tools.push(item("/notices", "通知与补全"))
-  if (can(active, "cross")) tools.push(item("/cross-review", "交叉互查配置"))
-  if (can(active, "jobs")) tools.push(item("/tasks/jobs", "任务进度"))
-  if (tools.length) groups.push({ group: "更多业务", collapsible: true, items: tools })
+  if (can(active, "batchUpload")) tools.push(item("/materials/batch-upload", "批量材料导入"))
+  if (can(active, "notices")) tools.push(item("/notices", "通知与补件"))
+  if (can(active, "cross")) tools.push(item("/cross-review", "交叉互查安排"))
+  if (can(active, "jobs")) tools.push(item("/tasks/jobs", "后台任务进度"))
+  if (tools.length) groups.push({ group: "审核与档案", collapsible: true, items: tools })
 
   if (can(active, "rulesRead")) {
     groups.push({
-      group: "规则库",
+      group: "材料与审核标准",
       collapsible: true,
       items: [
-        item("/rules/checklists", "材料清单"),
-        item("/rules/material-types", "材料类型"),
-        item("/rules/time-rules", "时间规则"),
-        item("/rules/check-rules", "形式与内容规则"),
-        item("/rules/terms", "术语库"),
-        item("/rules/sensitive", "敏感表述"),
-        item("/rules/suggestions", "修改建议模板"),
-        item("/rules/versions", "规则版本"),
+        item("/rules/checklists", "材料标准", ["/rules/checklists", "/rules/material-types"]),
+        item("/rules/time-rules", "审核规则", ["/rules/time-rules", "/rules/check-rules", "/rules/terms", "/rules/sensitive"]),
+        item("/rules/suggestions", "规则治理", ["/rules/suggestions", "/rules/versions"]),
       ],
     })
   }
   if (can(active, "stats")) {
     const stats = [
       item("/stats/overview", "审核统计"),
-      item("/stats/ai-quality", "AI 效能"),
+      item("/stats/ai-quality", "AI审核成效"),
     ]
-    if (can(active, "export")) stats.push(item("/stats/export", "数据导出"))
-    groups.push({ group: "统计", collapsible: true, items: stats })
+    if (can(active, "export")) stats.push(item("/stats/export", "报表导出"))
+    groups.push({ group: "数据与成效", collapsible: true, items: stats })
   }
   const admin = []
   if (can(active, "batches")) admin.push(item("/admin/batches", "发展批次"))
   if (can(active, "orgs")) admin.push(item("/admin/orgs", "组织架构"))
   if (can(active, "users")) admin.push(item("/admin/users", "用户管理"))
   if (can(active, "settings")) admin.push(item("/admin/settings", "系统配置"))
-  if (can(active, "audit")) admin.push(item("/admin/audit-logs", "审计日志"))
-  if (admin.length) groups.push({ group: "管理", collapsible: !adminIdentity, items: admin })
+  if (can(active, "audit")) admin.push(item("/admin/audit-logs", "操作日志"))
+  if (admin.length) groups.push({ group: "组织与系统管理", collapsible: true, defaultExpanded: true, items: admin })
   return groups
 }

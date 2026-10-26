@@ -104,7 +104,7 @@ export default function RuleVersionsPage() {
 
   return (
     <div>
-      <PageHeader title="规则版本" />
+      <PageHeader title="规则版本与发布" />
       <div className="alert mb-3 items-start border border-base-300 bg-base-100 text-sm">
         <div>
           <p className="font-medium">这里记录“审核规则什么时候、改了什么”。</p>

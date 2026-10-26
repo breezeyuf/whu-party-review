@@ -86,6 +86,6 @@ export default function CompleteSettingsPage() {
       {messages[key] && <p role="status" className={`mt-2 text-xs ${messages[key].error ? "text-error" : "text-success"}`}>{messages[key].text}</p>}
     </details>)}
     <section className="surface-card space-y-3 p-4"><h2 className="text-sm font-medium">演示数据</h2><p className="text-xs">生成独立标记的虚构组织、账号和材料。</p><div className="flex gap-2"><button type="button" className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => seed(false)}>初始化</button><button type="button" className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => setReset(true)}>清理并重建</button></div>{messages.demo && <p role="status" className={messages.demo.error ? "text-error" : "text-success"}>{messages.demo.text}</p>}</section>
-    <ConfirmDialog open={reset} danger title="重建演示数据" message="仅删除并重建标记为演示的数据，操作不可撤销。确认继续？" onClose={() => setReset(false)} onConfirm={() => seed(true)} />
+    <ConfirmDialog open={reset} danger title="重建演示数据" confirmText="确认重建" busy={!!busy} message="仅删除并重建标记为演示的数据，真实账号和真实材料不会被清理。操作不可撤销，确认继续？" onClose={() => setReset(false)} onConfirm={() => seed(true)} />
   </div>
 }

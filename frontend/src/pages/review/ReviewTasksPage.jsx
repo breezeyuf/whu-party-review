@@ -76,7 +76,7 @@ export default function ReviewTasksPage() {
   const level = LEVEL_OF[activeRole?.role] || "BRANCH"
   const filtered = FILTER_KEYS.some((key) => query[key] != null && query[key] !== "")
   // 重置同时清除筛选栏未显示、但可能来自链接的条件（如 batch_id）
-  const reset = () => setQuery({ ...Object.fromEntries(FILTER_KEYS.map((key) => [key, ""])), todo: "true", sort: "-submitted_at", page_size: 20 })
+  const reset = () => setQuery({ ...Object.fromEntries(FILTER_KEYS.map((key) => [key, ""])), todo: "true", sort: "-submitted_at" })
   const loadError = req.error ? { ...req.error, message: reviewQueryErrorText(req.error) } : null
   const empty = filtered
     ? { title: "没有符合筛选条件的提交包", hint: "可以放宽或清除筛选条件后再查看。", action: <button type="button" className="btn btn-outline btn-sm" onClick={reset}>清除筛选条件</button> }
@@ -122,7 +122,7 @@ export default function ReviewTasksPage() {
   return (
     <div>
       <PageHeader
-        title="审核待办"
+        title={level === "ORG" ? "备案待办" : "审核待办"}
         extra={(
           <>
             <button type="button" className="btn btn-outline btn-sm" aria-pressed={batchMode} disabled={busy} onClick={() => { setBatchMode((value) => !value); setSelected([]) }}>{batchMode ? "退出批量处理" : "批量处理"}</button>
@@ -185,12 +185,12 @@ export default function ReviewTasksPage() {
               </div>
             ) },
             { key: "stage", title: "阶段", render: (r) => r.stage_name || (meta.stages || []).find((s) => s.code === r.stage_code)?.name },
-            { key: "status", title: "状态", render: (r) => <StatusBadge code={r.status} /> },
+            { key: "status", title: "状态", render: (r) => <StatusBadge code={r.status} soft /> },
             { key: "ai", title: "需要关注", sortKey: "issue_count", render: (r) => (
               <div className="flex flex-col gap-1">
                 {["QUEUED", "RUNNING", "FAILED"].includes(r.ai_status) && <span className={`text-xs ${r.ai_status === "FAILED" ? "text-error" : "text-warning"}`}>{({ QUEUED: "检查排队中", RUNNING: "检查运行中", FAILED: "检查失败" })[r.ai_status]}</span>}
-                <RecoBadge code={r.effective_recommendation || r.recommendation} />
-                {r.handover_status === "REQUIRED" && <HandoverBadge code={r.handover_status} />}
+                <RecoBadge code={r.effective_recommendation || r.recommendation} soft />
+                {r.handover_status === "REQUIRED" && <HandoverBadge code={r.handover_status} soft />}
                 <span className="text-xs text-base-content/65">{issueCountsText(r.issue_counts)}</span>
               </div>
             ) },
@@ -199,7 +199,7 @@ export default function ReviewTasksPage() {
           ]}
         />
         </fieldset>
-        {!req.error && <div className="px-2 pb-2"><Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} /></div>}
+        {!req.error && <div className="px-2 pb-2"><Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>}
       </div>
       {confirmBatchPass && <Suspense fallback={null}><ConfirmDialog
         open={confirmBatchPass}

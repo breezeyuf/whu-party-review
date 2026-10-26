@@ -1,5 +1,5 @@
 export const USER_ROLES = ["STUDENT", "BRANCH_REVIEWER", "CROSS_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN", "SYS_ADMIN"]
-export const DEADLINES = [["self_deadline", "学生自查截止"], ["branch_deadline", "支部审核截止"], ["cross_deadline", "交叉互查截止"], ["college_deadline", "学院复审截止"], ["org_deadline", "组织部备案截止"]]
+export const DEADLINES = [["self_deadline", "学生自查截止"], ["branch_deadline", "支部初审截止"], ["cross_deadline", "交叉互查截止"], ["college_deadline", "学院复审截止"], ["org_deadline", "组织部备案截止"]]
 
 export function validDate(value) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value

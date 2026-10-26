@@ -13,7 +13,7 @@ import { useToast } from "../../context/ToastContext"
 const EMPTY = { name: "", year: new Date().getFullYear(), term: "FULL_YEAR", stage_codes: "1,2,3,4,5", start_date: "", end_date: "", status: "ACTIVE", description: "" }
 export default function BatchesPage() {
   const toast = useToast()
-  const { query, setPage } = usePagination()
+  const { query, setPage, setQuery } = usePagination()
   const req = useRequest(() => listBatches(query), [JSON.stringify(query)])
   const [edit, setEdit] = useState(null)
   const [removeId, setRemoveId] = useState(null)
@@ -35,9 +35,8 @@ export default function BatchesPage() {
   }
   return <div>
     <PageHeader title="发展批次" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => { setError(""); setEdit({ ...EMPTY }) }}>新建批次</button>} />
-    {req.error && <ErrorState error={req.error} onRetry={req.reload} />}
-    <div className="surface-card p-2"><DataTable loading={req.loading} rows={req.data?.items || []} columns={[
-      { key: "name", title: "名称", render: (r) => r.name },
+    <div className="surface-card p-2"><DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="还没有发展批次" emptyHint="点击右上角“新建批次”开始配置。" columns={[
+      { key: "name", title: "名称", render: (r) => <>{r.name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</> },
       { key: "year", title: "年度", render: (r) => r.year },
       { key: "span", title: "起止", render: (r) => `${fmtDate(r.start_date)} ~ ${fmtDate(r.end_date)}` },
       { key: "n", title: "档案", render: (r) => r.archive_count ?? "—" },
@@ -45,14 +44,15 @@ export default function BatchesPage() {
       { key: "actions", title: "操作", render: (r) => <div className="flex flex-wrap gap-1">
         <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setError(""); setEdit({ ...r, stage_codes: (r.stage_codes || []).join(",") }) }}>编辑</button>
         {r.status !== "CLOSED" && <button type="button" className="btn btn-ghost btn-xs" onClick={() => setCloseTarget(r)}>关闭批次</button>}
-        <button type="button" className="btn btn-ghost btn-xs text-error" onClick={() => setRemoveId(r.id)}>删除</button>
+        <button type="button" className="btn btn-ghost btn-xs text-error" disabled={Number(r.archive_count) > 0} title={Number(r.archive_count) > 0 ? "已有档案，请关闭批次" : "删除批次"} onClick={() => setRemoveId(r.id)}>删除</button>
       </div> },
-    ]} /><Pager page={req.data?.page} total={req.data?.total} pageSize={req.data?.page_size} onPage={setPage} /></div>
+    ]} />{!req.error && <Pager page={req.data?.page} total={req.data?.total} pageSize={req.data?.page_size} onPage={setPage} onPageSize={page_size => setQuery({page_size})} />}</div>
     <Modal open={!!edit} wide title={edit?.id ? "编辑批次" : "新建批次"} onClose={() => { if (!busy) setEdit(null) }} footer={<><button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setEdit(null)}>取消</button><button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? "保存中…" : "保存"}</button></>}>
       {edit && <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
         {[["name", "批次名称", "text"], ["year", "年度", "number"], ["start_date", "开始日期", "date"], ["end_date", "结束日期", "date"], ...DEADLINES.map(([key,label]) => [key,label,"date"]), ["stage_codes", "阶段编码（1 至 5，逗号分隔）", "text"]].map(([key,label,type]) => <label key={key} className="form-control text-xs">{label}<input aria-label={label} className="input input-bordered input-sm mt-1" type={type} value={type === "date" ? String(edit[key] || "").slice(0,10) : edit[key] ?? ""} onChange={(e) => set(key,e.target.value)} /></label>)}
         <label className="form-control text-xs">学期<select aria-label="批次学期" className="select select-bordered select-sm mt-1" value={edit.term} onChange={(e) => set("term",e.target.value)}><option value="FULL_YEAR">全年</option><option value="SPRING">春季</option><option value="AUTUMN">秋季</option>{!["FULL_YEAR","SPRING","AUTUMN"].includes(edit.term) && <option value={edit.term}>{edit.term}</option>}</select></label>
         {edit.id && <label className="form-control text-xs">状态<select aria-label="批次状态" className="select select-bordered select-sm mt-1" value={edit.status} onChange={(e) => set("status",e.target.value)}><option value="ACTIVE">进行中</option><option value="CLOSED">已关闭</option></select></label>}
+        {!edit.id && <p className="text-xs sm:col-span-2">新建批次默认状态为“进行中”，已有档案时可关闭批次并保留记录。</p>}
         <label className="form-control text-xs sm:col-span-2">说明<textarea aria-label="批次说明" className="textarea textarea-bordered mt-1 text-sm" value={edit.description || ""} onChange={(e) => set("description",e.target.value)} /></label>
       </fieldset>}
       {error && <p role="alert" className="mt-2 text-xs text-error">{error}</p>}

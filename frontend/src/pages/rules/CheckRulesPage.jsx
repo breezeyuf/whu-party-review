@@ -42,10 +42,12 @@ export default function CheckRulesPage() {
 
   return (
     <div>
-      <PageHeader title="形式与内容规则" extra={writable && <button type="button" className="btn btn-primary btn-sm" onClick={() => open(null)}>新增</button>} />
-      <div className="mb-3 flex gap-2">
+      <PageHeader title="形式与内容规则" extra={writable && <button type="button" className="btn btn-primary btn-sm" onClick={() => open(null)}>新增</button>}>
+        配置材料格式、内容要素与审核提示；需人工判断的规则会标记给审核员复核。
+      </PageHeader>
+      <div role="tablist" aria-label="规则类别" className="tabs tabs-bordered mb-3">
         {[["FORMAT", "形式规范"], ["CONTENT", "内容规范"]].map(([k, label]) => (
-          <button key={k} type="button" className={`btn btn-sm ${cat === k ? "btn-primary" : "btn-ghost"}`} onClick={() => setCat(k)}>{label}</button>
+          <button key={k} type="button" role="tab" aria-selected={cat === k} className={`tab whitespace-nowrap ${cat === k ? "tab-active" : ""}`} onClick={() => setCat(k)}>{label}</button>
         ))}
       </div>
       <div className="surface-card p-2">

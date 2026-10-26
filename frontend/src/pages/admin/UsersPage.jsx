@@ -29,7 +29,7 @@ export default function UsersPage() {
   const { activeRole } = useAuth()
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listUsers(query), [JSON.stringify(query)])
-  const batches = useRequest(() => listBatches({ page_size: 20 }), [])
+  const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const orgs = useRequest(() => listOrgs({ flat: true }), [])
   const [edit, setEdit] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -303,11 +303,11 @@ export default function UsersPage() {
           { key: "name", title: "用户", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },
           { key: "org", title: "组织", render: (r) => r.org_name },
           { key: "roles", title: "角色", render: (r) => <span className="text-xs">{(r.roles || []).map((x) => roleName(meta, x.role || x)).join("、")}</span> },
-          { key: "st", title: "状态", render: (r) => r.is_active === false
-            ? <span className="badge badge-error badge-outline badge-sm">已停用</span>
+          { key: "st", title: "状态", className: "min-w-[6.5rem] whitespace-nowrap", render: (r) => r.is_active === false
+            ? <span className="badge badge-error badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap">已停用</span>
             : r.locked_until
-              ? <span className="badge badge-warning badge-outline badge-sm" title={`锁定至 ${fmtDateTime(r.locked_until)}`}>登录锁定</span>
-              : <span className="badge badge-success badge-outline badge-sm">正常</span> },
+              ? <span className="badge badge-warning badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap" title={`锁定至 ${fmtDateTime(r.locked_until)}`}>登录锁定</span>
+              : <span className="badge badge-success badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap">正常</span> },
           { key: "login", title: "最近登录", render: (r) => <span className="text-xs">{fmtDateTime(r.last_login_at)}</span> },
           { key: "op", title: "", render: (r) => (
             <>

@@ -29,7 +29,7 @@ export default function ArchiveListPage() {
   const canCreate = canManageArchive(activeRole)
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listArchives(query), [JSON.stringify(query)])
-  const batches = useRequest(() => listBatches({ page_size: 50 }), [])
+  const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const orgs = useRequest(() => listOrgs({ flat: true }), [], { immediate: canCreate })
   const branches = availableBranches(orgs.data || [], activeRole)
   const [open, setOpen] = useState(false)
@@ -106,14 +106,14 @@ export default function ArchiveListPage() {
             ) },
             { key: "org", title: "组织", render: (r) => <span className="text-xs">{r.college_name}<br />{r.branch_name}</span> },
             { key: "stage", title: "阶段", render: (r) => r.stage_name || stageShort(meta, r.current_stage) },
-            { key: "sub", title: "当前提交", render: (r) => r.submission ? (
-              <Link className="link" to={`/review/submissions/${r.submission.id}`}><StatusBadge code={r.submission.status} /></Link>
+            { key: "sub", title: "当前提交", className: "min-w-[8rem] whitespace-nowrap", render: (r) => r.submission ? (
+              <Link className="link inline-flex max-w-full no-underline hover:no-underline" to={`/review/submissions/${r.submission.id}`}><StatusBadge code={r.submission.status} soft /></Link>
             ) : "—" },
-            { key: "ai", title: "AI", render: (r) => <RecoBadge code={r.submission?.recommendation} /> },
+            { key: "ai", title: "AI", className: "min-w-[7rem] whitespace-nowrap", render: (r) => <RecoBadge code={r.submission?.recommendation} soft /> },
             { key: "issues", title: "问题", render: (r) => <span className="text-xs">{issueCountsText(r.submission?.issue_counts)}</span> },
           ]}
         />
-        <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} /></div>
+        <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>
       </div>
       )}
       <Modal open={open} title="新建发展档案" onClose={close} footer={

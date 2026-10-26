@@ -32,8 +32,9 @@ test("学生无任何管理或审核菜单，管理员无学生专属页面权�
 
 test("管理员直接看到管理菜单，组织管理员保留备案与档案权限", () => {
   for (const role of ["SYS_ADMIN", "ORG_ADMIN"]) {
-    const admin = menusFor({ role }).find((group) => group.group === "管理")
-    assert.equal(admin.collapsible, false)
+    const admin = menusFor({ role }).find((group) => group.group === "组织与系统管理")
+    assert.equal(admin.collapsible, true)
+    assert.equal(admin.defaultExpanded, true)
     assert.ok(admin.items.some((item) => item.to === "/admin/users"))
   }
   assert.equal(can({ role: "ORG_ADMIN" }, "review"), true)

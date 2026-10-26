@@ -7,6 +7,10 @@ import { AuthProvider } from "../src/context/AuthContext"
 import { ToastProvider } from "../src/context/ToastContext"
 import ArchiveListPage from "../src/pages/archive/ArchiveListPage"
 import UsersPage from "../src/pages/admin/UsersPage"
+import SettingsPage from "../src/pages/admin/SettingsPage"
+import BatchesPage from "../src/pages/admin/BatchesPage"
+import ExportPage from "../src/pages/stats/ExportPage"
+import NoticesPage from "../src/pages/notice/NoticesPage"
 import ArchiveDetailPage from "../src/pages/archive/ArchiveDetailPage"
 import SelfCheckPage from "../src/pages/student/SelfCheckPage"
 import RectificationPage from "../src/pages/student/RectificationPage"
@@ -25,6 +29,7 @@ import IssueResponseForm from "../src/components/student/IssueResponseForm"
 import ReviewJobStatus from "../src/components/review/ReviewJobStatus"
 import { StudentDashboard, ReviewerDashboard } from "../src/pages/dashboard/Dashboards"
 import AppLayout from "../src/components/layout/AppLayout"
+import RuleSectionLayout from "../src/components/rules/RuleSectionLayout"
 import FilterBar from "../src/components/common/FilterBar"
 import ReviewTasksPage from "../src/pages/review/ReviewTasksPage"
 import CrossReviewConfigPage from "../src/pages/review/CrossReviewConfigPage"
@@ -35,11 +40,9 @@ import { lazyWithRetry } from "../src/utils/lazyLoad"
 import { pages as shellPages } from "../src/components/layout/shellModule"
 import { shellPageNames } from "../src/components/layout/lazyShell"
 import "../src/routes"
-import BatchesPage from "../src/pages/admin/BatchesPage"
 import CompleteSettingsPage from "../src/pages/admin/CompleteSettingsPage"
 import RuleVersionsPage from "../src/pages/rules/RuleVersionsPage"
 import TimelineView from "../src/components/archive/TimelineView"
-import ExportPage from "../src/pages/stats/ExportPage"
 
 const wait = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms))
 const flush = () => act(async () => { await wait(); await wait() })
@@ -368,6 +371,168 @@ export async function runUiScenarios() {
     assert.equal([...reviewerB.options].some((option) => option.value === "11" && option.disabled), true)
   })
 
+  await test("交叉互查配对加载失败时阻止保存，避免空配置覆盖原安排", async () => {
+    await mount(<CrossReviewConfigPage />, {
+      path: "/cross-review",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => {
+        if (config.url === "/batches") return { items: [{ id: 1, name: "测试批次" }] }
+        if (config.url === "/orgs") return [
+          { id: 2, name: "测试学院", org_type: "COLLEGE", parent_id: 1 },
+          { id: 3, name: "测试支部甲", org_type: "BRANCH", parent_id: 2 },
+          { id: 4, name: "测试支部乙", org_type: "BRANCH", parent_id: 2 },
+        ]
+        if (config.url === "/batches/1/cross-review-pairs") throw new Error("当前配对读取失败")
+        if (config.url === "/users") return { items: [] }
+        return undefined
+      },
+    })
+    assert.match(text(), /当前不会保存空配置/)
+    assert.equal(button("保存配对").disabled, true)
+    assert.equal(requests.some((request) => request.url === "/batches/1/cross-review-pairs" && request.method === "put"), false)
+  })
+
+  await test("系统配置保存真实上传限制字段并要求确认重建演示数据", async () => {
+    await mount(<SettingsPage />, {
+      path: "/admin/settings",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => {
+        if (config.url === "/settings" && config.method === "get") return {
+          ai: { base_url: "", model: "", timeout_s: 30, max_concurrency: 1, llm_enabled: false, desensitize: true },
+          ocr: { engine: "", available_engines: [] },
+          upload: { max_file_mb: 20, max_zip_mb: 500, allowed_ext: ["pdf"] },
+          retention: { material_years: 10, export_days: 7 },
+          calendar: { period_min_tail_days: 30, holidays: ["2026-10-01"], extra_workdays: ["2026-10-10"] },
+        }
+        if (config.url === "/settings" && config.method === "put") return {}
+        if (config.url === "/admin/seed-demo") return { orgs: 9, users: 20, archives: 24, materials: 48 }
+        return undefined
+      },
+    })
+    await click(button("保存上传限制"))
+    const saved = JSON.parse(requests.find((request) => request.url === "/settings" && request.method === "put").data)
+    assert.equal(saved.upload.max_file_mb, 20)
+    assert.equal(saved.upload.max_zip_mb, 500)
+    assert.equal("max_mb" in saved.upload, false)
+    await click(button("保存保留期限"))
+    const retentionSave = JSON.parse(requests.filter((request) => request.url === "/settings" && request.method === "put").at(-1).data)
+    assert.equal(retentionSave.retention.export_days, 7)
+    await click(button("保存日历"))
+    const calendarSave = JSON.parse(requests.filter((request) => request.url === "/settings" && request.method === "put").at(-1).data)
+    assert.deepEqual(calendarSave.calendar.holidays, ["2026-10-01"])
+    assert.deepEqual(calendarSave.calendar.extra_workdays, ["2026-10-10"])
+    assert.equal("holidays_text" in calendarSave.calendar, false)
+    await click(button("清理并重建"))
+    assert.match(text(), /真实账号和真实材料不会被清理/)
+    assert.equal(requests.some((request) => request.url === "/admin/seed-demo"), false)
+    await click(button("确认重建"))
+    const seedBody = JSON.parse(requests.find((request) => request.url === "/admin/seed-demo").data)
+    assert.equal(seedBody.reset, true)
+  })
+
+  await test("批次管理可见全部五级截止时间与状态，空名称不能提交", async () => {
+    await mount(<BatchesPage />, {
+      path: "/admin/batches",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => config.url === "/batches" ? { items: [], total: 0, page: 1, page_size: 20 } : undefined,
+    })
+    await click(button("新建批次"))
+    for (const label of ["学生自查截止", "支部初审截止", "交叉互查截止", "学院复审截止", "组织部备案截止"]) assert.match(text(), new RegExp(label))
+    assert.match(text(), /新建批次默认状态为“进行中”/)
+    await click(button("保存"))
+    assert.match(text(), /请填写批次名称/)
+    assert.equal(requests.some((request) => request.url === "/batches" && request.method === "post"), false)
+  })
+
+  await test("报表导出使用批次和阶段选项，倒置日期不发起任务", async () => {
+    await mount(<ExportPage />, {
+      path: "/stats/export",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => config.url === "/batches" ? { items: [{ id: 7, name: "2026 春季批次", year: 2026 }] } : undefined,
+    })
+    assert.match(text(), /2026 春季批次/)
+    assert.match(text(), /确定入党积极分子/)
+    const dates = ["开始日期", "结束日期"].map(name => [...document.querySelectorAll("label")].find(label => label.textContent.startsWith(name)).querySelector("input"))
+    await input(dates[0], "2026-10-20")
+    await input(dates[1], "2026-10-01")
+    await click(button("生成 Excel"))
+    assert.match(text(), /结束日期不能早于开始日期/)
+    assert.equal(requests.some((request) => request.url === "/stats/export"), false)
+  })
+
+  await test("报表导出任务失败重试后重新轮询状态", async () => {
+    let jobReads = 0
+    await mount(<ExportPage />, {
+      path: "/stats/export",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => {
+        if (config.url === "/batches") return { items: [] }
+        if (config.url === "/stats/export") return { job_id: 88 }
+        if (config.url === "/jobs/88") {
+          jobReads += 1
+          return jobReads === 1
+            ? { id: 88, job_type: "EXPORT", status: "FAILED", error: "导出失败" }
+            : { id: 88, job_type: "EXPORT", status: "RUNNING", total: 1, done_count: 0 }
+        }
+        if (config.url === "/jobs/88/retry") return {}
+        return undefined
+      },
+    })
+    await click(button("生成 Excel"))
+    assert.match(text(), /导出失败/)
+    await click(button("重试"))
+    assert.ok(requests.some((request) => request.url === "/jobs/88/retry"))
+    assert.ok(jobReads >= 2)
+    assert.match(text(), /数据导出 · 运行中/)
+  })
+
+  await test("通知补全去重提交包编号并在成功后清空旧表单", async () => {
+    await mount(<NoticesPage />, {
+      path: "/notices",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => {
+        if (config.url === "/notices") return { items: [], total: 0, page: 1, page_size: 20 }
+        if (config.url === "/submissions/completion-notices") return { created: [{ id: 1 }, { id: 2 }], skipped: [] }
+        return undefined
+      },
+    })
+    await click(button("批量补全提示"))
+    await input(document.querySelector(".modal input"), "10, 10, 11")
+    await click(button("生成并推送"))
+    const body = JSON.parse(requests.find((request) => request.url === "/submissions/completion-notices").data)
+    assert.deepEqual(body.submission_ids, [10, 11])
+    await click(button("批量补全提示"))
+    assert.equal(document.querySelector(".modal input").value, "")
+  })
+
+  await test("通知列表校验提交包 ID，非法输入不发送查询", async () => {
+    await mount(<NoticesPage />, {
+      path: "/notices",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => config.url === "/notices" ? { items: [], total: 0, page: 1, page_size: 20 } : undefined,
+    })
+    const submissionIdInput = [...document.querySelectorAll("label")]
+      .find((node) => node.textContent.includes("提交包 ID"))?.querySelector("input")
+    await input(submissionIdInput, "abc")
+    assert.match(text(), /提交包 ID 只能填写正整数/)
+    assert.equal(requests.filter((request) => request.url === "/notices").length, 1)
+
+    await input(submissionIdInput, "123")
+    const noticeRequests = requests.filter((request) => request.url === "/notices")
+    assert.equal(noticeRequests.length, 2)
+    assert.equal(noticeRequests[1].params.submission_id, "123")
+    assert.doesNotMatch(text(), /提交包 ID 只能填写正整数/)
+
+    await mount(<NoticesPage />, {
+      path: "/notices?submission_id=abc",
+      roleCode: "ORG_ADMIN",
+      handler: (config) => config.url === "/notices" ? { items: [], total: 0, page: 1, page_size: 20 } : undefined,
+    })
+    assert.match(text(), /提交包 ID 只能填写正整数/)
+    assert.equal(requests.filter((request) => request.url === "/notices").length, 1)
+    assert.equal(requests.find((request) => request.url === "/notices").params.submission_id, undefined)
+  })
+
   await test("档案列表缺少阶段名时正常显示，互查角色无新建按钮", async () => {
     await mount(<ArchiveListPage />, { path: "/archives", roleCode: "CROSS_REVIEWER" })
     assert.match(text(), /测试学生/)
@@ -573,15 +738,29 @@ export async function runUiScenarios() {
     await mount(<AppLayout><ReviewerDashboard data={{ todo: { to_review: 1 } }} /></AppLayout>, { roleCode: "BRANCH_REVIEWER" })
     const visibleLinks = () => [...document.querySelectorAll('nav[aria-label="主要导航"] a')].filter((link) => !link.closest("ul[hidden]"))
     assert.equal(visibleLinks().length, 4)
-    await click(button("规则库"))
-    assert.equal(visibleLinks().length, 12)
-    assert.equal(button("规则库").getAttribute("aria-expanded"), "true")
+    await click(button("材料与审核标准"))
+    assert.equal(visibleLinks().length, 7)
+    assert.equal(button("材料与审核标准").getAttribute("aria-expanded"), "true")
   })
 
   await test("访问低频功能时对应菜单自动展开", async () => {
-    await mount(<AppLayout><p>时间规则</p></AppLayout>, { path: "/rules/time-rules", roleCode: "BRANCH_REVIEWER" })
-    assert.equal(button("规则库").getAttribute("aria-expanded"), "true")
-    assert.equal(document.querySelector('a[href="/rules/time-rules"]').closest("ul").hidden, false)
+    await mount(<AppLayout><p>材料类型内容</p></AppLayout>, { path: "/rules/material-types", roleCode: "BRANCH_REVIEWER" })
+    assert.equal(button("材料与审核标准").getAttribute("aria-expanded"), "true")
+    assert.equal(document.querySelector('a[href="/rules/checklists"]').closest("ul").hidden, false)
+    assert.equal(document.querySelector('a[href="/rules/checklists"]').getAttribute("aria-current"), "page")
+  })
+
+  await test("相近规则页面通过同一栏目内的标签快速切换", async () => {
+    const routes = [{ element: <RuleSectionLayout />, children: [
+      { path: "/rules/checklists", element: <p>阶段清单内容</p> },
+      { path: "/rules/material-types", element: <p>材料类型内容</p> },
+    ] }]
+    await mount(null, { path: "/rules/checklists", routes })
+    assert.match(text(), /材料标准材料清单材料类型与模板阶段清单内容/)
+    await click(document.querySelector('a[href="/rules/material-types"]'))
+    assert.equal(router.state.location.pathname, "/rules/material-types")
+    assert.match(text(), /材料类型内容/)
+    assert.equal(document.querySelector('a[aria-current="page"]').getAttribute("href"), "/rules/material-types")
   })
 
   await test("学生首页主入口会随退回状态指向整改", async () => {
@@ -859,7 +1038,7 @@ export async function runUiScenarios() {
   })
 
   await test("外壳内的页面都已登记在外壳块的导入清单中", async () => {
-    assert.equal(shellPageNames.size, 32)
+    assert.equal(shellPageNames.size, 33)
     for (const name of shellPageNames) assert.equal(typeof shellPages[name], "function", name)
   })
 

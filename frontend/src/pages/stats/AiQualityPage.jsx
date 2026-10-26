@@ -22,7 +22,7 @@ export default function AiQualityPage() {
 
   return (
     <div>
-      <PageHeader title="AI 效能评估">
+      <PageHeader title="AI审核成效">
         人工确认率、误报率与人工新增问题，用来衡量减负效果。数字来自审核员对 AI 问题的处置，不是预设目标。
       </PageHeader>
       <StatsFilters value={filters} onChange={setFilters} />

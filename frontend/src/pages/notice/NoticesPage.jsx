@@ -14,18 +14,42 @@ import { completionNotices } from "../../api/reports"
 import { fmtDate } from "../../utils/format"
 import { useToast } from "../../context/ToastContext"
 
+const isPositiveIntegerId = (value) => /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) > 0
+
 export default function NoticesPage() {
   const toast = useToast()
   const [sp] = useSearchParams()
   const { query, setQuery, setPage } = usePagination()
-  const req = useRequest(() => listNotices(query), [JSON.stringify(query)])
+  const querySubmissionId = String(query.submission_id ?? "")
+  const querySubmissionIdValid = !querySubmissionId || isPositiveIntegerId(querySubmissionId)
+  const requestQuery = querySubmissionIdValid
+    ? query
+    : Object.fromEntries(Object.entries(query).filter(([key]) => key !== "submission_id"))
+  const req = useRequest(() => listNotices(requestQuery), [JSON.stringify(requestQuery)])
   const [current, setCurrent] = useState(null)
   // 单条通知的读取状态：失败时在预览区提示并可重试
   const [noticeState, setNoticeState] = useState({ id: null, loading: false, error: null })
   const sequence = useRef(0)
   const [open, setOpen] = useState(false)
   const [ids, setIds] = useState("")
+  const [submissionIdDraft, setSubmissionIdDraft] = useState(querySubmissionId)
   const [deadline, setDeadline] = useState("")
+  const [generating, setGenerating] = useState(false)
+  const [sendingId, setSendingId] = useState(null)
+  const submissionIdInvalid = submissionIdDraft !== "" && !isPositiveIntegerId(submissionIdDraft)
+
+  useEffect(() => {
+    setSubmissionIdDraft(querySubmissionId)
+  }, [querySubmissionId])
+
+  const updateFilters = (patch) => {
+    if (Object.hasOwn(patch, "submission_id")) {
+      const value = String(patch.submission_id ?? "")
+      setSubmissionIdDraft(value)
+      if (value && !isPositiveIntegerId(value)) return
+    }
+    setQuery(patch)
+  }
 
   const openOne = async (noticeId) => {
     const request = ++sequence.current
@@ -47,24 +71,39 @@ export default function NoticesPage() {
   }, [sp])
 
   const generate = async () => {
-    const submission_ids = ids.split(/[,，\s]+/).map((x) => Number(x)).filter(Boolean)
+    if (generating) return
+    const rawIds = ids.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean)
+    const submission_ids = [...new Set(rawIds.map(Number))]
+    if (rawIds.some((value) => !/^\d+$/.test(value) || Number(value) < 1)) {
+      toast.error("提交包 ID 只能填写正整数，并用逗号或空格分隔")
+      return
+    }
     if (!submission_ids.length) { toast.error("请填写提交包 ID"); return }
+    setGenerating(true)
     try {
       const res = await completionNotices({ submission_ids, deadline: deadline || undefined, send: true })
       toast.success(`生成 ${res.created?.length || 0} 条，跳过 ${res.skipped?.length || 0} 条`)
       setOpen(false)
-      req.reload()
+      setIds("")
+      setDeadline("")
+      req.reload().catch(() => {})
     } catch (e) {
       toast.error(e.message || "生成失败")
+    } finally {
+      setGenerating(false)
     }
   }
 
   const doSend = async (notice) => {
+    if (sendingId != null) return
+    setSendingId(notice.id)
     try {
       await sendNotice(notice.id)
     } catch (e) {
       toast.error(e.message || "发送失败")
       return
+    } finally {
+      setSendingId(null)
     }
     toast.success("已发送")
     openOne(notice.id)
@@ -73,16 +112,17 @@ export default function NoticesPage() {
 
   return (
     <div>
-      <PageHeader title="通知与补全" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>批量补全提示</button>} />
+      <PageHeader title="通知与补件" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>批量补全提示</button>} />
       <FilterBar
-        values={query}
-        onChange={setQuery}
+        values={{ ...query, submission_id: submissionIdDraft }}
+        onChange={updateFilters}
         fields={[
           { key: "notice_type", label: "类型", type: "select", options: [{ code: "COMPLETION", name: "补全提示" }, { code: "RECTIFICATION", name: "整改通知" }] },
           { key: "status", label: "状态", type: "select", options: [{ code: "DRAFT", name: "草稿" }, { code: "SENT", name: "已发送" }] },
           { key: "submission_id", label: "提交包 ID" },
         ]}
       />
+      {submissionIdInvalid && <p className="mt-2 text-sm text-error" role="alert">提交包 ID 只能填写正整数；当前列表仍按上次有效条件显示。</p>}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="surface-card p-2">
           <DataTable
@@ -98,7 +138,7 @@ export default function NoticesPage() {
               { key: "dl", title: "截止", render: (r) => fmtDate(r.deadline) },
             ]}
           />
-          {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
+          {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} />}
         </div>
         <div>
           {noticeState.loading && <Loading label="通知" />}
@@ -106,15 +146,15 @@ export default function NoticesPage() {
           {!noticeState.loading && !noticeState.error && <>
             <NoticePreview notice={current} />
             {current?.status === "DRAFT" && (
-              <button type="button" className="btn btn-primary btn-sm mt-3" onClick={() => doSend(current)}>发送</button>
+              <button type="button" className="btn btn-primary btn-sm mt-3" disabled={sendingId != null} onClick={() => doSend(current)}>{sendingId === current.id ? "发送中…" : "发送"}</button>
             )}
           </>}
         </div>
       </div>
       <Modal open={open} title="生成材料补全提示" onClose={() => setOpen(false)} footer={
         <>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>取消</button>
-          <button type="button" className="btn btn-primary btn-sm" onClick={generate}>生成并推送</button>
+          <button type="button" className="btn btn-ghost btn-sm" disabled={generating} onClick={() => setOpen(false)}>取消</button>
+          <button type="button" className="btn btn-primary btn-sm" disabled={generating} onClick={generate}>{generating ? "生成中…" : "生成并推送"}</button>
         </>
       }>
         <label className="form-control">
