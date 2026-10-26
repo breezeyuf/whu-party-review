@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from models import (
     CheckRule,
@@ -29,6 +30,15 @@ SEED_DIR = BACKEND_DIR / "seed_data"
 RESTORE_PASSWORD_MARKER = "!RESET_REQUIRED_AFTER_RESTORE!"
 
 
+def lock_rule_publication(db: Session) -> None:
+    """Serialize edits and their snapshot until the caller commits or rolls back."""
+    with db.no_autoflush:
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || :lock_suffix, 0))"),
+            {"lock_suffix": ":party-review:rule-publication"},
+        )
+
+
 def _load(name: str) -> Any:
     path = SEED_DIR / name
     if path.is_file():
@@ -37,6 +47,9 @@ def _load(name: str) -> Any:
 
 
 def _snapshot(db: Session) -> dict:
+    def rows(model, order):
+        # A request may have loaded rows before waiting for the publication lock.
+        return db.query(model).order_by(order).populate_existing().all()
     def dump(rows, fields):
         out = []
         for r in rows:
@@ -50,39 +63,41 @@ def _snapshot(db: Session) -> dict:
         return out
 
     return {
-        "material_types": dump(db.query(MaterialType).order_by(MaterialType.id).all(),
+        "material_types": dump(rows(MaterialType, MaterialType.id),
             ["id", "code", "name", "stage_codes", "title_keywords", "exclude_keywords",
              "element_template", "format_requirements", "date_node_map", "description",
              "is_active", "sort_order"]),
-        "checklist_items": dump(db.query(ChecklistItem).order_by(ChecklistItem.id).all(),
+        "checklist_items": dump(rows(ChecklistItem, ChecklistItem.id),
             ["id", "stage_code", "material_type_id", "quantity_mode", "fixed_count",
              "period_months", "period_start_node", "period_end_node", "is_required",
              "requirement_text", "sort_order", "is_active"]),
-        "time_node_defs": dump(db.query(TimeNodeDef).order_by(TimeNodeDef.sort_order).all(),
+        "time_node_defs": dump(rows(TimeNodeDef, TimeNodeDef.sort_order),
             ["id", "code", "name", "value_kind", "has_hours", "stage_code",
              "required_from_stage", "source_material_codes", "extract_keywords",
              "derive_expr", "sort_order", "is_active"]),
-        "time_rules": dump(db.query(TimeRule).order_by(TimeRule.sort_order).all(),
+        "time_rules": dump(rows(TimeRule, TimeRule.sort_order),
             ["id", "code", "name", "rule_type", "params", "applies_stages", "severity",
              "basis", "message_template", "suggestion_template_id", "is_active", "sort_order"]),
-        "check_rules": dump(db.query(CheckRule).order_by(CheckRule.sort_order).all(),
+        "check_rules": dump(rows(CheckRule, CheckRule.sort_order),
             ["id", "code", "category", "name", "engine", "applies_to", "params", "severity",
              "needs_human_judgement", "basis", "message_template", "suggestion_template_id",
              "is_optional", "is_active", "sort_order"]),
-        "political_terms": dump(db.query(PoliticalTerm).order_by(PoliticalTerm.id).all(),
+        "political_terms": dump(rows(PoliticalTerm, PoliticalTerm.id),
             ["id", "term_type", "standard_text", "wrong_variants", "sequence_items",
              "category", "severity", "note", "is_active"]),
-        "sensitive_phrases": dump(db.query(SensitivePhrase).order_by(SensitivePhrase.id).all(),
+        "sensitive_phrases": dump(rows(SensitivePhrase, SensitivePhrase.id),
             ["id", "phrase", "match_type", "category", "risk_level", "risk_note",
              "suggestion", "is_active"]),
-        "suggestion_templates": dump(db.query(SuggestionTemplate).order_by(SuggestionTemplate.id).all(),
+        "suggestion_templates": dump(rows(SuggestionTemplate, SuggestionTemplate.id),
             ["id", "code", "rule_code", "title", "template_text", "example_text", "is_active"]),
-        "prompt_templates": dump(db.query(PromptTemplate).order_by(PromptTemplate.id).all(),
+        "prompt_templates": dump(rows(PromptTemplate, PromptTemplate.id),
             ["id", "code", "name", "system_prompt", "user_prompt", "output_schema", "is_active"]),
     }
 
 
 def snapshot_rules(db: Session, kind: str, action: str, summary: str, object_id=None, user_id=None) -> RuleVersion:
+    lock_rule_publication(db)
+    db.flush()
     last = db.query(RuleVersion).order_by(RuleVersion.version_no.desc()).first()
     no = (last.version_no + 1) if last else 1
     row = RuleVersion(
@@ -101,6 +116,7 @@ def snapshot_rules(db: Session, kind: str, action: str, summary: str, object_id=
 
 
 def seed_rules(db: Session) -> None:
+    lock_rule_publication(db)
     if db.query(MaterialType).first():
         if not db.query(RuleVersion).first():
             snapshot_rules(db, "init", "INIT", "补写初始规则快照")

@@ -186,9 +186,6 @@ def put_tn(oid: int, body: dict, db: Session = Depends(get_db), actor: Actor = D
     body.pop("code", None)
     if body.get("value_kind", obj.value_kind) != "DERIVED":
         body["derive_expr"] = None
-    for key in ("stage_code", "required_from_stage", "derive_expr"):
-        if key in body and body[key] is None:
-            setattr(obj, key, None)
     obj, ver = update_and_snapshot(db, actor, "time-nodes", obj, body, "更新节点")
     d = orm_dict(obj)
     d["rule_version_no"] = ver

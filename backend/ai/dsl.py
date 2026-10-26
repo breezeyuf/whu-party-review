@@ -37,7 +37,7 @@ class CheckResult:
 
 
 class DSLContext:
-    def __init__(self, nodes: dict[str, NodeVal], today: date, upload_date: date, holidays=None, extra=None):
+    def __init__(self, nodes: dict[str, NodeVal], today: date, upload_date: Optional[date], holidays=None, extra=None):
         self.nodes = nodes
         self.today = today
         self.upload_date = upload_date
@@ -51,7 +51,7 @@ class DSLContext:
         if ref == "$today":
             return self.today, False
         if ref == "$upload_date":
-            return self.upload_date, False
+            return self.upload_date, self.upload_date is None
         if ref.endswith(".end"):
             code = ref[:-4]
             node = self.nodes.get(code) or self._derived_node(code)
@@ -320,11 +320,13 @@ def _valid_date(ctx: DSLContext, p: dict) -> CheckResult:
     for n in ctx.nodes.values():
         if n.invalid_reason:
             bad.append(n.code)
-        if n.date and n.date > ctx.upload_date:
+        if ctx.upload_date is not None and n.date and n.date > ctx.upload_date:
             bad.append(n.code)
-        if n.end and n.end > ctx.upload_date:
+        if ctx.upload_date is not None and n.end and n.end > ctx.upload_date:
             bad.append(n.code)
     ok = not bad
+    if ok and (ctx.upload_date is None or not ctx.nodes or all(n.missing for n in ctx.nodes.values())):
+        return CheckResult(ok=True, skipped=True, reason="缺少真实材料上传日期或日期来源")
     return CheckResult(ok=ok, actual=",".join(sorted(set(bad))) if bad else "合法",
                        expected="日期合法且不晚于上传日")
 

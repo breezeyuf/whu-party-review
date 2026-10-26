@@ -7,7 +7,7 @@ from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
 
-from errors import conflict, unprocessable
+from errors import conflict, not_found, unprocessable
 from models import (
     CheckRule,
     ChecklistItem,
@@ -20,7 +20,7 @@ from models import (
     TimeNodeDef,
     TimeRule,
 )
-from seed_rules import snapshot_rules
+from seed_rules import snapshot_rules, lock_rule_publication
 from services.audit import log
 from utils import now
 
@@ -82,6 +82,7 @@ def _audit_rule(db, actor, action, kind, object_id, summary, version_no):
 
 
 def create_and_snapshot(db, actor, kind, obj, summary) -> tuple:
+    lock_rule_publication(db)
     db.add(obj)
     db.flush()
     ver = snapshot_rules(db, kind, "CREATE", summary, obj.id if hasattr(obj, "id") else None, actor.id)
@@ -90,8 +91,10 @@ def create_and_snapshot(db, actor, kind, obj, summary) -> tuple:
 
 
 def update_and_snapshot(db, actor, kind, obj, fields, summary):
+    _lock_and_refresh(db, obj)
     for k, v in fields.items():
-        if v is not None and hasattr(obj, k) and k not in ("id", "code", "created_at"):
+        may_clear = kind == "time-nodes" and k in ("stage_code", "required_from_stage", "derive_expr")
+        if (v is not None or may_clear) and hasattr(obj, k) and k not in ("id", "code", "created_at"):
             setattr(obj, k, v)
     if hasattr(obj, "updated_at"):
         obj.updated_at = now()
@@ -102,6 +105,7 @@ def update_and_snapshot(db, actor, kind, obj, fields, summary):
 
 
 def delete_and_snapshot(db, actor, kind, obj, summary):
+    _lock_and_refresh(db, obj)
     oid = getattr(obj, "id", None)
     try:
         db.delete(obj)
@@ -111,6 +115,15 @@ def delete_and_snapshot(db, actor, kind, obj, summary):
     ver = snapshot_rules(db, kind, "DELETE", summary, oid, actor.id)
     _audit_rule(db, actor, "DELETE", kind, oid, summary, ver.version_no)
     return ver.version_no
+
+
+def _lock_and_refresh(db, obj):
+    from sqlalchemy.exc import InvalidRequestError
+    lock_rule_publication(db)
+    try:
+        db.refresh(obj)
+    except InvalidRequestError:
+        raise not_found('规则条目已被删除，请刷新后重试')
 
 
 def export_kind(db: Session, kind: str) -> Workbook:
@@ -154,6 +167,8 @@ def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> di
     errors = []
     total = 0
     unique_field = "code" if hasattr(model, "code") else ("standard_text" if hasattr(model, "standard_text") else "phrase")
+    if not dry_run:
+        lock_rule_publication(db)
     if mode == "replace" and not dry_run:
         db.query(model).delete()
         db.flush()
