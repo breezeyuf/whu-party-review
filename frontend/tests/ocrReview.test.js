@@ -3,6 +3,12 @@ import assert from "node:assert/strict"
 import { applyOcrSuggestion } from "../src/utils/ocrReview.js"
 import { settingsPatch } from "../src/utils/settingsWorkflow.js"
 
+test("本地 OCR 只允许 RapidOCR、自动或关闭", () => {
+  assert.equal(settingsPatch("ocr",{engine:"rapidocr"}).engine,"rapidocr")
+  assert.equal(settingsPatch("ocr",{engine:"none"}).engine,"none")
+  assert.throws(() => settingsPatch("ocr",{engine:"paddleocr"}))
+})
+
 test("OCR suggestion replaces only its source and retains other manual changes", () => {
   assert.equal(applyOcrSuggestion("已手动改过\n2026-1-2", {}, {}, { status: "pending", original_text: "2026-1-2", candidate_text: "2026-1-24" }), "已手动改过\n2026-1-24")
 })

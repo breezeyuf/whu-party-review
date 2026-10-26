@@ -101,6 +101,7 @@ def test_scanned_pdf_quality_and_ocr_failure_flag(monkeypatch,tmp_path):
     from ai import parser
     monkeypatch.setattr(parser,'STORAGE_DIR',tmp_path)
     monkeypatch.setattr(parser,'_ocr_page',lambda page:('',[],None,'OCR 超时'))
+    monkeypatch.setattr(parser,'_ocr_enabled',lambda:True)
     source=tmp_path/'scan.pdf'
     with fitz.open() as doc:
         doc.new_page(width=100,height=100); doc.save(source)

@@ -18,7 +18,7 @@
 | --- | --- |
 | 后端 | Python 3.12+ · FastAPI · SQLAlchemy 2 · PostgreSQL 14+（本轮实测 16） |
 | 前端 | React 19 · React Router 7 · Vite 8 · Tailwind CSS 4 · daisyUI 5 |
-| 能力 | PDF/DOCX 解析（PyMuPDF、python-docx）· 规则引擎（政治术语 / 时间节点）· 可选大模型语义核查 · 可选 PaddleOCR |
+| 能力 | PDF/DOCX 解析（PyMuPDF、python-docx）· 规则引擎（政治术语 / 时间节点）· 可选大模型语义核查 · RapidOCR（ONNX Runtime） |
 
 ## 目录结构
 
@@ -47,6 +47,10 @@ createdb -U postgres party_review
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 Copy-Item backend\.env.example backend\.env    # 填写数据库连接
+
+# 需要扫描件识别时安装唯一支持的本地 OCR 引擎，并执行真实自检
+.\.venv\Scripts\python.exe -m pip install --index-url https://pypi.org/simple -r backend\requirements-ocr.txt
+.\.venv\Scripts\python.exe backend\ocr_check.py
 
 # 3. 前端构建（首次必须，后端同源托管 dist）
 cd frontend; npm ci; npm run build; cd ..

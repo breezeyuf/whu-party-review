@@ -24,11 +24,11 @@ def test_disabled_ocr_never_waits_for_another_job(monkeypatch):
 
 def test_child_error_details_never_enter_persistable_diagnostics(monkeypatch):
     private = 'private student text in C:/private-model/secret'
-    monkeypatch.setattr(ocr, 'available_engines', lambda:['paddleocr'])
+    monkeypatch.setattr(ocr, 'available_engines', lambda:['rapidocr'])
     pool = Mock()
     pool.submit.return_value.result.return_value = ([], private)
     monkeypatch.setattr(ocr, '_pool', lambda:pool)
-    token = ocr.settings.set({'engine':'paddleocr'})
+    token = ocr.settings.set({'engine':'rapidocr'})
     try:
         result = ocr.ocr_pixmap(SimpleNamespace(samples=b'',width=1,height=1,n=3))
     finally:

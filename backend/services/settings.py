@@ -34,6 +34,8 @@ def public_settings(db: Session) -> dict:
             if key == 'ai':
                 val["llm_enabled"] = bool(val.get("llm_enabled"))
         if key == "ocr":
+            from ai.ocr import configured_engine
+            val['engine'] = configured_engine(val)
             val["available_engines"] = available_engines()
         out[key] = val
     return out
@@ -70,7 +72,7 @@ def update_settings(db: Session, actor, body: dict) -> dict:
             cur=update_config(cur,patch)
             patch={}
         if key == 'ocr':
-            if 'engine' in patch and patch['engine'] not in ('none','auto','rapidocr','paddleocr'):
+            if 'engine' in patch and patch['engine'] not in ('none','auto','rapidocr'):
                 raise unprocessable('不支持的 OCR 引擎')
             for name, lower, upper in [('min_dpi',72,300),('blur_threshold',0,100000),('timeout_s',1,600)]:
                 if name in patch and (type(patch[name]) not in (int,float) or not math.isfinite(patch[name]) or not lower <= patch[name] <= upper):
@@ -114,33 +116,15 @@ def update_settings(db: Session, actor, body: dict) -> dict:
 
 
 def test_ai(db: Session, target: str, override: dict | None = None) -> dict:
-    import time
-    t0 = time.time()
     if target == 'ocr_vision':
         if override is not None:
             raise unprocessable('视觉 OCR 测试使用已保存配置，请先保存')
         from ai.ocr_review import test_connection
         return test_connection(db)
     if target == "ocr":
-        engines = available_engines()
-        if not engines:
-            return {"ok": False, "latency_ms": int((time.time()-t0)*1000), "message": "未安装 OCR 引擎，尚不能执行识别测试"}
-        import fitz
-        from ai.ocr import ocr_pixmap
-        document = fitz.open()
-        try:
-            page = document.new_page(width=500, height=180)
-            page.insert_text((40,85), 'WORKBENCH OCR TEST 2026', fontsize=22)
-            page.insert_text((40,125), '虚构学生材料 申请日期', fontname='china-s', fontsize=20)
-            from ai.ocr import settings as ocr_settings
-            token = ocr_settings.set({**get_setting(db, 'ocr', {}), **(override or {})})
-            try:
-                extracted, blocks, engine, error = ocr_pixmap(page.get_pixmap(matrix=fitz.Matrix(2,2)))
-            finally:
-                ocr_settings.reset(token)
-            ok = not error and '2026' in extracted and '学生' in extracted
-            return {"ok":bool(ok), "latency_ms":int((time.time()-t0)*1000), "message": error or (f"{engine} 已完成内置图片识别" if ok else "引擎未正确识别内置测试图片")}
-        finally:
-            document.close()
+        if override is not None and not isinstance(override,dict):
+            raise unprocessable('OCR 测试配置须为对象')
+        from ai.ocr import probe
+        return probe({**get_setting(db,'ocr',{}),**(override or {})})
     parsed, err, ms = chat_json(db, "CONNECTION_TEST", {"text": "Return a JSON object: {\"ok\":true}"}, override)
     return {"ok": err is None, "latency_ms": int(ms), "model": (override or {}).get("model") or get_setting(db, "ai", {}).get("model"), "message": err or "ok"}

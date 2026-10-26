@@ -9,8 +9,8 @@ from config import STORAGE_DIR, ensure_storage
 
 
 def _ocr_enabled():
-    from ai.ocr import settings
-    return settings.get().get('engine', 'auto') != 'none'
+    from ai.ocr import ocr_enabled
+    return ocr_enabled()
 
 
 def parse_version_file(stored_path: str, file_ext: str) -> dict[str, Any]:
@@ -281,8 +281,10 @@ def _ocr_page(page) -> tuple[str, list, Optional[str], Optional[str]]:
                 x0, y0, x1, y1 = block['bbox']
                 block['bbox'] = [x0*sx, y0*sy, x1*sx, y1*sy]
         return text, blocks, engine, warning
-    except Exception as e:
-        return "", [], None, f"OCR 不可用：{e}"
+    except Exception as exc:
+        from diagnostics import log_exception
+        log_exception('ocr.page_failed', exc)
+        return "", [], None, "RapidOCR 页面识别失败，请检查引擎后重试"
 
 
 def _visual_from_pdf(doc, pages=None) -> dict:

@@ -42,9 +42,19 @@ def extract_fallback(db, text, pages, extractions, nodes, *, archive=None, rule_
 
 
 def polish_suggestions(db, drafts, *, archive=None, rule_set=None):
+    max_calls = 5
+    completed = {}
+    calls = 0
     for draft in drafts:
         if draft.category != 'CONTENT' or not draft.suggestion: continue
         original = draft.suggestion
+        key = (original,draft.description)
+        if key in completed:
+            draft.suggestion = completed[key]
+            continue
+        if calls >= max_calls:
+            continue  # Keep the deterministic rule template beyond this budget.
+        calls += 1
         answer, error, _ = chat_json(db,'SUGGEST',{'template':original,'vars':'','issue':draft.description},archive=archive,rule_set=rule_set)
         if error: return error
         from ai.desensitize import desensitize_text
@@ -53,4 +63,5 @@ def polish_suggestions(db, drafts, *, archive=None, rule_set=None):
         required = desensitize_text(original,archive) if llm_config(db).get('desensitize') is not False else original
         if required in answer['suggestion'] and len(answer['suggestion']) <= 2000:
             draft.suggestion = answer['suggestion']
+        completed[key] = draft.suggestion
     return None
