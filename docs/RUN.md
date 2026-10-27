@@ -24,6 +24,29 @@ Copy-Item backend/.env.example backend/.env
 
 默认访问 http://127.0.0.1:8000 。关闭启动窗口或按 Ctrl+C 停止服务。启动脚本先执行只读依赖与数据库检查，再由应用创建表和默认规则。
 
+## RapidOCR 扫描件识别
+
+本地 OCR 统一使用 RapidOCR + ONNX Runtime；不需要安装 PaddleOCR 或卸载 `opencv-python-headless`。安装基础依赖后，使用官方 PyPI 源安装 OCR，避免镜像尚未同步包时出现 `No matching distribution`：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --index-url https://pypi.org/simple -r backend/requirements-ocr.txt
+.\.venv\Scripts\python.exe backend/ocr_check.py --engine rapidocr --dpi 200
+```
+
+命令与“系统设置 → OCR → 测试 OCR”共用真实推理自检：加载模型，识别内置虚构中文日期图片并验证日期可提取。`ok=true` 且退出码 0 才表示本次识别通过；包已安装只表示依赖可发现。自检不使用用户材料。
+
+配置 `auto` 在已安装时使用 RapidOCR，未安装时生成预览并提示人工核对；`rapidocr` 表示显式启用，缺少依赖、模型故障或超时会标记解析失败并提供重试；`none` 关闭识别。旧配置中的 `paddleocr` 在读取时转为 `rapidocr`，新设置不再接受该引擎。失败重试保留已有解析和人工校正。
+
+Windows 打包必须先安装 OCR 依赖；更新后的桌面锁定文件已包含实测版本：
+
+```powershell
+.\.venv-desktop\Scripts\python.exe -m pip install --index-url https://pypi.org/simple -r desktop/requirements-lock.windows-py313.txt
+.\.venv-desktop\Scripts\python.exe backend/ocr_check.py
+.\.venv-desktop\Scripts\python.exe -m desktop.build --output desktop/build/dist-new
+```
+
+默认 ONNX 模型随 RapidOCR 包收集进桌面程序。离线部署前在构建环境完成自检，检查模型及运行库齐全。具体范围见 [OCR 部署与验收](OCR部署与验收.md)。更新源码不会自动替换已有 EXE。
+
 ## 恢复演示数据（推荐）
 
 `database/party_review_20261017.sql` 是演示库的完整结构与数据，包含 24 份档案、72 个提交包、84 份材料版本、276 条问题，以及演示账号与组织架构。恢复命令：
@@ -121,4 +144,4 @@ $env:TEST_ADMIN_PASSWORD='测试服务初始化时配置的管理员密码'
 
 `database/` 提供演示数据；`backend/storage/` 未随仓库提供（见上），应用启动时会自动重建空目录，届时在系统设置中初始化演示数据或重新上传材料即可。
 
-大模型默认关闭。需要在系统设置中配置接口和密钥后再验证语义检查；可用「测试连接」确认端点。PaddleOCR 属于可选组件，包内基础依赖不会自动安装或下载模型；未安装时扫描件会提示人工核对。论文、截图与历史报告中的验证数字属各轮原始记录，本轮结果以 `docs/DESIGN.md` 与 `screenshots/` 为准。
+大模型默认关闭。需要在系统设置中配置接口和密钥后再验证语义检查；可用「测试连接」确认端点。源码环境的 RapidOCR 依赖单独安装，默认 auto 模式未安装时扫描件保留预览并提示人工核对。论文、截图与历史报告中的验证数字属各轮原始记录，当前实现与本轮验证见各项修复记录。

@@ -1,10 +1,16 @@
 # whu-party-review · 党员发展材料智能审核工作台
 
+新增可选的[视觉 OCR 复核](docs/视觉OCR复核.md)：本地 OCR 后由多模态模型核对原图，保留建议和原文对照，人工确认后保存；默认关闭，支持独立模型配置与失败回退。
+
 武汉大学团队项目。面向党员发展全流程的材料智能审核系统：学生提交材料 → 解析入库 → AI 自查与规则引擎核查 → 支部 / 学院 / 组织部多级审核 → 整改回复 → 备案归档，全链路留痕、可追溯。
 
 已增加 Windows 本地程序：解压完整 `PartyReview` 文件夹到英文路径后，双击 `PartyReview.exe`，无需单独安装 Python、Node.js 或 PostgreSQL。首次登录、演示入口、数据备份和源码构建见 [本地程序说明](docs/Windows本地程序使用说明.md)。
 
+多电脑访问可使用[服务器 HTTPS 部署方案](docs/多人HTTPS部署.md)。服务器模式将 PostgreSQL、材料和应用集中保存，通过 Caddy 提供 HTTPS；正式部署仍需准备目标主机、域名并完成现场验收。邮件和短信继续仅配置，不实际发送。
+
 审核端已补齐原文预览拖框新增问题，以及时间节点抽取记录逐条新增、修改、删除，使用方法和验证结果见 [原文框选与节点抽取校正](docs/原文框选与节点抽取校正.md)。
+
+2026-10-23 已整合 CE 成果，补齐档案、多身份授权、批次、规则试运行与配置、统计导出及系统参数，详见 [CE 功能补齐与验收](docs/CE功能补齐与验收.md)。
 
 ![登录页](screenshots/01-登录页.png)
 
@@ -14,7 +20,7 @@
 | --- | --- |
 | 后端 | Python 3.12+ · FastAPI · SQLAlchemy 2 · PostgreSQL 14+（本轮实测 16） |
 | 前端 | React 19 · React Router 7 · Vite 8 · Tailwind CSS 4 · daisyUI 5 |
-| 能力 | PDF/DOCX 解析（PyMuPDF、python-docx）· 规则引擎（政治术语 / 时间节点）· 可选大模型语义核查 · 可选 PaddleOCR |
+| 能力 | PDF/DOCX 解析（PyMuPDF、python-docx）· 规则引擎（政治术语 / 时间节点）· 可选大模型语义核查 · RapidOCR（ONNX Runtime） |
 
 ## 目录结构
 
@@ -43,6 +49,10 @@ createdb -U postgres party_review
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 Copy-Item backend\.env.example backend\.env    # 填写数据库连接
+
+# 需要扫描件识别时安装唯一支持的本地 OCR 引擎，并执行真实自检
+.\.venv\Scripts\python.exe -m pip install --index-url https://pypi.org/simple -r backend\requirements-ocr.txt
+.\.venv\Scripts\python.exe backend\ocr_check.py
 
 # 3. 前端构建（首次必须，后端同源托管 dist）
 cd frontend; npm ci; npm run build; cd ..

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import math
 
 from sqlalchemy.orm import Session
 
@@ -13,19 +14,28 @@ from ai.llm import chat_json, validate_credential_options
 
 
 ORG_KEYS = {"upload", "retention", "notification", "calendar"}
-ADMIN_ONLY = {"ai", "ocr", "security", "worker"}
+ADMIN_ONLY = {"ai", "ocr", "ocr_vision", "security", "worker", "delivery"}
 
 
 def public_settings(db: Session) -> dict:
     out = {}
-    for key in ("upload", "retention", "notification", "ai", "ocr", "security", "worker", "calendar"):
+    for key in ("upload", "retention", "notification", "ai", "ocr", "ocr_vision", "security", "worker", "calendar", "delivery"):
         val = deepcopy(get_setting(db, key, {}))
-        if key == "ai":
+        if key == 'delivery':
+            from services.delivery import public_config
+            val=public_config(val)
+        if key == 'ocr_vision':
+            from ai.ocr_review import DEFAULTS
+            val = {**DEFAULTS, **val}
+        if key in ("ai", "ocr_vision"):
             enc = val.pop("api_key_enc", None)
             val.pop("api_key_base_url", None)
             val["api_key_set"] = bool(enc)
-            val["llm_enabled"] = bool(val.get("llm_enabled"))
+            if key == 'ai':
+                val["llm_enabled"] = bool(val.get("llm_enabled"))
         if key == "ocr":
+            from ai.ocr import configured_engine
+            val['engine'] = configured_engine(val)
             val["available_engines"] = available_engines()
         out[key] = val
     return out
@@ -40,11 +50,37 @@ def update_settings(db: Session, actor, body: dict) -> dict:
         row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
         cur = deepcopy(row.value) if row and isinstance(row.value, dict) else {}
         if not isinstance(patch, dict):
-            if key == "ai":
-                raise unprocessable("大模型配置必须是对象")
-            continue
+            raise unprocessable("配置组必须是对象")
         patch = dict(patch)
-        if key == "ai":
+        if key == 'ai':
+            for name in ('llm_enabled', 'desensitize'):
+                if name in patch and type(patch[name]) is not bool:
+                    raise unprocessable(f'{name} 须为开关值')
+            for name, lower, upper in [('timeout_s',1,600),('max_concurrency',1,32),
+                                       ('temperature',0,2),('classify_confidence_threshold',0,1)]:
+                if name in patch and (type(patch[name]) not in (int,float) or not math.isfinite(patch[name]) or not lower <= patch[name] <= upper):
+                    raise unprocessable(f'{name} 超出允许范围')
+            if 'max_concurrency' in patch and type(patch['max_concurrency']) is not int:
+                raise unprocessable('最大并发须为整数')
+            if 'model' in patch and not isinstance(patch['model'], str):
+                raise unprocessable('模型名须为文字')
+        if key == 'retention' and 'material_years' in patch:
+            if type(patch['material_years']) is not int or not 1<=patch['material_years']<=100:
+                raise unprocessable('材料保留年数须为 1 至 100 的整数')
+        if key == 'delivery':
+            from services.delivery import update_config
+            cur=update_config(cur,patch)
+            patch={}
+        if key == 'ocr':
+            if 'engine' in patch and patch['engine'] not in ('none','auto','rapidocr'):
+                raise unprocessable('不支持的 OCR 引擎')
+            for name, lower, upper in [('min_dpi',72,300),('blur_threshold',0,100000),('timeout_s',1,600)]:
+                if name in patch and (type(patch[name]) not in (int,float) or not math.isfinite(patch[name]) or not lower <= patch[name] <= upper):
+                    raise unprocessable(f'{name} 超出允许范围')
+        if key == 'ocr_vision':
+            from ai.ocr_review import validate_config
+            validate_config(patch)
+        if key in ("ai", "ocr_vision"):
             validate_credential_options(patch)
             # A stored credential belongs to its saved destination, including
             # scheme, port and tenant path. Saving settings must not rebind it.
@@ -62,7 +98,7 @@ def update_settings(db: Session, actor, body: dict) -> dict:
                 cur.setdefault("api_key_base_url", previous_base)
             if patch.get("api_key") is not None:
                 cur["api_key_base_url"] = next_base if patch["api_key"] else ""
-        if key == "ai" and "api_key" in patch:
+        if key in ("ai", "ocr_vision") and "api_key" in patch:
             raw = patch.pop("api_key")
             if raw == "":
                 cur["api_key_enc"] = ""
@@ -80,10 +116,15 @@ def update_settings(db: Session, actor, body: dict) -> dict:
 
 
 def test_ai(db: Session, target: str, override: dict | None = None) -> dict:
-    import time
-    t0 = time.time()
+    if target == 'ocr_vision':
+        if override is not None:
+            raise unprocessable('视觉 OCR 测试使用已保存配置，请先保存')
+        from ai.ocr_review import test_connection
+        return test_connection(db)
     if target == "ocr":
-        engines = available_engines()
-        return {"ok": bool(engines), "latency_ms": int((time.time() - t0) * 1000), "message": "可用引擎：" + (",".join(engines) or "无")}
-    parsed, err, ms = chat_json(db, "CLASSIFY", {"types": "TEST", "text": "ping"}, override)
+        if override is not None and not isinstance(override,dict):
+            raise unprocessable('OCR 测试配置须为对象')
+        from ai.ocr import probe
+        return probe({**get_setting(db,'ocr',{}),**(override or {})})
+    parsed, err, ms = chat_json(db, "CONNECTION_TEST", {"text": "Return a JSON object: {\"ok\":true}"}, override)
     return {"ok": err is None, "latency_ms": int(ms), "model": (override or {}).get("model") or get_setting(db, "ai", {}).get("model"), "message": err or "ok"}

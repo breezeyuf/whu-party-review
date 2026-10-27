@@ -5,9 +5,9 @@ import { BarChart, LineChart, PieChart } from "../../components/charts/LazyChart
 import { Loading, ErrorState, EmptyState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
 import { overview, topIssues } from "../../api/stats"
-import { listBatches } from "../../api/batches"
 import { categoryName, severityName, stageShort } from "../../utils/format"
 import { useMeta } from "../../context/MetaContext"
+import StatsFilters from "../../components/charts/StatsFilters"
 
 function Card({ title, value, hint }) {
   return (
@@ -21,10 +21,10 @@ function Card({ title, value, hint }) {
 
 export default function StatsOverviewPage() {
   const meta = useMeta()
-  const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const [filters, setFilters] = useState({})
+  const [groupBy, setGroupBy] = useState("rule")
   const dataReq = useRequest(() => overview(filters), [JSON.stringify(filters)])
-  const topReq = useRequest(() => topIssues({ ...filters, limit: 10, group_by: "rule" }), [JSON.stringify(filters)])
+  const topReq = useRequest(() => topIssues({ ...filters, limit: 10, group_by: groupBy }), [JSON.stringify(filters), groupBy])
   const d = dataReq.data || {}
 
   const pie = Object.entries(d.issues_by_category || {}).map(([k, v]) => ({ name: categoryName(meta, k), value: v }))
@@ -35,17 +35,7 @@ export default function StatsOverviewPage() {
   return (
     <div>
       <PageHeader title="审核统计" />
-      <FilterBar
-        values={filters}
-        onChange={(p) => setFilters((f) => ({ ...f, ...p }))}
-        onReset={() => setFilters({})}
-        fields={[
-          { key: "batch_id", label: "批次", type: "select", options: (batches.data?.items || []).map((b) => ({ code: b.id, name: b.name })) },
-          { key: "stage_code", label: "阶段", type: "select", metaKey: "stages" },
-          { key: "date_from", label: "开始", placeholder: "YYYY-MM-DD" },
-          { key: "date_to", label: "结束", placeholder: "YYYY-MM-DD" },
-        ]}
-      />
+      <StatsFilters value={filters} onChange={setFilters} />
       {dataReq.loading && !dataReq.data ? <Loading /> : dataReq.error ? <ErrorState error={dataReq.error} onRetry={dataReq.reload} /> : (
         <>
           <div className="stats stats-vertical mb-4 w-full border border-base-300 bg-base-100 sm:stats-horizontal">
@@ -63,7 +53,7 @@ export default function StatsOverviewPage() {
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">问题级别</h2>
-              <PieChart data={sev} />
+              <BarChart data={sev} />
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">各支部提交量</h2>
@@ -71,7 +61,7 @@ export default function StatsOverviewPage() {
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">各阶段提交量</h2>
-              <PieChart data={byStage} />
+              <BarChart data={byStage} />
             </section>
             <section className="surface-card p-4 lg:col-span-2">
               <h2 className="mb-2 text-sm font-medium">流转趋势</h2>
@@ -82,6 +72,7 @@ export default function StatsOverviewPage() {
           </div>
           <section className="surface-card mt-4 p-4">
             <h2 className="mb-2 text-sm font-medium">高频问题</h2>
+            <label className="text-xs">分组方式<select aria-label="高频问题分组" className="select select-bordered select-sm m-2" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}><option value="rule">按规则</option><option value="category">按类别</option><option value="material_type">按材料类型</option></select></label>
             {topReq.loading && !topReq.data ? <Loading label="高频问题" /> : topReq.error ? <ErrorState error={topReq.error} onRetry={topReq.reload} /> : !(topReq.data || []).length ? <EmptyState title="所选范围内没有问题记录" /> : (
               <table className="table table-sm">
                 <thead><tr><th>规则</th><th>次数</th><th>占比</th><th>已确认</th></tr></thead>

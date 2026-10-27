@@ -47,6 +47,7 @@ export default function NodeCorrectionModal({ node, onClose, onSave }) {
         </>
       )}
     >
+      {node.locked && <p className="mb-3 text-xs text-warning">该节点已备案锁定。本次更正仅限组织部，须说明依据并保留审计记录。</p>}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="form-control">
           <span className="label-text text-xs">日期</span>

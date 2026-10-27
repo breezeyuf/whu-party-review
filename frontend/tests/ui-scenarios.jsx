@@ -40,11 +40,14 @@ import { lazyWithRetry } from "../src/utils/lazyLoad"
 import { pages as shellPages } from "../src/components/layout/shellModule"
 import { shellPageNames } from "../src/components/layout/lazyShell"
 import "../src/routes"
+import CompleteSettingsPage from "../src/pages/admin/CompleteSettingsPage"
+import RuleVersionsPage from "../src/pages/rules/RuleVersionsPage"
+import TimelineView from "../src/components/archive/TimelineView"
 
 const wait = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms))
 const flush = () => act(async () => { await wait(); await wait() })
 const baseReport = { id: 201, status: "DONE", is_stale: false, summary: {}, handover_status: "NOT_REQUIRED", recommendation: "PASS" }
-const baseArchive = { id: 1, real_name: "测试学生", student_no: "20260001", current_stage: 1, status: "ACTIVE", submissions: [], current_submission: { id: 101, status: "DRAFT" } }
+const baseArchive = { id: 1, real_name: "测试学生", student_no: "20260001", branch_id: 2, batch_id: 1, current_stage: 1, status: "ACTIVE", submissions: [], current_submission: { id: 101, status: "DRAFT" } }
 const baseSubmission = { id: 101, archive: { id: 1, real_name: "测试学生" }, stage_code: 1, stage_name: "申请入党", status: "DRAFT", ai_status: "DONE", latest_report: baseReport, can: { self_check: true, submit: true } }
 const complete = { is_complete: true, missing_total: 0, items: [{ material_type: { id: 1, name: "申请书" }, required: true, expected: 1, actual: 1, missing: 0 }] }
 const groups = [{ stage_code: 1, checklist: [], unclassified: [], extra: [] }]
@@ -93,7 +96,7 @@ function defaultFixture(config) {
   if (url === "/batches") return { items: [{ id: 1, name: "测试批次" }] }
   if (url === "/orgs") return [{ id: 2, org_type: "BRANCH", parent_id: 1, name: "测试支部" }]
   if (url === "/notices") return { items: [] }
-  if (url === "/rules/time-nodes") return nodeDefinitions
+  if (url === "/meta") return { time_nodes: nodeDefinitions }
   if (url === "/messages/unread-count") return { count: 0 }
   if (url === "/submissions") return { items: [{ id: 101, student_name: "测试学生", stage_code: 1, status: "BRANCH_REVIEW", issue_counts: {} }], total: 1, page: 1, page_size: 20 }
   throw new Error(`测试缺少接口样例：${config.method} ${url}`)
@@ -127,6 +130,95 @@ export async function runUiScenarios() {
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
 
+  await test("可编辑材料可重新解析，接口失败保留页面供重试", async () => {
+    await mount(<MaterialDetailPage />, { path: "/materials/12", pattern: "/materials/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+      if (c.url === "/submissions/101") return { ...baseSubmission, can: { upload: true } }
+      if (c.url === "/materials/12/retry-parse") throw new Error("解析服务暂不可用")
+    } })
+    await click(button("重新解析（使用当前模型配置）"))
+    assert.match(text(), /解析服务暂不可用/)
+    assert.equal(button("重新解析（使用当前模型配置）").disabled, false)
+    assert.equal(requests.filter(c => c.url === "/materials/12/retry-parse").length, 1)
+  })
+  await test("投递检查只检查配置并明确不发送", async () => {
+    await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : c.url === "/settings/delivery/test" ? { message: "未发送任何消息", email_ready: false, sms_ready: false, sent: false } : undefined })
+    await click(button("检查投递配置（不发送）"))
+    assert.match(text(), /未发送任何消息/)
+    assert.equal(requests.filter(c => c.method === "post").length, 1)
+    await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : undefined })
+    assert.equal(button("检查投递配置（不发送）").disabled, true)
+  })
+  await test("清空已保存的短信地址和密钥会发送明确清空值", async () => {
+    await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: c => {
+      if (c.url === "/settings" && c.method === "get") return { delivery: { sms_url: "https://sms.invalid/send", sms_api_key_set: true } }
+      if (c.url === "/settings" && c.method === "put") return { delivery: { sms_url: "", sms_api_key_set: false } }
+    } })
+    await input(document.querySelector('[aria-label="短信服务 HTTPS 接口"]'), "")
+    const clearKey = [...document.querySelectorAll('input[type="checkbox"]')].find(node => node.parentElement.textContent.includes("清除短信 API 密钥"))
+    await click(clearKey)
+    await click(button("保存邮件与短信服务配置"))
+    const body = JSON.parse(requests.find(c => c.method === "put").data)
+    assert.equal(body.delivery.sms_url, "")
+    assert.equal(body.delivery.sms_api_key, "")
+    assert.equal(document.querySelector('[aria-label="短信服务 HTTPS 接口"]').value, "")
+  })
+  await test("到期材料确认保留带原因并刷新待处理清单", async () => {
+    let kept = false
+    await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => {
+      if (c.url === "/settings") return {}
+      if (c.url === "/settings/retention/materials/402/keep") { kept = true; return { preserved: true } }
+      if (c.url === "/settings/retention/materials") return { items: kept ? [] : [{ id: 402, title: "测试材料", filename: "原件.pdf", version_no: 2, due_at: "2026-01-01" }], total: kept ? 0 : 1, material_years: 10, page: 1, page_size: 20 }
+    } })
+    await click(button("查看到期待处理材料"))
+    await input(document.querySelector('[aria-label="到期材料保留原因"]'), "仍需核查，保留原件")
+    await click(button("确认保留原件"))
+    assert.deepEqual(JSON.parse(requests.find(c => c.method === "post").data), { reason: "仍需核查，保留原件" })
+    assert.match(text(), /暂无符合条件的材料/)
+    assert.equal(requests.some(c => c.method === "delete"), false)
+  })
+  await test("已确认保留材料可查看确认人、时间和原因", async () => {
+    await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => {
+      if (c.url === "/settings") return {}
+      if (c.url === "/settings/retention/materials") return { items: [{ id: 402, title: "测试材料", filename: "原件.pdf", version_no: 2, due_at: "2026-01-01", confirmation: { confirmed_by: "测试管理员", confirmed_at: "2026-10-26T10:00:00+08:00", reason: "仍需核查" } }], total: 1, material_years: 10, page: 1, page_size: 20 }
+    } })
+    await click(button("查看已确认保留"))
+    assert.match(text(), /测试管理员.*2026-10-26.*仍需核查/)
+    assert.equal(button("确认保留原件"), undefined)
+    assert.equal(requests.find(c => c.url === "/settings/retention/materials").params.status, "confirmed")
+  })
+  await test("视觉 OCR 配置使用独立密钥且测试已保存配置", async () => {
+    const settings = { ocr_vision: { enabled: false, allow_image_upload: false, model: "vision-test", base_url: "https://vision.invalid/v1", confidence_threshold: 0.9 } }
+    await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: (c) => c.url === "/settings" ? settings : c.url === "/settings/ai/test" ? { ok: true, message: "图片识别通过", latency_ms: 1 } : undefined })
+    await input(document.querySelector('[aria-label="视觉模型 API 密钥"]'), "synthetic-vision-key")
+    await click(button("保存视觉 OCR 复核"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal(body.ocr_vision.api_key, "synthetic-vision-key")
+    assert.equal(body.ai, undefined)
+    assert.equal(document.querySelector('[aria-label="视觉模型 API 密钥"]').value, "")
+    await click(button("测试视觉 OCR 复核"))
+    assert.deepEqual(JSON.parse(requests.find((c) => c.url === "/settings/ai/test").data), { target: "ocr_vision" })
+    assert.match(text(), /图片识别通过/)
+  })
+  await test("视觉 OCR 建议先对照后保存，不自动覆盖原文", async () => {
+    let saved
+    const parsed = { material_id: 12, version_id: 401, full_text: "申请日期2026年10月2日", extracted_fields: {}, extractions: [], pages: [{ page_no: 1, text: "申请日期2026年10月2日", vision_reviews: [{ block_index: 0, bbox: [10, 20, 90, 50], status: "pending", original_text: "申请日期2026年10月2日", candidate_text: "申请日期2026年10月24日", confidence: 0.95, uncertain: false, model: "vision-test" }] }] }
+    await mount(<ParsedTextPanel parsed={parsed} editable onSave={(body) => { saved = body }} />, { roleCode: "BRANCH_REVIEWER" })
+    assert.equal(document.querySelector("textarea").value, parsed.full_text)
+    assert.equal(saved, undefined)
+    await click(button("核对后填入校正文本"))
+    assert.equal(document.querySelector("textarea").value, "申请日期2026年10月24日")
+    assert.equal(saved, undefined)
+    await click(button("查看原图区域"))
+    assert.ok(requests.some((r) => r.url === "/materials/12/pages/1" && r.params.version_id === 401))
+    assert.equal(document.querySelector("textarea").value, "申请日期2026年10月24日")
+    await click(button("收起复核原图"))
+    await click(button("保存校正"))
+    assert.equal(saved.corrected_text, "申请日期2026年10月24日")
+    assert.equal(parsed.full_text, "申请日期2026年10月2日")
+    await mount(<ParsedTextPanel parsed={parsed} editable={false} />)
+    assert.equal(button("核对后填入校正文本"), undefined)
+  })
+
   for (const retryFirst of [false, true]) {
     await test(retryFirst ? "密码文件下载失败保留口令并可重试" : "导入后下载加密密码文件并禁止再次领取", async () => {
       let downloads = 0
@@ -159,18 +251,102 @@ export async function runUiScenarios() {
       assert.equal(button("已下载").disabled, true)
     })
   }
+  await test("完整档案编辑提交姓名生日扩展资料和所属批次", async () => {
+    await mount(<ArchiveDetailPage />, { path:"/archives/1", pattern:"/archives/:id", roleCode:"ORG_ADMIN", handler:(c) => c.method === "put" ? {} : undefined })
+    await click(button("编辑"))
+    await input(document.querySelector('[aria-label="姓名"]'),"校正姓名")
+    await input(document.querySelector('[aria-label="出生日期"]'),"2004-05-12")
+    await input(document.querySelector('[aria-label="扩展资料"]'),'{"来源":"测试"}')
+    await click(button("保存"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal(body.real_name,"校正姓名"); assert.equal(body.birth_date,"2004-05-12"); assert.equal(body.branch_id,2); assert.deepEqual(body.profile_extra,{来源:"测试"})
+  })
+  await test("锁定时间节点只向显式授权的组织部入口开放", async () => {
+    const timeline = {nodes:[{code:"T02",name:"申请日期",locked:true,effective:{date:"2026-01-01"},sources:[]}],derived:[]}
+    await mount(<TimelineView timeline={timeline} onCorrect={() => {}} />)
+    assert.equal(button("更正已锁定节点"),undefined)
+    await mount(<TimelineView timeline={timeline} allowLockedCorrection onCorrect={() => {}} />,{roleCode:"ORG_ADMIN"})
+    assert.ok(button("更正已锁定节点"))
+  })
+  await test("只修改用户姓名时不发送角色替换，原多身份保持不变", async () => {
+    await mount(<UsersPage />, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/users" && c.method === "get") return {items:[{id:7,username:"tester",real_name:"测试",org_id:2,is_active:true,roles:[{role:"STUDENT",org_id:2},{role:"BRANCH_REVIEWER",org_id:2}]}],total:1,page:1,page_size:20}
+      if(c.url === "/users/7" && c.method === "put") return {}
+    }})
+    await click(button("编辑"))
+    assert.equal(document.querySelectorAll('[aria-label$="角色"]').length,2)
+    await click(button("保存"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal("roles" in body,false)
+  })
+  await test("批次表单保存全部五级截止日且允许关闭已有档案批次", async () => {
+    const row = {id:1,name:"测试批次",year:2026,term:"FULL_YEAR",stage_codes:[1],start_date:"2026-01-01",end_date:"2026-12-31",status:"ACTIVE",archive_count:2}
+    await mount(<BatchesPage />, {roleCode:"ORG_ADMIN",handler:(c) => c.url === "/batches" ? {items:[row],total:1,page:1,page_size:20} : c.method === "put" ? {} : undefined})
+    await click(button("编辑"))
+    await input(document.querySelector('[aria-label="学生自查截止"]'),"2026-02-01")
+    await input(document.querySelector('[aria-label="交叉互查截止"]'),"2026-04-01")
+    await input(document.querySelector('[aria-label="组织部备案截止"]'),"2026-06-01")
+    await click(button("保存"))
+    const body = JSON.parse(requests.find((c) => c.method === "put").data)
+    assert.equal(body.self_deadline,"2026-02-01"); assert.equal(body.cross_deadline,"2026-04-01"); assert.equal(body.org_deadline,"2026-06-01")
+    await click(button("关闭批次"))
+    assert.match(text(),/已有档案和审核记录保留/)
+  })
+  await test("系统设置按组保存，组织部不能修改安全和任务参数", async () => {
+    const settings = {ai:{},ocr:{},worker:{concurrency:2},security:{max_failed_login:5},calendar:{holidays:[]},notification:{},retention:{},upload:{}}
+    await mount(<CompleteSettingsPage />, {roleCode:"SYS_ADMIN",handler:(c) => c.url === "/settings" ? settings : undefined})
+    await input(document.querySelector('[aria-label="任务并发数"]'),"3")
+    await click(button("保存后台任务"))
+    assert.deepEqual(JSON.parse(requests.find((c) => c.method === "put").data),{worker:{concurrency:3}})
+    await mount(<CompleteSettingsPage />, {roleCode:"ORG_ADMIN",handler:(c) => c.url === "/settings" ? settings : undefined})
+    assert.ok(button("保存后台任务").disabled)
+    assert.equal(button("保存日历").disabled,false)
+  })
+  await test("规则试运行传递临时覆盖并展示具体新增问题", async () => {
+    await mount(<RuleVersionsPage />, {roleCode:"ORG_ADMIN",handler:(c) => {
+      if(c.url === "/rules/versions") return {items:[]}
+        if(c.url === "/rules/dry-run") return {results:[{submission_id:101,current:{summary:{total:2,by_severity:{BLOCK:1,WARN:1}}},trial:{summary:{total:3,by_severity:{BLOCK:1,WARN:2}}},added:["x"],removed:[],added_items:[{rule_code:"R-T01",title:"年龄测试问题",description:"测试详情"}]}]}
+    }})
+    await input(document.querySelector('input[placeholder*="提交包 ID"]'),"101")
+    await input(document.querySelector('[aria-label="临时规则参数"]'),'{"time_rules":[{"code":"R-T01","is_active":false}]}')
+    await click(button("试运行"))
+    const body = JSON.parse(requests.find((c) => c.url === "/rules/dry-run").data)
+    assert.equal(body.overrides.time_rules[0].is_active,false); assert.match(text(),/年龄测试问题/)
+      assert.match(text(),/当前规则：2 个问题/); assert.match(text(),/临时规则：3 个问题/)
+  })
+  await test("导出页面实际提供阶段和批次控件并携带筛选", async () => {
+    await mount(<ExportPage />, {roleCode:"ORG_ADMIN",handler:(c) => {
+      if(c.url === "/stats/export") return {job_id:77}
+      if(c.url === "/jobs/77") return {id:77,status:"FAILED",error:"测试终止"}
+    }})
+    const selects = [...document.querySelectorAll("label")]
+    await input(selects.find((e) => e.textContent.startsWith("批次")).querySelector("select"),"1")
+    await input(selects.find((e) => e.textContent.startsWith("阶段")).querySelector("select"),"3")
+    await click(button("生成 Excel"))
+    const body = JSON.parse(requests.find((c) => c.url === "/stats/export").data)
+    assert.equal(body.filters.stage_code,"3"); assert.equal(body.filters.batch_id,"1")
+  })
 
   await test("学生发展进度页正常加载时间节点与审核轨迹，且不重复展示", async () => {
     await mount(<MyProgressPage />, {
       path: "/my/progress",
       handler: (config) => {
-        if (config.url === "/archives/1/history") return [{ time: "2026-10-20T10:00:00", kind: "REVIEW", title: "PASS", detail: "审核通过", actor_name: "审核员", link_type: "submission", link_id: 101 }]
+        if (config.url === "/archives/1/history") return [
+          { time: "2026-10-20T10:00:00", kind: "REVIEW", title: "PASS", detail: "审核通过", actor_name: "审核员", link_type: "submission", link_id: 101 },
+          { time: "2026-10-21T10:00:00", kind: "FILED", title: "FILE", actor_name: "组织部", link_type: "submission", link_id: 101 },
+          { time: "2026-10-19T10:00:00", kind: "UPLOAD", title: "上传材料（第 2 版）", link_type: "material", link_id: 12, version_id: 401 },
+          { time: "2026-10-19T11:00:00", kind: "AI_REPORT", title: "AI 检查报告 #2 · 已完成", link_type: "submission", link_id: 101 },
+          { time: "2026-10-19T12:00:00", kind: "ISSUE_RESPONSE", title: "提交整改回复", detail: "已补充说明", link_type: "submission", link_id: 101 },
+          { time: "2026-10-19T13:00:00", kind: "NODE_CORRECTION", title: "校正申请日期", detail: "核对原件", link_type: "archive", link_id: 1 },
+        ]
         if (config.url === "/archives/1/timeline") return { stages: [], nodes: [{ code: "N1", name: "递交入党申请", effective: { date: "2025-10-10" }, sources: [] }], derived: [] }
         return undefined
       },
     })
-    assert.match(text(), /审核轨迹/)
+    assert.match(text(), /发展历史/)
     assert.match(text(), /审核通过/)
+    for (const event of ["备案归档", "第 2 版", "AI 检查报告", "已补充说明", "校正申请日期"]) assert.ok(text().includes(event))
+    assert.ok(document.querySelector('a[href="/materials/12?version_id=401"]'))
     assert.match(text(), /递交入党申请/)
     assert.equal([...document.querySelectorAll("h2")].filter((node) => node.textContent === "时间节点").length, 1)
     assert.equal(document.querySelectorAll('[aria-label="阶段进度说明"]').length, 1)
@@ -251,7 +427,7 @@ export async function runUiScenarios() {
     await click(button("保存保留期限"))
     const retentionSave = JSON.parse(requests.filter((request) => request.url === "/settings" && request.method === "put").at(-1).data)
     assert.equal(retentionSave.retention.export_days, 7)
-    await click(button("保存工作日历"))
+    await click(button("保存日历"))
     const calendarSave = JSON.parse(requests.filter((request) => request.url === "/settings" && request.method === "put").at(-1).data)
     assert.deepEqual(calendarSave.calendar.holidays, ["2026-10-01"])
     assert.deepEqual(calendarSave.calendar.extra_workdays, ["2026-10-10"])
@@ -272,7 +448,7 @@ export async function runUiScenarios() {
     })
     await click(button("新建批次"))
     for (const label of ["学生自查截止", "支部初审截止", "交叉互查截止", "学院复审截止", "组织部备案截止"]) assert.match(text(), new RegExp(label))
-    assert.match(text(), /新建批次默认状态为“筹备中”/)
+    assert.match(text(), /新建批次默认状态为“进行中”/)
     await click(button("保存"))
     assert.match(text(), /请填写批次名称/)
     assert.equal(requests.some((request) => request.url === "/batches" && request.method === "post"), false)
@@ -286,7 +462,7 @@ export async function runUiScenarios() {
     })
     assert.match(text(), /2026 春季批次/)
     assert.match(text(), /确定入党积极分子/)
-    const dates = document.querySelectorAll('input[type="date"]')
+    const dates = ["开始日期", "结束日期"].map(name => [...document.querySelectorAll("label")].find(label => label.textContent.startsWith(name)).querySelector("input"))
     await input(dates[0], "2026-10-20")
     await input(dates[1], "2026-10-01")
     await click(button("生成 Excel"))
@@ -732,7 +908,7 @@ export async function runUiScenarios() {
     await mount(<ParsedTextPanel parsed={{ version_id: 401, extractions: [{ id: 1, node_code: "T02", date: "2026-01-01" }] }} editable={false} />)
     assert.equal(button("新增节点记录"), undefined)
     assert.equal(button("删除记录"), undefined)
-    assert.equal(requests.some((request) => request.url === "/rules/time-nodes"), false)
+    assert.equal(requests.some((request) => request.url === "/meta"), false)
     assert.equal(document.querySelector("textarea").readOnly, true)
   })
 

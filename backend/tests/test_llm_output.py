@@ -175,6 +175,23 @@ def rule_db(*semantic_rules):
     return DB({CheckRule: [*semantic_rules, local_rule], PoliticalTerm: [term]})
 
 
+def test_mixed_rule_executes_rule_and_semantics(endpoint):
+    requests = endpoint(content(issue(rule_code='R-C01')))
+    mixed=semantic_rule('R-C01',engine='RULE_LLM',params={})
+    db=rule_db(mixed)
+    drafts,results=run_review(db,['错别字'])
+    assert len(requests)==1
+    assert {'AI_RULE','AI_LLM'} <= {d.source for d in drafts}
+    assert any(r.get('engine')=='LLM' and r['result']=='FAIL' for r in results)
+
+
+@pytest.mark.parametrize('code', ['CLASSIFY','EXTRACT','SUGGEST'])
+def test_enrichment_tasks_reject_empty_objects(endpoint,code):
+    endpoint('{}')
+    value,error,_=llm.chat_json(DB(),code,{})
+    assert value is None and error
+
+
 @pytest.mark.parametrize("confidence,expected", [(0, 0), (0.1, 0), (0.499, 0), (0.5, 1), (1, 1)])
 def test_confidence_threshold_preserves_zero_and_accepts_boundary(endpoint, confidence, expected):
     endpoint(content(issue(confidence)))
@@ -195,7 +212,7 @@ def test_low_confidence_items_do_not_use_the_ten_issue_limit(endpoint):
 def test_partial_semantic_success_is_discarded_on_later_failure(endpoint):
     requests = endpoint(content(issue()), 503)
     drafts, results = run_review(rule_db(semantic_rule(), semantic_rule("R-C07")), ["错别字一", "错别字二"])
-    assert len(requests) == 2  # Existing content calls allow a single network attempt.
+    assert len(requests) == 4  # First success, then initial call plus two network retries.
     assert len(drafts) == 2 and all(d.source == "AI_RULE" for d in drafts)
     assert all(r["result"] == "SKIPPED" and r.get("error") for r in results[:2])
     assert results[-1]["result"] == "FAIL"

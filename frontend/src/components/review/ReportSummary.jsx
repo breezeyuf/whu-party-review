@@ -41,6 +41,13 @@ export default function ReportSummary({ report }) {
         <div>完成 {fmtDateTime(report.finished_at)}</div>
       </dl>
       {report.degrade_reason && <p className="text-xs text-warning">降级说明：{report.degrade_reason}</p>}
+      {report.trigger_type === "RECHECK" && <details className="text-xs">
+        <summary className="cursor-pointer">本轮变化材料（{report.changed_materials?.length || 0}）</summary>
+        <ul className="mt-2 space-y-1">{(report.changed_materials || []).map((item) => <li key={item.material_id}>
+          材料 #{item.material_id}：{{ ADDED: "新增", REMOVED: "移除", UPDATED: "更新" }[item.change] || "变化"}
+          （版本记录 {item.old_version_id ?? "无"} → {item.new_version_id ?? "无"}）
+        </li>)}</ul>
+      </details>}
       {(report.handover_reasons || []).length > 0 && (
         <p className="text-xs">接管原因：{report.handover_reasons.join("、")}</p>
       )}

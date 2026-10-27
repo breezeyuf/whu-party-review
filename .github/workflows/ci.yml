@@ -46,8 +46,12 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - run: python -m pip install -r backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-ocr.txt
+      - run: python -m pip install --index-url https://pypi.org/simple -r backend/requirements.txt -r backend/requirements-ocr.txt
+      - name: Real RapidOCR Chinese date probe
+        run: python backend/ocr_check.py
       - name: Backend and PostgreSQL regressions
         env:
           STORAGE_DIR: ${{ runner.temp }}/party-review-storage

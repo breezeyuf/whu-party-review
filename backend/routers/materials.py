@@ -261,11 +261,34 @@ def list_versions(mid: int, request: Request, db: Session = Depends(get_db), act
     ensure_archive_access(db, actor, m.archive_id, request)
     vers = db.query(MaterialVersion).filter(MaterialVersion.material_id == mid).order_by(MaterialVersion.version_no).all()
     out = []
+    reports = db.query(AiReport).filter(AiReport.submission_id == m.submission_id, AiReport.status == 'DONE').order_by(AiReport.report_no).all()
     for v in vers:
         d = _ver_brief(db, v, v.id == m.current_version_id)
-        d["report_ids"] = []
+        d["report_ids"] = [r.id for r in reports if any(item.get('version_id') == v.id for item in (r.material_versions or []))]
         out.append(d)
     return ok(out)
+
+
+@router.post('/materials/{mid}/retry-parse')
+def retry_parse(mid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    material = db.query(Material).filter(Material.id == mid).first()
+    if not material:
+        raise not_found()
+    ensure_archive_access(db, actor, material.archive_id, request)
+    _editable_submission(db, actor, material)
+    version = db.query(MaterialVersion).filter(MaterialVersion.id == material.current_version_id).with_for_update().first()
+    if not version or version.is_frozen:
+        raise conflict('仅可重新解析当前未冻结材料')
+    pending = db.query(Job).filter(Job.job_type == 'PARSE', Job.target_id == version.id,
+                                    Job.status.in_(['QUEUED','RUNNING'])).first()
+    if pending:
+        return ok({'parse_job_id': pending.id})
+    job = enqueue_job(db, 'PARSE', actor.id, 'material_version', version.id, {'version_id': version.id})
+    version.parse_status = 'PENDING'
+    version.parse_error = None
+    material.updated_at = now()
+    log(db, actor, 'RETRY_PARSE', 'material_version', version.id)
+    return ok({'parse_job_id': job.id})
 
 
 @router.get("/materials/{mid}/parsed")
@@ -321,10 +344,38 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         raise not_found()
     if ver.parse_status != "DONE":
         raise conflict("材料完成解析后才能校正")
+    if 'corrected_text' in body and body['corrected_text'] is not None and not isinstance(body['corrected_text'], str):
+        raise unprocessable('校正文本须为文字或 null')
+    if 'corrected_fields' in body and body['corrected_fields'] is not None and not isinstance(body['corrected_fields'], dict):
+        raise unprocessable('校正字段须为对象或 null')
+    from ai.evidence import effective_fields
+    previous_fields = effective_fields(pr)
+    previous_text = pr.corrected_text if pr.corrected_text is not None else (pr.full_text or '')
     corrections = correct_extractions(db, m, ver, body.get("extractions", []))
     if "corrected_text" in body:
         pr.corrected_text = body.get("corrected_text")
-    if "corrected_fields" in body:
+        if pr.corrected_text is not None:
+            from ai.extract import extract_fields
+            derived = extract_fields(pr.corrected_text)
+            # Preserve prior manual overrides (including deliberate field removal)
+            # when the UI resubmits the same displayed values. Derived values may
+            # follow edited text, but an earlier explicit field edit must survive.
+            if pr.corrected_fields is not None and body.get('corrected_fields', {}) is not None:
+                baseline = extract_fields(previous_text)
+                derived.update({k:v for k,v in previous_fields.items() if baseline.get(k) != v})
+                for k in baseline.keys() - previous_fields.keys():
+                    derived.pop(k, None)
+            # The UI submits the displayed fields even when untouched. Only
+            # intentional field edits override fields freshly derived from text.
+            requested = body.get('corrected_fields')
+            if isinstance(requested, dict):
+                derived.update({k:v for k,v in requested.items() if previous_fields.get(k) != v})
+                for k in previous_fields.keys() - requested.keys():
+                    derived.pop(k, None)
+            pr.corrected_fields = derived
+        elif 'corrected_fields' not in body:
+            pr.corrected_fields = None
+    if "corrected_fields" in body and ("corrected_text" not in body or body['corrected_text'] is None):
         pr.corrected_fields = body.get("corrected_fields")
     pr.corrected_by = actor.id
     pr.corrected_at = now()

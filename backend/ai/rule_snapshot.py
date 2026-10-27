@@ -111,7 +111,7 @@ class EvaluationContext:
 
     def to_dict(self):
         return {
-            "format_version": 1,
+            "format_version": 2,
             "rule_version_id": self.rule_version_id,
             "snapshot_sha256": self.snapshot_sha256,
             "checked_at": self.checked_at,
@@ -120,6 +120,5 @@ class EvaluationContext:
             "calendar": _plain(self.calendar),
             "calendar_source": "CHECK_START_SETTINGS",
             "classify_confidence_threshold": self.classify_confidence_threshold,
-            # Preserve the existing R-T21 semantics, rather than silently redefining it.
-            "upload_date_policy": "CHECK_DATE",
+            "upload_date_policy": "MATERIAL_VERSION_UPLOADED_AT",
         }

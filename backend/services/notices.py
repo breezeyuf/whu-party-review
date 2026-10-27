@@ -11,14 +11,22 @@ from services.messages import send_message
 from utils import CATEGORY_NAMES, SEVERITY_NAMES, as_date, now, stage_name
 
 
-def create_rectification_notice(db: Session, sub: Submission, actor, issue_ids=None, deadline=None, send=True, note=None) -> Notice:
-    q = db.query(Issue).filter(Issue.submission_id == sub.id, Issue.is_active.is_(True))
+def create_rectification_notice(db: Session, sub: Submission, actor, issue_ids=None, deadline=None, send=True, note=None,
+                                *, allow_note_only=False) -> Notice:
+    if issue_ids is not None and (not isinstance(issue_ids, list) or any(type(i) is not int or i <= 0 for i in issue_ids)):
+        raise unprocessable("问题编号须为正整数列表")
+    if type(send) is not bool or (note is not None and not isinstance(note, str)):
+        raise unprocessable("发送选项须为布尔值，备注须为文本")
+    if deadline is not None and not as_date(deadline):
+        raise unprocessable("整改截止日期无效")
+    q = db.query(Issue).filter(Issue.submission_id == sub.id, Issue.is_active.is_(True),
+                               Issue.review_status.in_(("CONFIRMED", "MODIFIED")), Issue.resolution != "RESOLVED")
     if issue_ids:
         q = q.filter(Issue.id.in_(issue_ids))
-    else:
-        q = q.filter(Issue.review_status.in_(("CONFIRMED", "MODIFIED")))
-    issues = q.all()
-    if not issues and not (note or "").strip():
+    issues = q.order_by(Issue.id).all()
+    if issue_ids and set(issue_ids) != {i.id for i in issues}:
+        raise unprocessable("只能关联本提交包中有效、已确认且未解决的问题")
+    if not issues and not (allow_note_only and (note or "").strip()):
         raise unprocessable("没有已确认问题，无法生成整改通知")
     arch = sub.archive
     items = []
@@ -92,6 +100,7 @@ def create_completion_notice(db, sub: Submission, actor, completeness: dict, dea
 
 
 def send_notice(db: Session, notice: Notice) -> Notice:
+    notice = db.query(Notice).filter(Notice.id == notice.id).with_for_update().populate_existing().one()
     if notice.status == "SENT":
         raise conflict("通知已发送")
     notice.status = "SENT"

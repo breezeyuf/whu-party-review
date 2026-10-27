@@ -8,6 +8,7 @@ import { fmtDateTime } from "../../utils/format"
 import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
 import { can } from "../../utils/permissions"
+import { trialOverrides } from "../../utils/ruleWorkflow"
 
 const CHANGE_KIND = {
   checklists: "材料清单",
@@ -74,6 +75,9 @@ export default function RuleVersionsPage() {
   const [diff, setDiff] = useState(null)
   const [trialIds, setTrialIds] = useState("")
   const [trial, setTrial] = useState(null)
+  const [overridesText, setOverridesText] = useState('{"time_rules":[],"check_rules":[]}')
+  const [trialBusy, setTrialBusy] = useState(false)
+  const [trialError, setTrialError] = useState("")
 
   const compare = async () => {
     if (!left || !right) { toast.error("请先分别选择版本 A 和版本 B"); return }
@@ -86,10 +90,16 @@ export default function RuleVersionsPage() {
   }
 
   const run = async () => {
-    const submission_ids = trialIds.split(/[,，\s]+/).map(Number).filter(Boolean).slice(0, 20)
-    if (!submission_ids.length) { toast.error("填写最多 20 个提交包 ID"); return }
-    setTrial(await dryRun({ submission_ids, overrides: {} }))
-    toast.success("试运行完成（不写库）")
+    if (trialBusy) return
+    setTrialError(""); setTrial(null)
+    try {
+      const submission_ids = [...new Set(trialIds.split(/[,，\s]+/).filter(Boolean).map(Number))]
+      if (!submission_ids.length || submission_ids.length > 20 || submission_ids.some((id) => !Number.isSafeInteger(id) || id < 1)) throw new Error("请填写 1 至 20 个有效提交包 ID")
+      const overrides = trialOverrides(overridesText)
+      setTrialBusy(true)
+      setTrial(await dryRun({ submission_ids, overrides }))
+      toast.success("试运行完成（不写库）")
+    } catch (error) { setTrialError(error.message || "试运行失败") } finally { setTrialBusy(false) }
   }
 
   return (
@@ -141,16 +151,22 @@ export default function RuleVersionsPage() {
       {writable && (
         <section className="surface-card mt-4 p-4">
           <h2 className="text-sm font-medium">规则试运行</h2>
-          <p className="mt-1 text-xs text-base-content/55">提交包 ID 可在审核工作区或提交详情地址中查看。输入最多 20 个 ID 后，系统会用当前规则预演并显示新增/消失的问题；不会保存报告，也不会改动正式审核结论。</p>
+          <p className="mt-1 text-xs text-base-content/55">输入最多 20 个提交包 ID，使用同一份当前材料分别运行已发布规则与临时规则，查看新增或消失的问题；不会保存报告，也不会改动正式审核结论。</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <input className="input input-bordered input-sm w-72" placeholder="提交包 ID，逗号分隔" value={trialIds} onChange={(e) => setTrialIds(e.target.value)} />
-            <button type="button" className="btn btn-outline btn-sm" onClick={run}>试运行</button>
+            <button type="button" className="btn btn-outline btn-sm" disabled={trialBusy} onClick={run}>{trialBusy ? "试运行中…" : "试运行"}</button>
           </div>
+          <details className="mt-3"><summary className="cursor-pointer text-sm">临时规则参数</summary><p className="my-2 text-xs text-base-content/60">可临时调整 time_rules 或 check_rules 中的 params、severity、is_active，须指定 code。调整不会保存到规则库。</p><textarea aria-label="临时规则参数" className="textarea textarea-bordered mt-2 w-full font-mono text-xs" rows={8} disabled={trialBusy} value={overridesText} onChange={(e) => setOverridesText(e.target.value)} /></details>
+          {trialError && <p role="alert" className="mt-2 text-xs text-error">{trialError}</p>}
           {trial && (
             <ul className="mt-3 space-y-2 text-xs">
+              {trial.note && <li className="text-base-content/65">{trial.note}</li>}
               {(trial.results || []).map((r) => (
                 <li key={r.submission_id} className="surface-card p-2">
                   提交包 {r.submission_id} · 新增 {(r.added || []).length} · 消失 {(r.removed || []).length}
+                  <p className="mt-1 text-base-content/65">当前规则：{r.current?.summary?.total ?? 0} 个问题（阻断 {r.current?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.current?.summary?.by_severity?.WARN ?? 0}）；临时规则：{r.trial?.summary?.total ?? 0} 个问题（阻断 {r.trial?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.trial?.summary?.by_severity?.WARN ?? 0}）。</p>
+                  {r.error && <p className="text-error">{r.error}</p>}
+                  {[["新增问题", r.added_items || r.added], ["消失问题", r.removed_items || r.removed]].map(([label, items]) => <details key={label} className="mt-2"><summary className="cursor-pointer">{label}（{(items || []).length}）</summary><ul className="mt-1 space-y-1">{(items || []).map((item, index) => <li key={index}>{typeof item === "string" ? item : `${item.rule_code || "人工问题"} · ${item.title || item.fingerprint} · ${item.description || ""}`}</li>)}{!items?.length && <li>无</li>}</ul></details>)}
                 </li>
               ))}
             </ul>

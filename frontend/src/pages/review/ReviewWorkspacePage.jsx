@@ -216,6 +216,7 @@ export default function ReviewWorkspacePage() {
           {tab === "timeline" && timeReq.loading && <Loading label="时间轴" />}
           {tab === "timeline" && !timeReq.loading && !timeReq.error && (
             <TimelineView
+              allowLockedCorrection={activeRole?.role === "ORG_ADMIN"}
               timeline={timeReq.data}
               onCorrect={sub.can?.edit_timeline ? setCorrecting : undefined}
               onLocate={locateTimeline}

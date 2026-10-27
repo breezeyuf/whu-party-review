@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import threading
 from typing import Any, Optional
 
 import httpx
@@ -14,6 +15,49 @@ from errors import unprocessable
 from models import Archive, PromptTemplate
 from security import decrypt_field
 from utils import get_setting
+
+_CALLS = threading.Condition()
+_ACTIVE_CALLS = 0
+
+
+def chat_json(db, code, variables, override=None, *, archive=None, rule_set=None):
+    global _ACTIVE_CALLS
+    if override is not None:
+        validate_credential_options(override)
+    saved_cfg = dict(llm_config(db))
+    cfg = {**saved_cfg, **(override or {})}
+    limit = max(1, min(32, int(cfg.get('max_concurrency') or 2)))
+    with _CALLS:
+        while _ACTIVE_CALLS >= limit:
+            _CALLS.wait()
+        _ACTIVE_CALLS += 1
+    try:
+        text = variables.get('text') or ''
+        if code in ('CONTENT_CHECK','EXTRACT') and cfg.get('desensitize') is not False:
+            text = desensitize_text(text,archive)
+        if code in ('CONTENT_CHECK', 'EXTRACT') and len(text) > 5500:
+            # Redact BEFORE splitting so a boundary cannot expose part of a name/ID.
+            chunks = [text[i:i+5000] for i in range(0,len(text),4800)]
+            if len(chunks)>40:
+                return None, '材料超过单次全文检查上限，请拆分材料；未返回部分检查通过结论', 0
+            field = 'issues' if code=='CONTENT_CHECK' else 'dates'
+            combined, seen, elapsed = [], set(), 0
+            for chunk in chunks:
+                result,error,ms = _chat_json(db,code,{**variables,'text':chunk},override,archive=archive,
+                                           rule_set=rule_set,config_snapshot=saved_cfg)
+                elapsed += ms
+                if error: return None,error,elapsed
+                for item in result[field]:
+                    key=json.dumps(item,sort_keys=True,ensure_ascii=False)
+                    if key not in seen:
+                        seen.add(key); combined.append(item)
+            return {field:combined},None,elapsed
+        return _chat_json(db, code, variables, override, archive=archive, rule_set=rule_set,
+                          config_snapshot=saved_cfg)
+    finally:
+        with _CALLS:
+            _ACTIVE_CALLS -= 1
+            _CALLS.notify_all()
 
 
 def llm_config(db) -> dict:
@@ -35,14 +79,15 @@ def validate_credential_options(options) -> None:
             raise unprocessable(f"{field} 必须是字符串或 null")
 
 
-def chat_json(
+def _chat_json(
     db, code: str, variables: dict, override: Optional[dict] = None, *,
     archive: Optional[Archive] = None,
     rule_set=None,
+    config_snapshot=None,
 ) -> tuple[Optional[dict], Optional[str], float]:
     if override is not None:
         validate_credential_options(override)
-    cfg = dict(llm_config(db))
+    cfg = dict(config_snapshot if config_snapshot is not None else llm_config(db))
     if cfg.get("base_url") is not None and not isinstance(cfg["base_url"], str):
         return None, "大模型接口地址配置无效", 0
     saved_base = (cfg.get("base_url") or "").strip().rstrip("/")
@@ -85,9 +130,17 @@ def chat_json(
         # 模板本身也可能包含身份信息；此处统一处理最终发送的两段提示词。
         sys_p = desensitize_text(sys_p, archive)
         user_p = desensitize_text(user_p, archive)
+    contracts = {
+        'CLASSIFY': '输出 {"type_code":"候选代码","confidence":0.0,"reason":"依据"}。',
+        'EXTRACT': '输出 {"dates":[{"node_code":"候选节点代码","date":"YYYY-MM-DD","raw_text":"原文连续片段","confidence":0.0}]}，不得推测原文没有的日期。',
+        'SUGGEST': '输出 {"suggestion":"建议"}，必须原样保留模板中的修改要求，不得添加新事实。',
+    }
+    user_p += '\n' + contracts.get(code, '')
+    if code == 'CONTENT_CHECK' and 'timeline' in safe_variables:
+        user_p += '\n档案已知时间节点（仅依据已知值核对，空值不得推测）：' + json.dumps(safe_variables['timeline'],ensure_ascii=False)
     payload = {
         "model": model,
-        "temperature": float(cfg.get("temperature") or 0.1),
+        "temperature": float(cfg["temperature"] if cfg.get("temperature") is not None else 0.1),
         "messages": [
             {"role": "system", "content": sys_p},
             {"role": "user", "content": user_p + "\n只输出 JSON。"},

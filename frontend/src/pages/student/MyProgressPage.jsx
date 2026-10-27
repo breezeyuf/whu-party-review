@@ -57,8 +57,8 @@ export default function MyProgressPage() {
           {timelineReq.loading && !timelineReq.data ? <Loading /> : timelineReq.error ? <ErrorState error={timelineReq.error} onRetry={() => timelineReq.reload().catch(() => {})} /> : <TimelineView timeline={timelineReq.data} hidePersonalInfo hideSources compact />}
         </section>
         <section className="surface-card min-w-0 p-4 sm:col-span-2 sm:p-5">
-          <h2 className="mb-3 border-b border-base-200 pb-3 text-base font-semibold">审核轨迹</h2>
-          {historyReq.loading ? <Loading /> : historyReq.error ? <ErrorState error={historyReq.error} onRetry={() => historyReq.reload().catch(() => {})} /> : <ReviewTrail records={Array.isArray(historyReq.data) ? historyReq.data.filter((record) => record.kind === "REVIEW").map((record, index) => ({ ...record, id: `review-${index}`, action: record.title, comment: record.detail })) : []} />}
+          <h2 className="mb-3 border-b border-base-200 pb-3 text-base font-semibold">发展历史</h2>
+          {historyReq.loading ? <Loading /> : historyReq.error ? <ErrorState error={historyReq.error} onRetry={() => historyReq.reload().catch(() => {})} /> : <ReviewTrail records={Array.isArray(historyReq.data) ? historyReq.data : []} />}
         </section>
       </div>
     </div>

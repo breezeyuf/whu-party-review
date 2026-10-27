@@ -25,7 +25,7 @@
 
 ## 离线能力
 
-本机账号、材料上传、PDF／Word 解析、清单检查、规则自查、整改、审核及记录保存使用本地服务。在线大模型默认关闭，需要自行配置接口并联网。此包不含 PaddleOCR 模型，纯扫描图片按现有实现提示人工核对，不把扫描件识别能力标成已安装。
+本机账号、材料上传、PDF／Word 解析、清单检查、规则自查、整改、审核及记录保存使用本地服务。当前源码统一使用 RapidOCR；按下述锁定依赖重新构建时收集本地 ONNX 模型。旧安装包是否包含 OCR 以其交付记录为准，更新源码不会自动替换旧 EXE。离线分发前按 [OCR 部署与验收](OCR部署与验收.md) 完成识别自检。在线大模型默认关闭，需要自行配置接口并联网。
 
 如果系统没有 WebView2，可从微软官方页面安装后重新打开：https://developer.microsoft.com/microsoft-edge/webview2/ 。本机生成包前已检查 WebView2 存在。
 
@@ -37,7 +37,8 @@
 
 ```powershell
 python -m venv .venv-desktop
-.\.venv-desktop\Scripts\python.exe -m pip install -r desktop/requirements-lock.windows-py313.txt
+.\.venv-desktop\Scripts\python.exe -m pip install --index-url https://pypi.org/simple -r desktop/requirements-lock.windows-py313.txt
+.\.venv-desktop\Scripts\python.exe backend/ocr_check.py
 .\.venv-desktop\Scripts\python.exe -m desktop.build
 ```
 

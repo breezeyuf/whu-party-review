@@ -107,6 +107,12 @@ def respond_issue(db: Session, issue: Issue, actor, response_type: str, response
     issue.response_version_id = version_id
     issue.responded_at = now()
     issue.updated_at = now()
+    from services.audit import log
+    log(db, actor, "ISSUE_RESPONSE", "issue", issue.id, {
+        "submission_id": sub.id, "stage_code": sub.stage_code,
+        "response_type": response_type, "response_text": response_text,
+        "version_id": version_id,
+    })
     db.flush()
     return issue
 

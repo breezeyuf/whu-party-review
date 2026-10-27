@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from models import (
     TimeNodeDef,
     TimeNodeExtraction,
 )
-from utils import as_date, now, stage_name
+from utils import as_date, now, stage_name, TZ8
 
 
 def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None:
@@ -84,17 +84,44 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
     seqs = db.query(TimeNodeExtraction).filter(
         TimeNodeExtraction.archive_id == archive_id, TimeNodeExtraction.is_current.is_(True)
     ).all()
+    version_ids = {getattr(e, "material_version_id", None) for e in seqs} - {None}
+    versions = {v.id: v for v in db.query(MaterialVersion).filter(MaterialVersion.id.in_(version_ids)).all()} if version_ids else {}
     seq_map: dict[str, list] = {}
     invalid: dict[str, str] = {}
+    sources: dict[str, list] = {}
     for e in seqs:
         if e.value_date:
             seq_map.setdefault(e.node_code, []).append(e.value_date.isoformat())
         if e.invalid_reason:
             invalid[e.node_code] = e.invalid_reason
+        version_id = getattr(e, "material_version_id", None)
+        version = versions.get(version_id)
+        uploaded_at = version.uploaded_at if version else None
+        if isinstance(uploaded_at, datetime):
+            upload_day = (uploaded_at.replace(tzinfo=TZ8) if uploaded_at.tzinfo is None else uploaded_at).astimezone(TZ8).date()
+        else:
+            upload_day = uploaded_at
+        sources.setdefault(e.node_code, []).append({
+            "node_code": e.node_code, "extraction_id": getattr(e, "id", None),
+            "material_id": getattr(e, "material_id", None), "version_id": version_id,
+            "seq_index": getattr(e, "seq_index", None),
+            "date": e.value_date.isoformat() if e.value_date else None,
+            "end_date": e.value_end_date.isoformat() if e.value_end_date else None,
+            "uploaded_at": uploaded_at.isoformat() if uploaded_at else None,
+            "upload_date": upload_day.isoformat() if upload_day else None,
+            "invalid_reason": e.invalid_reason, "page_no": getattr(e, "page_no", None),
+            "bbox": getattr(e, "bbox", None),
+        })
     out = {}
     for n in nodes:
         dfn = defs.get(n.node_code)
         eff = effective_node(n)
+        node_sources = sources.get(n.node_code, [])
+        # An explicit archive correction replaces the selected source value;
+        # its upload date still comes from that source's original file version.
+        for source in node_sources:
+            if source["extraction_id"] == getattr(n, "source_extraction_id", None) and n.corrected_date:
+                source.update(date=eff["date"], end_date=eff["end_date"], invalid_reason=None)
         out[n.node_code] = {
             "date": eff["date"],
             "end_date": eff["end_date"],
@@ -104,6 +131,7 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
             "has_conflict": n.has_conflict,
             "invalid_reason": invalid.get(n.node_code),
             "value_kind": dfn.value_kind if dfn else "DATE",
+            "sources": node_sources,
         }
     return out
 

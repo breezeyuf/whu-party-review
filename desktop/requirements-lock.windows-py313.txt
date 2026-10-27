@@ -54,3 +54,19 @@ typing-inspection==0.4.4
 typing_extensions==4.16.0
 tzdata==2026.5
 uvicorn==0.54.0
+
+# RapidOCR CPU inference dependencies verified on Windows / Python 3.13.
+charset-normalizer==3.5.2
+colorlog==6.12.0
+flatbuffers==25.12.19
+omegaconf==2.4.0
+onnxruntime==1.31.0
+pillow==13.0.0
+protobuf==7.36.2
+pyclipper==1.4.0
+PyYAML==6.0.3
+rapidocr==3.10.0
+requests==2.34.2
+shapely==2.2.0
+tqdm==4.70.1
+urllib3==2.8.0

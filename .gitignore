@@ -11,6 +11,8 @@ desktop.ini
 # 环境变量与密钥
 .env
 .env.local
+server/.env.server
+server/*.crt
 
 # 日志
 *.log

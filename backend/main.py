@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import CORS_ORIGINS, HOST, PORT, ensure_storage
+from config import CORS_ORIGINS, HOST, PORT, ensure_storage, validate_deployment
 from database import SessionLocal, init_db
 from errors import AppError
 from seed_rules import ensure_admin, seed_rules
@@ -23,6 +23,7 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_deployment()
     ensure_storage()
     init_db()
     db = SessionLocal()
@@ -49,7 +50,7 @@ app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(RequestDiagnosticsMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS or ["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=bool(CORS_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],

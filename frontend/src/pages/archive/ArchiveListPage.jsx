@@ -16,6 +16,7 @@ import { availableBranches, canManageArchive } from "../../utils/archiveWorkflow
 import { useAuth } from "../../context/AuthContext"
 import { useMeta } from "../../context/MetaContext"
 import { useToast } from "../../context/ToastContext"
+import { validDate } from "../../utils/adminWorkflow"
 
 const EMPTY = {
   real_name: "", gender: "男", student_no: "", branch_id: "", batch_id: "", current_stage: "1", major: "", class_name: "",
@@ -41,6 +42,7 @@ export default function ArchiveListPage() {
 
   const save = async () => {
     if (saving) return
+    if (form.birth_date && !validDate(form.birth_date)) { toast.error("出生日期无效"); return }
     if (!form.real_name.trim() || !form.student_no.trim() || !branches.some((b) => Number(b.id) === Number(form.branch_id))) {
       toast.error("请填写姓名、学号并选择支部")
       return
@@ -54,6 +56,9 @@ export default function ArchiveListPage() {
           student_no: form.student_no.trim(),
           major: form.major || undefined,
           class_name: form.class_name || undefined,
+          ethnicity: form.ethnicity || undefined,
+          birth_date: form.birth_date || undefined,
+          native_place: form.native_place || undefined,
         },
         branch_id: Number(form.branch_id),
         batch_id: form.batch_id ? Number(form.batch_id) : undefined,
@@ -142,6 +147,9 @@ export default function ArchiveListPage() {
             </select>
             <input className="input input-bordered input-sm" placeholder="专业" value={form.major} onChange={(e) => set("major", e.target.value)} />
             <input className="input input-bordered input-sm" placeholder="班级" value={form.class_name} onChange={(e) => set("class_name", e.target.value)} />
+            <input aria-label="民族" className="input input-bordered input-sm" placeholder="民族" value={form.ethnicity || ""} onChange={(e) => set("ethnicity", e.target.value)} />
+            <label className="text-xs">出生日期<input aria-label="出生日期" type="date" className="input input-bordered input-sm w-full" value={form.birth_date || ""} onChange={(e) => set("birth_date", e.target.value)} /></label>
+            <input aria-label="籍贯" className="input input-bordered input-sm" placeholder="籍贯" value={form.native_place || ""} onChange={(e) => set("native_place", e.target.value)} />
           </div>
         )}
       </Modal>

@@ -146,6 +146,54 @@ def parsed_material(c):
     return m, v
 
 
+def test_archive_profile_edit_invalidates_previous_report(case, as_client):
+    c = case
+    c.sub.latest_report_id = c.report.id
+    c.report.finished_at = now() - timedelta(seconds=10)
+    c.db.flush()
+    response = as_client(c.org).put(f"/api/archives/{c.arch.id}", json={
+        "real_name":"校正姓名", "birth_date":"2004-05-12", "ethnicity":"测试", "profile_extra":{"source":"synthetic"}})
+    assert response.status_code == 200, response.text
+    assert c.arch.real_name == "校正姓名" and c.arch.birth_date == date(2004,5,12)
+    assert report_is_stale(c.db,c.sub,c.report)
+
+
+def test_trial_runs_all_rule_categories_without_writing(case, as_client, monkeypatch):
+    from ai.types import IssueDraft
+    from services import rule_trial
+    c = case
+    parsed_material(c)
+    before = c.db.query(Issue).count()
+    monkeypatch.setattr(rule_trial, 'run_format', lambda *args,**kwargs: ([IssueDraft('FORMAT','WARN','形式试运行','格式详情',rule_code='R-F01')],[]))
+    monkeypatch.setattr(rule_trial, 'run_content', lambda *args,**kwargs: ([IssueDraft('CONTENT','WARN','内容试运行','内容详情',rule_code='R-C01')],[]))
+    response = as_client(c.org).post('/api/rules/dry-run',json={'submission_ids':[c.sub.id],'overrides':{}})
+    assert response.status_code == 200,response.text
+    result = response.json()['data']['results'][0]
+    assert result['added_items'] == result['removed_items'] == []
+    assert result['current'] == result['trial']
+    assert result['current']['summary']['by_category']['FORMAT'] >= 1
+    assert result['current']['summary']['by_category']['CONTENT'] >= 1
+    assert c.db.query(Issue).count() == before
+
+
+def test_trial_rejects_unknown_override_and_cross_scope(case, as_client):
+    c = case
+    response = as_client(c.org).post('/api/rules/dry-run',json={'submission_ids':[c.sub.id],'overrides':{'check_rules':[{'code':'MISSING'}]}})
+    assert response.status_code == 422
+
+
+def test_node_editor_range_and_clearing_derived_fields(case, as_client):
+    from models import TimeNodeDef
+    c = case
+    client = as_client(c.org)
+    response = client.post('/api/rules/time-nodes', json={'code':'T90','name':'测试区间','value_kind':'DATE_RANGE','stage_code':3,'required_from_stage':3})
+    assert response.status_code == 200,response.text
+    row = c.db.query(TimeNodeDef).filter(TimeNodeDef.code=='D01').one()
+    response = client.put(f'/api/rules/time-nodes/{row.id}',json={'value_kind':'DATE','derive_expr':None,'stage_code':None,'required_from_stage':None})
+    assert response.status_code == 200,response.text
+    assert row.derive_expr is None and row.stage_code is None
+
+
 def test_manual_issue_region_keeps_exact_version_and_coordinates(case, as_client):
     c = case
     m, v = parsed_material(c)

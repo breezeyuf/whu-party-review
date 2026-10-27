@@ -1,0 +1,12 @@
+localhost {
+    tls internal
+    encode zstd gzip
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "same-origin"
+    }
+    reverse_proxy backend:8000 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}

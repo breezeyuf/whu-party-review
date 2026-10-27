@@ -13,6 +13,11 @@ from services.audit import log as audit_log
 REVIEWER_ROLES = {"BRANCH_REVIEWER", "CROSS_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN"}
 
 
+def deny_object_access(db: Session, actor: Actor, object_type: str, object_id, request=None):
+    audit_log(db, actor, "ACCESS_DENIED", object_type, object_id, {"reason": "scope"}, request)
+    raise not_found()
+
+
 def scoped_archives(query: Query, actor: Actor, db: Session) -> Query:
     role, org_id = actor.role, actor.org_id
     if role == "STUDENT":
@@ -82,9 +87,7 @@ def ensure_archive_access(db: Session, actor: Actor, archive_id: int, request=No
     q = scoped_archives(db.query(Archive), actor, db).filter(Archive.id == archive_id)
     row = q.first()
     if not row:
-        if request:
-            audit_log(db, actor, "ACCESS_DENIED", "archive", str(archive_id), {"reason": "scope"}, request)
-        raise not_found()
+        deny_object_access(db, actor, "archive", archive_id, request)
     return row
 
 
@@ -92,9 +95,7 @@ def ensure_submission_access(db: Session, actor: Actor, submission_id: int, requ
     q = scoped_submissions(db.query(Submission), actor, db).filter(Submission.id == submission_id)
     row = q.first()
     if not row:
-        if request:
-            audit_log(db, actor, "ACCESS_DENIED", "submission", str(submission_id), {"reason": "scope"}, request)
-        raise not_found()
+        deny_object_access(db, actor, "submission", submission_id, request)
     return row
 
 

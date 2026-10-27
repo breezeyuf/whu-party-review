@@ -19,6 +19,7 @@ from ai.rule_snapshot import EvaluationContext, RuleSet
 from ai.suggest import fill_suggestions
 from models import (
     AiReport,
+    AuditLog,
     Archive,
     ArchiveTimeNode,
     CheckRule,
@@ -37,7 +38,7 @@ from services.timeline import merge_archive_nodes, node_map_for_archive
 from utils import now, get_setting
 
 
-def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) -> ParseResult:
+def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, use_llm=True) -> ParseResult:
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == version_id).first()
     if not ver:
         raise ValueError("version not found")
@@ -49,7 +50,38 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
     ver.parse_status = "RUNNING"
     db.flush()
     try:
-        result = parse_version_file(ver.stored_path, ver.file_ext)
+        from ai.ocr import settings as ocr_settings
+        token = ocr_settings.set(get_setting(db, 'ocr', {}))
+        try:
+            result = parse_version_file(ver.stored_path, ver.file_ext)
+        finally:
+            ocr_settings.reset(token)
+        if result.get('ocr_failed'):
+            # Keep diagnostic evidence, but do not replace current classification
+            # or time-node extractions with an incomplete OCR attempt.
+            partial=db.query(ParseResult).filter(ParseResult.version_id==ver.id).first()
+            kept_previous = partial is not None
+            if partial is None:
+                partial=ParseResult(version_id=ver.id,created_at=now())
+                db.add(partial)
+                for field,default in [('parser','NONE'),('ocr_engine',None),('preview_pdf_path',None),('full_text',''),
+                                      ('char_count',0),('pages',[]),('visual_marks',{}),('format_features',{}),('warnings',[])]:
+                    setattr(partial,field,result.get(field,default))
+                partial.extracted_fields=extract_fields(result.get('full_text') or '')
+                ver.page_count=result.get('page_count') or len(result.get('pages') or [])
+            else:
+                warning='本次重新解析未完成，当前显示此前保留的解析及人工校正；请重试解析'
+                warnings = list(partial.warnings or [])
+                if warning not in warnings:
+                    warnings.append(warning)
+                partial.warnings = warnings
+            partial.updated_at=now()
+            db.flush()
+            from ai.ocr import OCRProcessingError
+            raise OCRProcessingError('本地 OCR 识别未完成，' + ('此前解析及人工校正已保留' if kept_previous else '部分结果已保留') + '；请检查引擎后重新解析')
+        if use_llm:
+            from ai.ocr_review import review_result
+            review_result(db, result)
         is_current = material.current_version_id == ver.id and material.status == "ACTIVE"
         types = rule_set.rows("material_types") if rule_set else db.query(MaterialType).filter(MaterialType.is_active.is_(True)).all()
         declared = (rule_set.types.get(material.declared_type_id) if rule_set else
@@ -57,6 +89,12 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
         threshold = context.classify_confidence_threshold if context else float(get_setting(db, "ai", {}).get("classify_confidence_threshold") or 0.7)
         cls = classify_material(result.get("full_text") or "", declared, types,
                                 threshold)
+        enrich = use_llm and llm_enabled(db)
+        if enrich and material.type_status != 'CONFIRMED':
+            from ai.enrichment import classify_fallback
+            cls, error = classify_fallback(db, result.get('full_text') or '', cls, types, threshold,
+                archive=material.archive, rule_set=rule_set)
+            if error: result.setdefault('warnings', []).append('模型分类未采用：'+error)
         if is_current and material.type_status != "CONFIRMED":
             material.type_id = cls["type_id"]
             material.type_source = cls["type_source"]
@@ -68,12 +106,45 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
         result["extracted_fields"] = fields
         nodes = rule_set.rows("time_node_defs") if rule_set else db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
         extractions = extract_nodes(result.get("full_text") or "", result.get("pages") or [], type_row, nodes)
+        if enrich:
+            from ai.enrichment import extract_fallback
+            extractions, error = extract_fallback(db, result.get('full_text') or '', result.get('pages') or [], extractions, nodes,
+                archive=material.archive, rule_set=rule_set)
+            if error: result.setdefault('warnings', []).append('模型补抽未采用：'+error)
+        # A retry of the same file must keep manually checked node values. New
+        # file versions still replace all sources from the old version.
+        manual = db.query(TimeNodeExtraction).filter(
+            TimeNodeExtraction.material_version_id == ver.id,
+            TimeNodeExtraction.is_current.is_(True),
+            TimeNodeExtraction.method == 'MANUAL',
+        ).all()
+        manual_keys = {(row.node_code, row.seq_index or 0) for row in manual}
+        deleted_keys = set()
+        for entry in db.query(AuditLog).filter(AuditLog.action == 'PARSE_CORRECT',
+                AuditLog.object_type == 'material', AuditLog.object_id == str(material.id)).order_by(AuditLog.id).all():
+            detail = entry.detail if isinstance(entry.detail, dict) else {}
+            if detail.get('version_id') != ver.id:
+                continue
+            for change in detail.get('extractions') or []:
+                if not isinstance(change, dict):
+                    continue
+                before = change.get('before') or {}
+                if change.get('action') == 'DELETE' and before.get('node_code'):
+                    deleted_keys.add((before['node_code'], before.get('seq_index') or 0))
+                after = change.get('after') or {}
+                if change.get('action') in ('CREATE', 'UPDATE') and after.get('node_code'):
+                    deleted_keys.discard((after['node_code'], after.get('seq_index') or 0))
         db.query(TimeNodeExtraction).filter(
             TimeNodeExtraction.material_id == material.id,
             TimeNodeExtraction.is_current.is_(True),
             True if is_current else TimeNodeExtraction.material_version_id == ver.id,
         ).update({"is_current": False})
+        for row in manual:
+            row.is_current = is_current
         for ex in extractions:
+            key = (ex['node_code'], ex.get('seq_index') or 0)
+            if key in manual_keys or key in deleted_keys:
+                continue
             db.add(TimeNodeExtraction(
                 archive_id=material.archive_id,
                 node_code=ex["node_code"],
@@ -126,7 +197,8 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None) 
     except Exception as e:
         log_exception("material.parse_failed", e, version_id=version_id)
         ver.parse_status = "FAILED"
-        ver.parse_error = "材料解析失败，请联系管理员并提供材料版本编号"
+        from ai.ocr import OCRProcessingError
+        ver.parse_error = str(e) if isinstance(e, OCRProcessingError) else "材料解析失败，请联系管理员并提供材料版本编号"
         db.flush()
         raise
 
@@ -199,7 +271,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
                 continue
             versions[m.id] = ver
             if ver.parse_status != "DONE":
-                parse_version(db, ver.id, rule_set=rules, context=context)
+                parse_version(db, ver.id, rule_set=rules, context=context, use_llm=enabled)
                 db.refresh(ver)
             pr = db.query(ParseResult).filter(ParseResult.version_id == ver.id).first()
             if pr:
@@ -211,7 +283,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         snapshot["evaluation_context"] = context.to_dict()
         snapshot["node_inputs"] = node_map
         d3, r3 = run_format(db, materials, versions, parses, types, rule_set=rules)
-        d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled, rule_set=rules)
+        d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled, rule_set=rules, timeline=node_map)
         if enabled:
             errors = list(dict.fromkeys(r["error"] for r in r4 if r.get("engine") == "LLM" and r.get("error")))
             if errors:
@@ -225,6 +297,12 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         report.degrade_reason = degrade
         drafts = d1 + d2 + d3 + d4
         fill_suggestions(db, drafts, rule_set=rules)
+        if enabled and mode == 'RULE_LLM':
+            from ai.enrichment import polish_suggestions
+            suggestion_error = polish_suggestions(db, drafts, archive=sub.archive, rule_set=rules)
+            if suggestion_error:
+                r4.append({'rule_code':'SUGGEST','engine':'LLM','result':'SKIPPED',
+                    'reason':'建议润色不可用，已保留模板建议：'+suggestion_error})
         rule_results = r1 + r2 + r3 + r4
         summary = summarize(drafts, len(materials), rule_results)
         rec = recommend(summary, drafts)
@@ -245,6 +323,16 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         reasons = _handover_reasons(sub, materials, drafts, mode, node_map)
         hs = "REQUIRED" if reasons else "NOT_REQUIRED"
         report.material_versions = used_versions
+        if prev:
+            before = {v['material_id']: v for v in (prev.material_versions or [])}
+            after = {v['material_id']: v for v in used_versions}
+            report.changed_materials = [
+                {'material_id': mid, 'old_version_id': before.get(mid, {}).get('version_id'),
+                 'new_version_id': after.get(mid, {}).get('version_id'),
+                 'change': 'ADDED' if mid not in before else 'REMOVED' if mid not in after else 'UPDATED'}
+                for mid in sorted(before.keys() | after.keys())
+                if before.get(mid, {}).get('version_id') != after.get(mid, {}).get('version_id')
+            ]
         report.classification = classification
         report.completeness = completeness
         report.timeline_snapshot = snapshot

@@ -87,8 +87,9 @@ export function batchReviewResult(selected, response) {
 export function reviewHistoryLink(record, role) {
   if (!record.link_id) return null
   const id = encodeURIComponent(record.link_id)
-  if (record.link_type === "material") return { to: `/materials/${id}`, label: "查看材料" }
+  if (record.link_type === "material") return { to: `/materials/${id}${record.version_id ? `?version_id=${encodeURIComponent(record.version_id)}` : ""}`, label: "查看材料" }
   if (record.link_type === "submission") return { to: role === "STUDENT" ? `/my/self-check/${id}` : `/review/submissions/${id}`, label: "查看提交包" }
   if (record.link_type === "notice") return { to: role === "STUDENT" ? `/my/rectification?notice=${id}` : `/notices?notice=${id}`, label: "查看通知" }
+  if (record.link_type === "archive") return { to: role === "STUDENT" ? "/my/progress" : `/archives/${id}`, label: "查看时间节点" }
   return null
 }

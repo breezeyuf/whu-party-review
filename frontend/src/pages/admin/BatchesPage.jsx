@@ -2,123 +2,62 @@ import { useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
 import DataTable, { Pager } from "../../components/common/DataTable"
 import { Modal, ConfirmDialog } from "../../components/common/Modal"
-import { useRequest } from "../../hooks/useRequest"
+import { ErrorState } from "../../components/common/States"
 import { usePagination } from "../../hooks/usePagination"
+import { useRequest } from "../../hooks/useRequest"
 import { createBatch, deleteBatch, listBatches, updateBatch } from "../../api/batches"
 import { fmtDate } from "../../utils/format"
+import { batchPayload, DEADLINES } from "../../utils/adminWorkflow"
 import { useToast } from "../../context/ToastContext"
 
-const EMPTY = { name: "", year: new Date().getFullYear(), term: "FULL_YEAR", status: "PLANNED", stage_codes: "1,2,3,4,5", start_date: "", end_date: "", self_deadline: "", branch_deadline: "", cross_deadline: "", college_deadline: "", org_deadline: "", description: "" }
-
-const TERM_NAME = { FULL_YEAR: "全年", H1: "上半年", H2: "下半年", 全年: "全年" }
-const BATCH_STATUS = { PLANNED: "筹备中", ACTIVE: "进行中", CLOSED: "已结束", ARCHIVED: "已归档" }
-
+const EMPTY = { name: "", year: new Date().getFullYear(), term: "FULL_YEAR", stage_codes: "1,2,3,4,5", start_date: "", end_date: "", status: "ACTIVE", description: "" }
 export default function BatchesPage() {
   const toast = useToast()
   const { query, setPage, setQuery } = usePagination()
   const req = useRequest(() => listBatches(query), [JSON.stringify(query)])
   const [edit, setEdit] = useState(null)
   const [removeId, setRemoveId] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [removing, setRemoving] = useState(false)
-  const rows = req.data?.items || []
-
+  const [closeTarget, setCloseTarget] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const set = (key, value) => setEdit((f) => ({ ...f, [key]: value }))
   const save = async () => {
-    if (saving) return
-    const name = String(edit.name || "").trim()
-    const year = Number(edit.year)
-    const stageCodes = String(edit.stage_codes || "").split(/[,，]/).map((s) => s.trim()).filter(Boolean).map(Number)
-    if (!name) { toast.error("请填写批次名称"); return }
-    if (!Number.isInteger(year) || year < 2000 || year > 2200) { toast.error("年度须填写 2000 至 2200 之间的整数"); return }
-    if (!stageCodes.length || stageCodes.some((code) => !Number.isInteger(code) || code < 1 || code > 5) || new Set(stageCodes).size !== stageCodes.length) {
-      toast.error("阶段编码须为 1 至 5，不能重复"); return
-    }
-    if (edit.start_date && edit.end_date && edit.start_date > edit.end_date) { toast.error("结束日期不能早于开始日期"); return }
-    const deadlines = [edit.self_deadline, edit.branch_deadline, edit.cross_deadline, edit.college_deadline, edit.org_deadline].filter(Boolean)
-    if (deadlines.some((date, index) => index > 0 && deadlines[index - 1] > date)) {
-      toast.error("各级截止时间应按自查、支部、交叉互查、学院、组织部的顺序排列"); return
-    }
-    const body = {
-      ...edit,
-      name,
-      year,
-      stage_codes: stageCodes,
-    }
-    setSaving(true)
+    if (busy) return
+    setError("")
     try {
+      const body = batchPayload(edit)
+      setBusy(true)
       if (edit.id) await updateBatch(edit.id, body)
       else await createBatch(body)
-      toast.success("已保存")
-      setEdit(null)
-      req.reload().catch((e) => toast.error(`批次已保存，但列表刷新失败：${e.message || "请重试"}`))
-    } catch (e) {
-      toast.error(e.message || "保存失败")
-    } finally {
-      setSaving(false)
-    }
+      setEdit(null); toast.success("批次已保存")
+      req.reload().catch(() => {})
+    } catch (e) { setError(e.message || "保存失败") } finally { setBusy(false) }
   }
-
-  return (
-    <div>
-      <PageHeader title="发展批次" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => setEdit({ ...EMPTY })}>新建批次</button>} />
-      <div className="surface-card p-2">
-        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={rows} empty="还没有发展批次" emptyHint="点击右上角“新建批次”开始配置。" columns={[
-          { key: "name", title: "名称", render: (r) => <>{r.name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</> },
-          { key: "year", title: "年度", render: (r) => `${r.year} ${TERM_NAME[r.term] || r.term || ""}` },
-          { key: "span", title: "起止", render: (r) => <span className="text-xs">{fmtDate(r.start_date)} ~ {fmtDate(r.end_date)}</span> },
-          { key: "n", title: "档案", render: (r) => r.archive_count ?? "—" },
-          { key: "st", title: "状态", render: (r) => {
-            const s = r.status
-            const cls = s === "ACTIVE" ? "badge-success" : s === "CLOSED" || s === "ARCHIVED" ? "badge-ghost" : "badge-warning"
-            return s ? <span className={`badge badge-sm badge-soft ${cls}`}>{BATCH_STATUS[s] || s}</span> : "—"
-          } },
-          { key: "op", title: "", render: (r) => (
-            <>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => setEdit({ ...r, stage_codes: (r.stage_codes || []).join(",") })}>编辑</button>
-              <button type="button" className="btn btn-ghost btn-xs text-error" disabled={Number(r.archive_count) > 0} title={Number(r.archive_count) > 0 ? "批次已有档案，不能删除；可编辑状态并设为已结束" : "删除批次"} onClick={() => setRemoveId(r.id)}>删除</button>
-            </>
-          ) },
-        ]} />
-        {!req.error && <div className="px-2"><Pager page={req.data?.page ?? query.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>}
-      </div>
-      <Modal open={!!edit} wide title={edit?.id ? "编辑批次" : "新建批次"} onClose={() => setEdit(null)} footer={
-        <>
-          <button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={() => setEdit(null)}>取消</button>
-          <button type="button" className="btn btn-primary btn-sm" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存"}</button>
-        </>
-      }>
-        {edit && (
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="form-control sm:col-span-2"><span className="label-text text-xs">批次名称</span><input className="input input-bordered input-sm" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">年度</span><input className="input input-bordered input-sm" type="number" min="2000" max="2200" value={edit.year} onChange={(e) => setEdit({ ...edit, year: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">学期</span><select className="select select-bordered select-sm" value={edit.term || "FULL_YEAR"} onChange={(e) => setEdit({ ...edit, term: e.target.value })}><option value="FULL_YEAR">全年</option><option value="H1">上半年</option><option value="H2">下半年</option></select></label>
-            <label className="form-control"><span className="label-text text-xs">批次开始日期</span><input className="input input-bordered input-sm" type="date" value={String(edit.start_date || "").slice(0, 10)} onChange={(e) => setEdit({ ...edit, start_date: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">批次结束日期</span><input className="input input-bordered input-sm" type="date" value={String(edit.end_date || "").slice(0, 10)} onChange={(e) => setEdit({ ...edit, end_date: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">学生自查截止</span><input className="input input-bordered input-sm" type="date" value={String(edit.self_deadline || "").slice(0, 10)} onChange={(e) => setEdit({ ...edit, self_deadline: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">支部初审截止</span><input className="input input-bordered input-sm" type="date" value={String(edit.branch_deadline || "").slice(0, 10)} onChange={(e) => setEdit({ ...edit, branch_deadline: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">交叉互查截止</span><input className="input input-bordered input-sm" type="date" value={String(edit.cross_deadline || "").slice(0, 10)} onChange={(e) => setEdit({ ...edit, cross_deadline: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">学院复审截止</span><input className="input input-bordered input-sm" type="date" value={String(edit.college_deadline || "").slice(0, 10)} onChange={(e) => setEdit({ ...edit, college_deadline: e.target.value })} /></label>
-            <label className="form-control"><span className="label-text text-xs">组织部备案截止</span><input className="input input-bordered input-sm" type="date" value={String(edit.org_deadline || "").slice(0, 10)} onChange={(e) => setEdit({ ...edit, org_deadline: e.target.value })} /></label>
-            {edit.id ? <label className="form-control"><span className="label-text text-xs">批次状态</span><select className="select select-bordered select-sm" value={edit.status || "PLANNED"} onChange={(e) => setEdit({ ...edit, status: e.target.value })}>{Object.entries(BATCH_STATUS).map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label> : <p className="sm:col-span-2 text-xs text-base-content/55">新建批次默认状态为“筹备中”，启用后可在编辑中调整。</p>}
-            <label className="form-control sm:col-span-2"><span className="label-text text-xs">适用阶段编码（逗号分隔）</span><input className="input input-bordered input-sm" placeholder="例如 1,2,3,4,5" value={edit.stage_codes} onChange={(e) => setEdit({ ...edit, stage_codes: e.target.value })} /></label>
-            <textarea className="textarea textarea-bordered text-sm sm:col-span-2" rows={2} placeholder="说明" value={edit.description || ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
-          </div>
-        )}
-      </Modal>
-      <ConfirmDialog open={!!removeId} danger busy={removing} title="删除批次" message="删除后无法恢复。已有档案的批次不能删除，请编辑并设为“已结束”。" onClose={() => { if (!removing) setRemoveId(null) }} onConfirm={async () => {
-        if (removing) return
-        setRemoving(true)
-        try {
-          await deleteBatch(removeId)
-          setRemoveId(null)
-          toast.success("批次已删除")
-          req.reload().catch((e) => toast.error(`删除成功，但列表刷新失败：${e.message || "请重试"}`))
-        } catch (e) {
-          toast.error(e.message || "删除失败")
-        } finally {
-          setRemoving(false)
-        }
-      }} />
-    </div>
-  )
+  return <div>
+    <PageHeader title="发展批次" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => { setError(""); setEdit({ ...EMPTY }) }}>新建批次</button>} />
+    <div className="surface-card p-2"><DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="还没有发展批次" emptyHint="点击右上角“新建批次”开始配置。" columns={[
+      { key: "name", title: "名称", render: (r) => <>{r.name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</> },
+      { key: "year", title: "年度", render: (r) => r.year },
+      { key: "span", title: "起止", render: (r) => `${fmtDate(r.start_date)} ~ ${fmtDate(r.end_date)}` },
+      { key: "n", title: "档案", render: (r) => r.archive_count ?? "—" },
+      { key: "status", title: "状态", render: (r) => r.status === "CLOSED" ? "已关闭" : "进行中" },
+      { key: "actions", title: "操作", render: (r) => <div className="flex flex-wrap gap-1">
+        <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setError(""); setEdit({ ...r, stage_codes: (r.stage_codes || []).join(",") }) }}>编辑</button>
+        {r.status !== "CLOSED" && <button type="button" className="btn btn-ghost btn-xs" onClick={() => setCloseTarget(r)}>关闭批次</button>}
+        <button type="button" className="btn btn-ghost btn-xs text-error" disabled={Number(r.archive_count) > 0} title={Number(r.archive_count) > 0 ? "已有档案，请关闭批次" : "删除批次"} onClick={() => setRemoveId(r.id)}>删除</button>
+      </div> },
+    ]} />{!req.error && <Pager page={req.data?.page} total={req.data?.total} pageSize={req.data?.page_size} onPage={setPage} onPageSize={page_size => setQuery({page_size})} />}</div>
+    <Modal open={!!edit} wide title={edit?.id ? "编辑批次" : "新建批次"} onClose={() => { if (!busy) setEdit(null) }} footer={<><button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setEdit(null)}>取消</button><button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? "保存中…" : "保存"}</button></>}>
+      {edit && <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
+        {[["name", "批次名称", "text"], ["year", "年度", "number"], ["start_date", "开始日期", "date"], ["end_date", "结束日期", "date"], ...DEADLINES.map(([key,label]) => [key,label,"date"]), ["stage_codes", "阶段编码（1 至 5，逗号分隔）", "text"]].map(([key,label,type]) => <label key={key} className="form-control text-xs">{label}<input aria-label={label} className="input input-bordered input-sm mt-1" type={type} value={type === "date" ? String(edit[key] || "").slice(0,10) : edit[key] ?? ""} onChange={(e) => set(key,e.target.value)} /></label>)}
+        <label className="form-control text-xs">学期<select aria-label="批次学期" className="select select-bordered select-sm mt-1" value={edit.term} onChange={(e) => set("term",e.target.value)}><option value="FULL_YEAR">全年</option><option value="SPRING">春季</option><option value="AUTUMN">秋季</option>{!["FULL_YEAR","SPRING","AUTUMN"].includes(edit.term) && <option value={edit.term}>{edit.term}</option>}</select></label>
+        {edit.id && <label className="form-control text-xs">状态<select aria-label="批次状态" className="select select-bordered select-sm mt-1" value={edit.status} onChange={(e) => set("status",e.target.value)}><option value="ACTIVE">进行中</option><option value="CLOSED">已关闭</option></select></label>}
+        {!edit.id && <p className="text-xs sm:col-span-2">新建批次默认状态为“进行中”，已有档案时可关闭批次并保留记录。</p>}
+        <label className="form-control text-xs sm:col-span-2">说明<textarea aria-label="批次说明" className="textarea textarea-bordered mt-1 text-sm" value={edit.description || ""} onChange={(e) => set("description",e.target.value)} /></label>
+      </fieldset>}
+      {error && <p role="alert" className="mt-2 text-xs text-error">{error}</p>}
+    </Modal>
+    <ConfirmDialog open={!!closeTarget} title="关闭批次" message={`确定关闭“${closeTarget?.name || ""}”？已有档案和审核记录保留。`} onClose={() => setCloseTarget(null)} onConfirm={async () => { await updateBatch(closeTarget.id,{ status:"CLOSED" }); setCloseTarget(null); await req.reload() }} />
+    <ConfirmDialog open={!!removeId} danger title="删除批次" message="已有档案的批次不能删除，请使用关闭批次。" onClose={() => setRemoveId(null)} onConfirm={async () => { await deleteBatch(removeId); setRemoveId(null); await req.reload() }} />
+  </div>
 }

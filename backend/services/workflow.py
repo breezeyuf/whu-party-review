@@ -227,6 +227,7 @@ def review_package(db: Session, sub: Submission, actor, level: str, decision: st
         valid_ids = {i for (i,) in db.query(Issue.id).filter(
             Issue.submission_id == sub.id, Issue.is_active.is_(True), Issue.id.in_(ids),
             Issue.review_status.in_(("CONFIRMED", "MODIFIED")),
+            Issue.resolution != "RESOLVED",
         ).all()}
         if set(ids) != valid_ids:
             raise unprocessable("退回只能关联本提交包的有效已确认问题")
@@ -241,10 +242,12 @@ def review_package(db: Session, sub: Submission, actor, level: str, decision: st
         confirmed = (
             db.query(Issue)
             .filter(Issue.submission_id == sub.id, Issue.is_active.is_(True),
+                    Issue.resolution != "RESOLVED",
                     Issue.review_status.in_(("CONFIRMED", "MODIFIED")))
             .count()
         )
         ids = [i.id for i in db.query(Issue).filter(Issue.submission_id == sub.id, Issue.is_active.is_(True),
+                                                    Issue.resolution != "RESOLVED",
                                                     Issue.review_status.in_(("CONFIRMED", "MODIFIED"))).all()]
     if confirmed == 0 and not (comment or "").strip():
         raise unprocessable("退回须至少选择 1 条已确认问题或填写审核意见")
@@ -254,7 +257,7 @@ def review_package(db: Session, sub: Submission, actor, level: str, decision: st
     sub.level_entered_at = now()
     freeze_versions(db, sub, False)
     rec = add_record(db, sub, actor, level, "RETURN", from_s, "RETURNED", comment, ids, is_batch, report_id)
-    notice = create_rectification_notice(db, sub, actor, ids, deadline, send=True, note=comment)
+    notice = create_rectification_notice(db, sub, actor, ids, deadline, send=True, note=comment, allow_note_only=True)
     send_message(db, sub.archive.student_user_id, "RETURNED",
                  f"{stage_name(db, sub.stage_code)}材料已退回，请按整改通知修改",
                  comment or "", "notice", notice.id if notice else sub.id)

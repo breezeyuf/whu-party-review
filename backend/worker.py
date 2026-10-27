@@ -35,6 +35,7 @@ _last_scan = 0.0
 
 
 def start_workers() -> None:
+    _stop.clear()
     if not WORKER_ENABLED:
         event("worker.disabled")
         return
@@ -85,7 +86,9 @@ def _loop() -> None:
         finally:
             db.close()
         if not did:
-            _stop.wait(1.0)
+            with SessionLocal() as settings_db:
+                delay = get_setting(settings_db, 'worker', {}).get('poll_interval_s', 1)
+            _stop.wait(max(0.1, float(delay)))
 
 
 def _claim(db) -> Job | None:
@@ -167,6 +170,11 @@ def _notify_done(db, job: Job) -> None:
 def _run(db, job: Job) -> None:
     job.stage_text = "执行中"
     _heartbeat(db, job)
+    # Release the job row before starting an independent heartbeat transaction.
+    db.commit()
+    pulse_stop = threading.Event()
+    pulse = threading.Thread(target=_pulse, args=(job.id, pulse_stop), daemon=True)
+    pulse.start()
     try:
         if job.job_type == "PARSE":
             from ai.pipeline import parse_version
@@ -235,6 +243,22 @@ def _run(db, job: Job) -> None:
         _fail(db, job, "任务执行失败，请联系管理员并提供任务编号")
         if job.job_type == "AI_CHECK" and job.parent_id:
             _bump_parent(db, job.parent_id, False)
+    finally:
+        pulse_stop.set()
+        pulse.join(timeout=2)
+
+
+def _pulse(job_id, stopped, interval=5):
+    while not stopped.wait(interval):
+        try:
+            with SessionLocal() as heartbeat_db:
+                # Avoid blocking shutdown when the worker has already locked its final result.
+                heartbeat_db.execute(text("SET LOCAL lock_timeout = '500ms'"))
+                heartbeat_db.query(Job).filter(Job.id == job_id, Job.status == 'RUNNING').update(
+                    {'heartbeat_at': now()}, synchronize_session=False)
+                heartbeat_db.commit()
+        except Exception:
+            continue
 
 
 def _bump_parent(db, parent_id: int, ok: bool) -> None:
@@ -263,6 +287,15 @@ def _scan(db) -> None:
     from models import ImportPasswordFile
     from models import Message, ExportFile
     from datetime import datetime, timezone
-    db.query(ExportFile).filter(ExportFile.expires_at < now()).delete(synchronize_session=False)
     db.query(ImportPasswordFile).filter(ImportPasswordFile.expires_at <= now()).delete(synchronize_session=False)
+    from services.deadlines import scan_deadlines
+    from services.storage import abs_path
+    scan_deadlines(db)
+    for exported in db.query(ExportFile).filter(ExportFile.expires_at < now()).all():
+        try:
+            path = abs_path(exported.stored_path)
+            path.unlink(missing_ok=True)
+        except (OSError, ValueError):
+            continue
+        db.delete(exported)
     db.execute(text("DELETE FROM revoked_tokens WHERE expires_at < now()"))
