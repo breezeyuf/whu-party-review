@@ -31,6 +31,18 @@ def test_derive_rule_skips_without_base_node():
     assert results[0]["result"] == "SKIPPED"
 
 
+def test_missing_upload_date_does_not_hide_another_sources_proven_invalid_date():
+    nodes = {"T06": {"date": "2026-01-03", "sources": [
+        {"node_code": "T06", "material_id": 1, "version_id": 11,
+         "date": "2026-01-03", "upload_date": "2026-01-02"},
+        {"node_code": "T06", "material_id": 2, "version_id": 12,
+         "date": "2026-01-04", "upload_date": None},
+    ]}}
+    _, issues, results = _evaluate("R-T21", [{"op": "valid_date", "nodes": "*"}], nodes)
+    assert len(issues) == 1 and issues[0].material_version_id == 11
+    assert results[0]['result'] == 'FAIL' and results[0]['skipped_sources'] == 1
+
+
 def test_sequence_gap_skips_when_period_boundary_is_missing():
     context = DSLContext({
         "T04": NodeVal("T04", date=date(2025, 1, 1), missing=False),

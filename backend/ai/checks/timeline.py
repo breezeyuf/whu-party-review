@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import date
 
 from ai.dsl import CheckResult, DSLContext, NodeVal, required_for_stage, run_checks
@@ -118,7 +119,12 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
         if applies and stage not in applies and str(stage) not in [str(x) for x in applies]:
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "不适用当前阶段"})
             continue
-        checks = (rule.params or {}).get("checks") or []
+        params = rule.params or {}
+        checks = params.get("checks") if isinstance(params, Mapping) else None
+        if not isinstance(params, Mapping) or (checks is not None and not isinstance(checks, (list, tuple))):
+            results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "时间规则参数无效"})
+            continue
+        checks = checks or []
         if not checks:
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "未配置校验条件"})
             continue
@@ -131,12 +137,28 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
         date_failures = []
         date_incomplete = False
         for chk in checks:
-            if chk.get("op") == "required":
-                evaluated = [(required_for_stage(ctx, chk.get("nodes_by_stage") or {}, stage), None)]
-            elif chk.get("op") == "valid_date":
-                evaluated = _valid_date_sources(ctx, node_map, chk)
-            else:
-                evaluated = [(run_checks(ctx, [chk])[0], None)]
+            if not isinstance(chk, Mapping):
+                cres.append(CheckResult(ok=False, skipped=True, reason="时间规则参数无效"))
+                skip_all = True
+                continue
+            try:
+                if chk.get("op") == "required":
+                    required = chk.get("nodes_by_stage")
+                    if not isinstance(required, Mapping) or any(
+                        not isinstance(values, (list, tuple)) or any(not isinstance(code, str) for code in values)
+                        for values in required.values()
+                    ):
+                        raise ValueError("invalid required nodes")
+                    evaluated = [(required_for_stage(ctx, required, stage), None)]
+                elif chk.get("op") == "valid_date":
+                    selected = chk.get("nodes", "*")
+                    if selected != "*" and (not isinstance(selected, (list, tuple)) or any(not isinstance(code, str) for code in selected)):
+                        raise ValueError("invalid selected nodes")
+                    evaluated = _valid_date_sources(ctx, node_map, chk)
+                else:
+                    evaluated = [(run_checks(ctx, [chk])[0], None)]
+            except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+                evaluated = [(CheckResult(ok=False, skipped=True, reason="时间规则参数无效或日期计算超出范围"), None)]
             for r, source in evaluated:
                 cres.append(r)
                 if r.skipped:
@@ -150,10 +172,13 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                     last_fail = (r, source, chk)
                     if chk.get("op") == "valid_date" and source is not None:
                         date_failures.append((r, source, chk))
-        # Missing inputs make a composite rule unevaluable. The required-node
-        # rule itself must still report missing mandatory nodes as failures.
-        if skip_all and not required_failed:
-            reason = "缺少真实材料上传日期或日期来源" if date_incomplete else "节点缺失"
+        # Cross-node comparisons need all inputs. In contrast, a date-only rule
+        # checks each material source independently: an unknown upload day must
+        # not suppress a proven invalid date from another source.
+        date_only = all(isinstance(chk, Mapping) and chk.get("op") == "valid_date" for chk in checks)
+        invalid = next((r.reason for r in cres if r.skipped and r.reason.startswith("时间规则参数无效")), None)
+        if skip_all and (invalid or not (required_failed or (date_only and fail))):
+            reason = invalid or ("缺少真实材料上传日期或日期来源" if date_incomplete else "节点缺失")
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": reason})
             continue
         if fail:
@@ -183,7 +208,10 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                                        source.get("upload_date"), r.actual) if sourced
                     else (rule.code, r.node_code or "", r.actual or ""),
                 ))
-            results.append({"rule_code": rule.code, "result": "FAIL", "issue_ids": []})
+            failed_result = {"rule_code": rule.code, "result": "FAIL", "issue_ids": []}
+            if date_only and date_incomplete:
+                failed_result["skipped_sources"] = sum(r.skipped for r in cres)
+            results.append(failed_result)
         elif date_incomplete:
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": "缺少真实材料上传日期或日期来源"})
         elif skip_all:

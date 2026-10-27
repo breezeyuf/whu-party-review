@@ -9,6 +9,7 @@ from ai.checks.timeline import run_timeline
 from ai.checks.format import run_format
 from ai.checks.content import run_content
 from errors import unprocessable
+from schemas.time_rules import validate_time_params
 from models import RuleVersion, Batch, Material, MaterialVersion, ParseResult, Issue
 from services.scope import ensure_submission_access
 from services.timeline import node_map_for_archive
@@ -45,6 +46,9 @@ def trial_rules(db, body, actor):
             if 'is_active' in patch and type(patch['is_active']) is not bool:
                 raise unprocessable("is_active 须为布尔值")
             rows[patch['code']].update(patch)
+            if group == 'time_rules':
+                row = rows[patch['code']]
+                row['params'] = validate_time_params(row['params'], (node['code'] for node in snapshot['time_node_defs']))
     rules = RuleSet.from_version(SimpleNamespace(id=version.id, version_no=version.version_no, snapshot=snapshot))
     results = []
     for sid in dict.fromkeys(ids):

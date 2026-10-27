@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 
 from ai.dates import (
     add_duration,
+    add_workdays,
     age_years,
     describe_interval,
     duration_meets,
@@ -83,12 +84,20 @@ class DSLContext:
 def run_checks(ctx: DSLContext, checks: list[dict]) -> list[CheckResult]:
     results = []
     for chk in checks:
+        if not hasattr(chk, "get"):
+            results.append(CheckResult(ok=False, skipped=True, reason="时间规则参数无效"))
+            continue
         op = chk.get("op")
         fn = OPS.get(op)
         if not fn:
             results.append(CheckResult(ok=False, skipped=True, reason=f"未知算子 {op}"))
             continue
-        results.append(fn(ctx, chk))
+        try:
+            results.append(fn(ctx, chk))
+        except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+            # Historical snapshots may predate publication validation. One bad
+            # rule must not crash the entire report or be counted as passing.
+            results.append(CheckResult(ok=False, skipped=True, reason="时间规则参数无效或日期计算超出范围"))
     return results
 
 
@@ -242,6 +251,10 @@ def _seq_max_gap(ctx: DSLContext, p: dict) -> CheckResult:
             within = a + relativedelta(months=val) >= b
         elif unit == "DAY":
             within = (b - a).days <= val
+        elif unit == "YEAR":
+            within = a + relativedelta(years=val) >= b
+        elif unit == "WORKDAY":
+            within = workdays_between(a, b, ctx.holidays, ctx.extra) <= val
         if not within:
             bad.append((a, b))
     ok = not bad
@@ -313,7 +326,9 @@ def _consistent(ctx: DSLContext, p: dict) -> CheckResult:
 
 def _valid_date(ctx: DSLContext, p: dict) -> CheckResult:
     bad = []
-    for n in ctx.nodes.values():
+    codes = p.get("nodes") or "*"
+    nodes = list(ctx.nodes.values()) if codes == "*" else [ctx.nodes[c] for c in codes if c in ctx.nodes]
+    for n in nodes:
         if n.invalid_reason:
             bad.append(n.code)
         if ctx.upload_date is not None and n.date and n.date > ctx.upload_date:
@@ -321,7 +336,7 @@ def _valid_date(ctx: DSLContext, p: dict) -> CheckResult:
         if ctx.upload_date is not None and n.end and n.end > ctx.upload_date:
             bad.append(n.code)
     ok = not bad
-    if ok and (ctx.upload_date is None or not ctx.nodes or all(n.missing for n in ctx.nodes.values())):
+    if ok and (ctx.upload_date is None or not nodes or all(n.missing for n in nodes)):
         return CheckResult(ok=True, skipped=True, reason="缺少真实材料上传日期或日期来源")
     return CheckResult(ok=ok, actual=",".join(sorted(set(bad))) if bad else "合法",
                        expected="日期合法且不晚于上传日")
@@ -366,7 +381,8 @@ def _derive(ctx: DSLContext, p: dict) -> CheckResult:
     if miss or not base:
         return CheckResult(ok=True, skipped=True, reason="基节点缺失")
     off = p.get("offset") or {}
-    d = add_duration(base, int(off.get("value", 1)), off.get("unit", "YEAR"))
+    value, unit = int(off.get("value", 1)), off.get("unit", "YEAR")
+    d = add_workdays(base, value, ctx.holidays, ctx.extra) if unit == "WORKDAY" else add_duration(base, value, unit)
     name = p.get("name", "D01")
     ctx.derived[name] = d
     ctx.nodes[name] = NodeVal(code=name, date=d, missing=False)
