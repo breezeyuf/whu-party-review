@@ -148,7 +148,6 @@ export default function ReviewWorkspacePage() {
     <div className="review-workspace">
       <PageHeader
         title={`${sub.archive?.real_name || ""} · ${sub.stage_name || ""}`}
-        crumbs={[{ label: "审核待办", to: "/review/tasks" }, { label: "工作区" }]}
         extra={(
           <>
             <StatusBadge code={sub.status} />

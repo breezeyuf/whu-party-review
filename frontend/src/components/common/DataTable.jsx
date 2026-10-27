@@ -92,7 +92,7 @@ export function Pager({ page = 1, pageSize = 20, total = 0, onPage, onPageSize }
     <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-base-300 px-2 pt-3 text-xs text-base-content/70">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="mono">显示 {start}–{end} 条，共 {total} 条</span>
-        {onPageSize && <label className="flex items-center gap-2">每页
+        {onPageSize && <label className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">每页
           <select className="select select-bordered select-xs" value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))} aria-label="每页显示条数">
             {[10, 20, 50, 100].map((size) => <option key={size} value={size}>{size} 条</option>)}
           </select>

@@ -41,7 +41,7 @@ export default function JobsPage() {
   const job = detail.data
   return (
     <div>
-      <PageHeader title="任务进度" />
+      <PageHeader title="后台任务进度" />
       <FilterBar
         values={query}
         onChange={setQuery}
@@ -78,7 +78,7 @@ export default function JobsPage() {
               { key: "who", title: "发起", render: (r) => <span className="text-xs">{r.created_by_name}<br />{fmtDateTime(r.created_at)}</span> },
             ]}
           />
-          {!req.error && <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} /></div>}
+          {!req.error && <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>}
         </div>
         <aside className="lg:col-span-2 space-y-3" aria-label="任务明细">
           {detail.loading && !job && <Loading label="任务明细" />}
