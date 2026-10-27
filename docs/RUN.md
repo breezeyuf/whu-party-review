@@ -71,8 +71,11 @@ psql -U postgres -d party_review -f database\party_review_20261017.sql
 cd frontend
 npm ci
 npm test
+npm run test:ui
 npm run build
 ```
+
+`npm run build` 会带 manifest 构建，并按 `frontend/bundle-budget.json` 检查每个页面的 gzip 体积与两条验收目标（`/login` ≤125 KiB、`/stats/overview` ≤150 KiB）；未登记预算的页面或超出预算都会失败。查看完整报告用 `npm run bundle:report`，确实需要变大时先说明原因，再执行 `npm run bundle:budget` 刷新预算，让体积变化出现在 diff 里。CI 的前端任务执行同一条 `npm run build`。
 
 开发模式运行 `npm run dev`。使用 `BACKEND_PORT` 改变 Vite 代理的后端端口。后端运行目录不影响配置解析。
 
@@ -109,8 +112,10 @@ $env:TEST_DATABASE_URL='postgresql+psycopg://postgres:PASSWORD@127.0.0.1:5432/pa
 uv python install 3.12
 uv venv --python 3.12 _pgtools/.venv
 uv pip install --python _pgtools/.venv/Scripts/python.exe pgserver
-_pgtools\.venv\Scripts\python.exe _tools\pg_run.py _tmp\pgdata   # 打印并常驻一个临时实例
+_pgtools\.venv\Scripts\python.exe tools\pg_run.py _tmp\pgdata   # 打印并常驻一个临时实例
 ```
+
+连接串同时写入 `_tmp\pg_uri.txt`，方便另开终端取用。
 
 拿到连接串后，把 `TEST_DATABASE_URL` 指向该实例的 `postgres` 库、`DATABASE_URL` 指向同实例的
 应用库（用于 API 冒烟），即可跑全量回归：
@@ -126,7 +131,25 @@ cd backend
 
 数据库用例为每个测试模块新建随机 schema（`pytest_*` / `zipconc_*`），测试在事务里跑完即回滚，
 结束后 `DROP SCHEMA`，从不连接应用库；`TEST_DATABASE_URL` 未设置时这些用例跳过，跳过不计为通过。
-本轮实测：278 passed / 0 skipped。
+本地实测（2026-10-28，PostgreSQL 16.15）：`TEST_DATABASE_URL` 与 `DATABASE_URL` 同时指向测试库时
+**719 passed / 0 skipped**；只设 `TEST_DATABASE_URL` 时两条 API 冒烟用例因缺少 `DATABASE_URL` 跳过
+（717 passed / 2 skipped）。CI 两个变量都配置，并断言零跳过。
+
+### 工具脚本
+
+`tools/` 是本地复现后端验收的脚本，不参与应用运行：
+
+| 脚本 | 用途 |
+| --- | --- |
+| `run_db_tests.py` | 起临时 PostgreSQL 跑后端全量 pytest，结束后停库并删除数据目录；`TEST_DATABASE_URL` 已存在时改为复用外部实例 |
+| `pg_run.py` | 常驻一个临时 PostgreSQL 实例，并把连接串写入 `_tmp/pg_uri.txt` 供手工联调 |
+
+前端体积核对脚本在 `frontend/scripts/bundle-budget.mjs`，通过 `npm run build`（检查）、`npm run bundle:report`（报告）、
+`npm run bundle:budget`（刷新预算）使用，详见上一节。
+
+应用启动只执行 `backend/migrations/` 下带版本与校验和的迁移，不再重放 `backend/schema.sql`。结构核对以
+`pytest backend/tests/test_migrations.py` 为准：空库初始化、重复启动不重放 DDL、旧库接管、校验和不符与
+并发启动都有用例；`backend/tests/test_review_regressions.py` 另外验证旧结构上的兼容路径。
 
 
 请求竞态测试：先在前端运行 `npm run dev`，浏览器访问 http://127.0.0.1:5173/tests/hooks.html ，页面显示 4 项实际 React Hook 测试结果。
