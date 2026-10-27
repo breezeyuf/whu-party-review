@@ -151,7 +151,7 @@ export default function RuleVersionsPage() {
       {writable && (
         <section className="surface-card mt-4 p-4">
           <h2 className="text-sm font-medium">规则试运行</h2>
-          <p className="mt-1 text-xs text-base-content/55">提交包 ID 可在审核工作区或提交详情地址中查看。输入最多 20 个 ID 后，系统会用当前规则预演并显示新增/消失的问题；不会保存报告，也不会改动正式审核结论。</p>
+          <p className="mt-1 text-xs text-base-content/55">输入最多 20 个提交包 ID，使用同一份当前材料分别运行已发布规则与临时规则，查看新增或消失的问题；不会保存报告，也不会改动正式审核结论。</p>
           <div className="mt-2 flex flex-wrap gap-2">
             <input className="input input-bordered input-sm w-72" placeholder="提交包 ID，逗号分隔" value={trialIds} onChange={(e) => setTrialIds(e.target.value)} />
             <button type="button" className="btn btn-outline btn-sm" disabled={trialBusy} onClick={run}>{trialBusy ? "试运行中…" : "试运行"}</button>
@@ -164,6 +164,7 @@ export default function RuleVersionsPage() {
               {(trial.results || []).map((r) => (
                 <li key={r.submission_id} className="surface-card p-2">
                   提交包 {r.submission_id} · 新增 {(r.added || []).length} · 消失 {(r.removed || []).length}
+                  <p className="mt-1 text-base-content/65">当前规则：{r.current?.summary?.total ?? 0} 个问题（阻断 {r.current?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.current?.summary?.by_severity?.WARN ?? 0}）；临时规则：{r.trial?.summary?.total ?? 0} 个问题（阻断 {r.trial?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.trial?.summary?.by_severity?.WARN ?? 0}）。</p>
                   {r.error && <p className="text-error">{r.error}</p>}
                   {[["新增问题", r.added_items || r.added], ["消失问题", r.removed_items || r.removed]].map(([label, items]) => <details key={label} className="mt-2"><summary className="cursor-pointer">{label}（{(items || []).length}）</summary><ul className="mt-1 space-y-1">{(items || []).map((item, index) => <li key={index}>{typeof item === "string" ? item : `${item.rule_code || "人工问题"} · ${item.title || item.fingerprint} · ${item.description || ""}`}</li>)}{!items?.length && <li>无</li>}</ul></details>)}
                 </li>

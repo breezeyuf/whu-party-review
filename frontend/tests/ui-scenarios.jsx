@@ -96,7 +96,7 @@ function defaultFixture(config) {
   if (url === "/batches") return { items: [{ id: 1, name: "测试批次" }] }
   if (url === "/orgs") return [{ id: 2, org_type: "BRANCH", parent_id: 1, name: "测试支部" }]
   if (url === "/notices") return { items: [] }
-  if (url === "/rules/time-nodes") return nodeDefinitions
+  if (url === "/meta") return { time_nodes: nodeDefinitions }
   if (url === "/messages/unread-count") return { count: 0 }
   if (url === "/submissions") return { items: [{ id: 101, student_name: "测试学生", stage_code: 1, status: "BRANCH_REVIEW", issue_counts: {} }], total: 1, page: 1, page_size: 20 }
   throw new Error(`测试缺少接口样例：${config.method} ${url}`)
@@ -305,13 +305,14 @@ export async function runUiScenarios() {
   await test("规则试运行传递临时覆盖并展示具体新增问题", async () => {
     await mount(<RuleVersionsPage />, {roleCode:"ORG_ADMIN",handler:(c) => {
       if(c.url === "/rules/versions") return {items:[]}
-      if(c.url === "/rules/dry-run") return {results:[{submission_id:101,added:["x"],removed:[],added_items:[{rule_code:"R-T01",title:"年龄测试问题",description:"测试详情"}]}]}
+        if(c.url === "/rules/dry-run") return {results:[{submission_id:101,current:{summary:{total:2,by_severity:{BLOCK:1,WARN:1}}},trial:{summary:{total:3,by_severity:{BLOCK:1,WARN:2}}},added:["x"],removed:[],added_items:[{rule_code:"R-T01",title:"年龄测试问题",description:"测试详情"}]}]}
     }})
     await input(document.querySelector('input[placeholder*="提交包 ID"]'),"101")
     await input(document.querySelector('[aria-label="临时规则参数"]'),'{"time_rules":[{"code":"R-T01","is_active":false}]}')
     await click(button("试运行"))
     const body = JSON.parse(requests.find((c) => c.url === "/rules/dry-run").data)
     assert.equal(body.overrides.time_rules[0].is_active,false); assert.match(text(),/年龄测试问题/)
+      assert.match(text(),/当前规则：2 个问题/); assert.match(text(),/临时规则：3 个问题/)
   })
   await test("导出页面实际提供阶段和批次控件并携带筛选", async () => {
     await mount(<ExportPage />, {roleCode:"ORG_ADMIN",handler:(c) => {
@@ -330,13 +331,22 @@ export async function runUiScenarios() {
     await mount(<MyProgressPage />, {
       path: "/my/progress",
       handler: (config) => {
-        if (config.url === "/archives/1/history") return [{ time: "2026-10-20T10:00:00", kind: "REVIEW", title: "PASS", detail: "审核通过", actor_name: "审核员", link_type: "submission", link_id: 101 }]
+        if (config.url === "/archives/1/history") return [
+          { time: "2026-10-20T10:00:00", kind: "REVIEW", title: "PASS", detail: "审核通过", actor_name: "审核员", link_type: "submission", link_id: 101 },
+          { time: "2026-10-21T10:00:00", kind: "FILED", title: "FILE", actor_name: "组织部", link_type: "submission", link_id: 101 },
+          { time: "2026-10-19T10:00:00", kind: "UPLOAD", title: "上传材料（第 2 版）", link_type: "material", link_id: 12, version_id: 401 },
+          { time: "2026-10-19T11:00:00", kind: "AI_REPORT", title: "AI 检查报告 #2 · 已完成", link_type: "submission", link_id: 101 },
+          { time: "2026-10-19T12:00:00", kind: "ISSUE_RESPONSE", title: "提交整改回复", detail: "已补充说明", link_type: "submission", link_id: 101 },
+          { time: "2026-10-19T13:00:00", kind: "NODE_CORRECTION", title: "校正申请日期", detail: "核对原件", link_type: "archive", link_id: 1 },
+        ]
         if (config.url === "/archives/1/timeline") return { stages: [], nodes: [{ code: "N1", name: "递交入党申请", effective: { date: "2025-10-10" }, sources: [] }], derived: [] }
         return undefined
       },
     })
-    assert.match(text(), /审核轨迹/)
+    assert.match(text(), /发展历史/)
     assert.match(text(), /审核通过/)
+    for (const event of ["备案归档", "第 2 版", "AI 检查报告", "已补充说明", "校正申请日期"]) assert.ok(text().includes(event))
+    assert.ok(document.querySelector('a[href="/materials/12?version_id=401"]'))
     assert.match(text(), /递交入党申请/)
     assert.equal([...document.querySelectorAll("h2")].filter((node) => node.textContent === "时间节点").length, 1)
     assert.equal(document.querySelectorAll('[aria-label="阶段进度说明"]').length, 1)
@@ -898,7 +908,7 @@ export async function runUiScenarios() {
     await mount(<ParsedTextPanel parsed={{ version_id: 401, extractions: [{ id: 1, node_code: "T02", date: "2026-01-01" }] }} editable={false} />)
     assert.equal(button("新增节点记录"), undefined)
     assert.equal(button("删除记录"), undefined)
-    assert.equal(requests.some((request) => request.url === "/rules/time-nodes"), false)
+    assert.equal(requests.some((request) => request.url === "/meta"), false)
     assert.equal(document.querySelector("textarea").readOnly, true)
   })
 

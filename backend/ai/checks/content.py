@@ -9,7 +9,7 @@ from ai.evidence import effective_text, effective_fields
 from models import CheckRule, ParseResult, PoliticalTerm, SensitivePhrase
 
 
-def run_content(db, submission, materials, versions, parses: dict[int, ParseResult], types, llm_enabled: bool, *, rule_set=None, timeline=None):
+def run_content(db, submission, materials, versions, parses: dict[int, ParseResult], types, llm_enabled: bool, *, rule_set=None, timeline=None, similarity_cache=None):
     rules = [r for r in rule_set.rows("check_rules") if r.category == "CONTENT"] if rule_set else (
         db.query(CheckRule)
         .filter(CheckRule.category == "CONTENT", CheckRule.is_active.is_(True))
@@ -86,7 +86,13 @@ def run_content(db, submission, materials, versions, parses: dict[int, ParseResu
                     if not math.isfinite(threshold) or not 0 <= threshold <= 1:
                         skipped = True
                         continue
-                    compared = compare_batch(db, submission, m, text, threshold)
+                    cache_key = (m.id, ver.id)
+                    if similarity_cache is not None and cache_key in similarity_cache:
+                        compared = similarity_cache[cache_key]
+                    else:
+                        compared = compare_batch(db, submission, m, text, threshold)
+                        if similarity_cache is not None:
+                            similarity_cache[cache_key] = compared
                     if compared:
                         similarity_evidence.append({
                             'material_id': m.id, 'version_id': ver.id,

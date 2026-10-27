@@ -169,7 +169,10 @@ def test_trial_runs_all_rule_categories_without_writing(case, as_client, monkeyp
     response = as_client(c.org).post('/api/rules/dry-run',json={'submission_ids':[c.sub.id],'overrides':{}})
     assert response.status_code == 200,response.text
     result = response.json()['data']['results'][0]
-    assert {'形式试运行','内容试运行'} <= {item['title'] for item in result['added_items']}
+    assert result['added_items'] == result['removed_items'] == []
+    assert result['current'] == result['trial']
+    assert result['current']['summary']['by_category']['FORMAT'] >= 1
+    assert result['current']['summary']['by_category']['CONTENT'] >= 1
     assert c.db.query(Issue).count() == before
 
 
