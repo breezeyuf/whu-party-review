@@ -16,7 +16,7 @@ from models import (
     TimeNodeDef,
     TimeNodeExtraction,
 )
-from utils import as_date, now, stage_name, TZ8
+from utils import now, stage_name, TZ8
 
 
 def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None:
@@ -243,43 +243,71 @@ def timeline_view(db: Session, archive: Archive) -> dict:
     }
 
 
+def _strict_date(value, label: str) -> Optional[date]:
+    """校正入口只接受完整的 YYYY-MM-DD；与主动清空区分开，避免非法输入把旧值抹掉。"""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or len(value) != 10:
+        raise unprocessable(f"{label}须为 YYYY-MM-DD")
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise unprocessable(f"{label}不是有效日期")
+
+
 def correct_node(db: Session, archive: Archive, node_code: str, body: dict, actor) -> ArchiveTimeNode:
     dfn = db.query(TimeNodeDef).filter(TimeNodeDef.code == node_code).first()
     if not dfn:
         from errors import not_found
         raise not_found("节点不存在")
     node = db.query(ArchiveTimeNode).filter(ArchiveTimeNode.archive_id == archive.id, ArchiveTimeNode.node_code == node_code).first()
-    if not node:
-        node = ArchiveTimeNode(archive_id=archive.id, node_code=node_code, updated_at=now())
-        db.add(node)
-        db.flush()
-    if node.locked and actor.role != "ORG_ADMIN":
+    if node and node.locked and actor.role != "ORG_ADMIN":
         raise forbidden("该节点已随备案锁定，仅组织部可改")
     reason = (body.get("reason") or "").strip()
     if not reason:
         raise unprocessable("必须填写校正原因")
+    clear = bool(body.get("clear"))
+    # 先完整校验再落库：非法日期、空日期或结束早于开始都不能改到原值
+    value = end = hours = None
+    if not clear:
+        value = _strict_date(body.get("date"), "校正日期")
+        if value is None:
+            raise unprocessable("校正日期不能为空；如需清空请使用 clear")
+        end = _strict_date(body.get("end_date"), "结束日期")
+        if end and end < value:
+            raise unprocessable("结束日期不能早于开始日期")
+        raw_hours = body.get("hours")
+        if raw_hours not in (None, ""):
+            if not dfn.has_hours:
+                raise unprocessable("该节点不接受学时")
+            if isinstance(raw_hours, bool) or not isinstance(raw_hours, (int, float)):
+                raise unprocessable("学时必须为数字")
+            if raw_hours < 0 or raw_hours > 10000:
+                raise unprocessable("学时须在 0 到 10000 之间")
+            hours = raw_hours
+    if not node:
+        node = ArchiveTimeNode(archive_id=archive.id, node_code=node_code, updated_at=now())
+        db.add(node)
+        db.flush()
     # 反复校正时先停用旧的手工值，避免手工抽取记录累积、来源重复计数
     db.query(TimeNodeExtraction).filter(
         TimeNodeExtraction.archive_id == archive.id, TimeNodeExtraction.node_code == node_code,
         TimeNodeExtraction.method == "MANUAL", TimeNodeExtraction.is_current.is_(True),
     ).update({"is_current": False})
-    if body.get("clear"):
+    node.correction_reason = reason
+    node.corrected_by = actor.id
+    node.corrected_at = now()
+    if clear:
         node.corrected_date = None
         node.corrected_end_date = None
         node.corrected_hours = None
-        node.correction_reason = reason
-        node.corrected_by = actor.id
-        node.corrected_at = now()
     else:
-        node.corrected_date = as_date(body.get("date"))
-        node.corrected_end_date = as_date(body.get("end_date"))
-        node.corrected_hours = body.get("hours")
-        node.correction_reason = reason
-        node.corrected_by = actor.id
-        node.corrected_at = now()
+        node.corrected_date = value
+        node.corrected_end_date = end
+        node.corrected_hours = hours
         db.add(TimeNodeExtraction(
             archive_id=archive.id, node_code=node_code, seq_index=0,
-            value_date=node.corrected_date, value_end_date=node.corrected_end_date, hours=node.corrected_hours,
+            value_date=value, value_end_date=end, hours=hours,
             raw_text=reason, method="MANUAL", is_current=True, created_at=now(),
         ))
     archive.timeline_updated_at = now()

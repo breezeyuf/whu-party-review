@@ -205,7 +205,8 @@ export default function MaterialDetailPage() {
     </div>}
     {tab === "versions" && <div className="grid gap-4 lg:grid-cols-2">
       <div>
-        {versions.error ? <ErrorState error={versions.error} onRetry={versions.reload} /> : <VersionList versions={allVersions} currentId={vid} onSelect={selectVersion} />}
+        {versions.error ? <ErrorState error={versions.error} onRetry={versions.reload} /> : <VersionList versions={allVersions} currentId={vid} onSelect={selectVersion}
+          reportHref={subId ? (rid) => `${student ? `/my/self-check/${subId}` : `/review/submissions/${subId}`}?report=${rid}` : undefined} />}
         {canUpload && <div className="mt-3"><FileUploader accept=".pdf,.jpg,.jpeg,.png,.docx" disabled={uploading} label="上传新版本" onFile={async (file) => {
           setUploading(true)
           try {

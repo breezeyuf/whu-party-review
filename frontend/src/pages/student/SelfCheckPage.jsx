@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 import { ArrowRight, FileText, ListChecks, RefreshCw, Send } from "lucide-react"
 import PageHeader from "../../components/layout/PageHeader"
 import ReportSummary from "../../components/review/ReportSummary"
@@ -23,7 +23,17 @@ export default function SelfCheckPage() {
   const compReq = useRequest(() => completeness(submissionId, { live: true }), [submissionId])
   const issueReq = useRequest(() => listIssues(submissionId, { active: true }), [submissionId])
   const latestId = subReq.data?.latest_report?.id
-  const reportReq = useRequest(() => (latestId ? getReport(latestId) : null), [latestId], { immediate: !!latestId })
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedReportId = /^[1-9]\d*$/.test(searchParams.get("report") || "") ? Number(searchParams.get("report")) : null
+  const reportId = requestedReportId || latestId
+  // 档案历史里的报告事件：按编号只读查看，提交与整改仍按当前状态判断
+  const viewingHistoryReport = !!requestedReportId && requestedReportId !== latestId
+  const backToLatestReport = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete("report")
+    setSearchParams(next, { replace: true })
+  }
+  const reportReq = useRequest(() => (reportId ? getReport(reportId) : null), [reportId], { immediate: !!reportId })
   const [startedTask, setStartedTask] = useState(null)
   const [finishedJobId, setFinishedJobId] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -99,6 +109,11 @@ export default function SelfCheckPage() {
         </>}>
         {sub?.stage_name} · AI 结论作为参考，提交前请处理待回复问题。
       </PageHeader>
+      {viewingHistoryReport && <div className="surface-card mb-3 flex flex-wrap items-center gap-3 p-3 text-sm" role="status">
+        <span className="badge badge-warning badge-sm">历史报告</span>
+        <span>正在查看报告 #{reportId} 的当时快照，仅供复核；提交状态与待回复问题仍以最新情况为准。</span>
+        <button type="button" className="btn btn-ghost btn-xs" onClick={backToLatestReport}>返回最新报告</button>
+      </div>}
       {jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
       {materialsReq.error && <ErrorState error={materialsReq.error} onRetry={() => materialsReq.reload().catch(() => {})} />}
@@ -109,7 +124,7 @@ export default function SelfCheckPage() {
       <div className="grid gap-5 lg:grid-cols-2">
         <section className="surface-card p-4">
           <h2 className="mb-3 text-sm font-medium">报告摘要</h2>
-          {reportReq.loading && !reportReq.data ? <Loading /> : reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <ReportSummary report={reportReq.data ? { ...reportReq.data, is_stale: sub?.latest_report?.is_stale || reportReq.data.is_stale } : sub?.latest_report} />}
+          {reportReq.loading && !reportReq.data ? <Loading /> : reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <ReportSummary report={viewingHistoryReport ? reportReq.data : (reportReq.data ? { ...reportReq.data, is_stale: sub?.latest_report?.is_stale || reportReq.data.is_stale } : sub?.latest_report)} />}
           <Link className="btn btn-ghost btn-xs mt-3" to="/my/rectification">去整改中心</Link>
         </section>
         <section className="surface-card p-4">

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from errors import unprocessable
 from models import AiReport, Archive, Issue, Material, MaterialType, ReviewRecord, Submission
-from services.scope import scoped_archives, scoped_submissions
+from services.scope import scoped_stats_archives, scoped_stats_submissions
 from utils import TZ8
 
 
@@ -62,8 +62,8 @@ def apply_filters(q, model, batch_id=None, college_id=None, branch_id=None, stag
 
 def overview(db: Session, actor, **filters) -> dict:
     fkeys = ("batch_id", "college_id", "branch_id", "stage_code", "date_from", "date_to")
-    aq = apply_filters(scoped_archives(db.query(Archive), actor, db), Archive, **{k: filters.get(k) for k in fkeys})
-    sq = apply_filters(scoped_submissions(db.query(Submission), actor, db), Submission, **{k: filters.get(k) for k in fkeys})
+    aq = apply_filters(scoped_stats_archives(db.query(Archive), actor, db), Archive, **{k: filters.get(k) for k in fkeys})
+    sq = apply_filters(scoped_stats_submissions(db.query(Submission), actor, db), Submission, **{k: filters.get(k) for k in fkeys})
     if filters.get("date_from") or filters.get("date_to"):
         aq = aq.filter(Archive.id.in_(sq.with_entities(Submission.archive_id)))
     archives = aq.count()
@@ -161,7 +161,7 @@ def top_issues(db, actor, limit=10, group_by="rule", **filters) -> list:
         raise unprocessable("不支持的问题分组方式")
     if not 1 <= int(limit) <= 100:
         raise unprocessable("limit 必须在 1 到 100 之间")
-    sq = apply_filters(scoped_submissions(db.query(Submission.id), actor, db), Submission,
+    sq = apply_filters(scoped_stats_submissions(db.query(Submission.id), actor, db), Submission,
                        **{k: filters.get(k) for k in ("batch_id", "college_id", "branch_id", "stage_code", "date_from", "date_to")})
     ids = [x[0] for x in sq.all()]
     q = db.query(Issue).filter(Issue.submission_id.in_(ids) if ids else Issue.id == -1, Issue.is_active.is_(True))
@@ -220,7 +220,7 @@ def _quality_groups(issues, key_and_name, key_field):
 
 
 def ai_quality(db, actor, **filters) -> dict:
-    sq = apply_filters(scoped_submissions(db.query(Submission.id), actor, db), Submission,
+    sq = apply_filters(scoped_stats_submissions(db.query(Submission.id), actor, db), Submission,
                        **{k: filters.get(k) for k in FILTER_KEYS})
     ids = [x[0] for x in sq.all()]
     reports = db.query(AiReport).filter(AiReport.submission_id.in_(ids) if ids else AiReport.id == -1, AiReport.status == "DONE").all()

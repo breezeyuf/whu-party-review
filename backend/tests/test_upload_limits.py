@@ -69,6 +69,7 @@ def test_both_material_routes_enforce_limits_before_creating_versions(storage, m
     db = Mock()
     db.query.return_value.filter.return_value.first.return_value = sub if initial else material
     monkeypatch.setattr(router, "ensure_archive_access", lambda *_args: arch)
+    monkeypatch.setattr(router, "ensure_material_access", lambda *_args: material)
     monkeypatch.setattr(router, "_editable_submission", lambda *_args: sub)
     create = Mock()
     revise = Mock()
@@ -180,6 +181,7 @@ def test_permission_denied_never_reads_upload_or_writes_storage(storage, monkeyp
     db = Mock()
     db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(id=1, archive_id=1)
     monkeypatch.setattr(router, "ensure_archive_access", lambda *_args: SimpleNamespace(id=1))
+    monkeypatch.setattr(router, "ensure_material_access", lambda *_args: SimpleNamespace(id=1))
     monkeypatch.setattr(router, "_editable_submission", Mock(side_effect=forbidden()))
     actor = SimpleNamespace(id=1, role="SYS_ADMIN")
     file = TrackingUpload(100)

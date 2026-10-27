@@ -120,6 +120,10 @@ test("history destinations use registered routes and student-accessible submissi
   assert.equal(reviewHistoryLink({ link_type: "archive", link_id: 2 }, "ORG_ADMIN").to, "/archives/2")
   assert.equal(reviewHistoryLink({ link_type: "submission", link_id: 3 }, "STUDENT").to, "/my/self-check/3")
   assert.equal(reviewHistoryLink({ link_type: "submission", link_id: 3 }, "COLLEGE_REVIEWER").to, "/review/submissions/3")
+  // 历史 AI 报告事件：带 report_id 时打开当时那份报告
+  assert.equal(reviewHistoryLink({ link_type: "submission", link_id: 3, report_id: 8 }, "STUDENT").to, "/my/self-check/3?report=8")
+  assert.equal(reviewHistoryLink({ link_type: "submission", link_id: 3, report_id: 8 }, "ORG_ADMIN").to, "/review/submissions/3?report=8")
+  assert.equal(reviewHistoryLink({ link_type: "submission", link_id: 3, report_id: 8 }, "ORG_ADMIN").label, "查看当时报告")
   assert.equal(reviewHistoryLink({ link_type: "notice", link_id: 5 }, "BRANCH_REVIEWER").to, "/notices?notice=5")
   assert.equal(reviewHistoryLink({}, "STUDENT"), null)
 })

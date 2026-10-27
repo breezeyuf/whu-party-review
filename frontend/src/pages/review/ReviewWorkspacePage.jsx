@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useParams, useSearchParams } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import MaterialViewer from "../../components/material/MaterialViewer"
 import IssueList from "../../components/review/IssueList"
@@ -43,13 +43,23 @@ export default function ReviewWorkspacePage() {
   const toast = useToast()
   const { activeRole } = useAuth()
   const roleKey = `${activeRole?.role}:${activeRole?.org_id}`
+  const [searchParams, setSearchParams] = useSearchParams()
   const [aiBusy, setAiBusy] = useState(false)
   const subReq = useRequest(() => getSubmission(id), [id, roleKey])
   const sub = subReq.data
   const issueReq = useRequest(() => loadAllReviewIssues((params) => listIssues(id, params)), [id, roleKey])
   const compReq = useRequest(() => completeness(id, { live: true }), [id, roleKey])
   const trailReq = useRequest(() => reviewRecords(id), [id, roleKey])
-  const reportId = sub?.latest_report?.id
+  const latestReportId = sub?.latest_report?.id
+  const requestedReportId = /^[1-9]\d*$/.test(searchParams.get("report") || "") ? Number(searchParams.get("report")) : null
+  const reportId = requestedReportId || latestReportId
+  // 历史事件里的报告编号：只读查看当时快照，审核决定仍然针对最新报告
+  const viewingHistoryReport = !!requestedReportId && requestedReportId !== latestReportId
+  const backToLatestReport = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete("report")
+    setSearchParams(next, { replace: true })
+  }
   const reportReq = useRequest(() => (reportId ? getReport(reportId) : null), [id, reportId, roleKey], { immediate: !!reportId })
   const archiveId = sub?.archive?.id
   const timeReq = useRequest(() => (archiveId ? getTimeline(archiveId) : null), [id, archiveId, roleKey], { immediate: !!archiveId })
@@ -166,6 +176,11 @@ export default function ReviewWorkspacePage() {
         {sub.archive?.student_no} · {sub.archive?.branch_name} · 第 {sub.round_no} 轮
       </PageHeader>
       {trackedJobId && <div className="mb-3"><Suspense fallback={<p className="text-xs text-base-content/60" role="status">正在加载任务状态…</p>}><ReviewJobStatus jobId={trackedJobId} onDone={refreshAll} onRetry={refreshAll} /></Suspense></div>}
+      {viewingHistoryReport && <div className="surface-card mb-3 flex flex-wrap items-center gap-3 p-3 text-sm" role="status">
+        <span className="badge badge-warning badge-sm">历史报告</span>
+        <span>正在查看报告 #{reportId} 的当时快照，仅供复核；审核决定与整改状态仍以最新报告为准。</span>
+        <button type="button" className="btn btn-ghost btn-xs" onClick={backToLatestReport}>返回最新报告</button>
+      </div>}
       {reportBlockReason(sub) && <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-warning" role="status"><p>{reportBlockReason(sub)}</p>{needsAiCheck && <button type="button" className="btn btn-outline btn-sm" disabled={aiBusy} onClick={startAiCheck}>{aiBusy ? "发起中…" : "开始自动核对"}</button>}</div>}
       {noticeId && <div className="surface-card mb-3 p-3 text-sm">已生成并发送整改通知。<Link className="link ml-2" to={`/notices?notice=${noticeId}`}>查看整改通知</Link></div>}
       <nav className="review-stage-links" aria-label="审核步骤"><a href="#review-materials"><span>1</span>核对材料</a><a href="#review-issues"><span>2</span>处理问题</a><a href="#review-decision"><span>3</span>填写结论</a></nav>
@@ -240,7 +255,7 @@ export default function ReviewWorkspacePage() {
           onPass={async (body) => { await reviewSubmission(id, body); toast.success("已通过并流转至下一层级"); await refreshAll() }}
           onReturn={async (body) => { const result = await reviewSubmission(id, body); setNoticeId(result.notice_id); toast.success("已退回并发送整改通知"); await refreshAll() }}
           onFile={async (body) => { await fileSubmission(id, body); toast.success("已备案，档案阶段已更新"); await refreshAll() }}
-          onHandover={async (body) => { await postHandover(reportId, body); toast.success("已提交人工结论，请继续完成审核决定"); await refreshAll() }}
+          onHandover={async (body) => { await postHandover(latestReportId, body); toast.success("已提交人工结论，请继续完成审核决定"); await refreshAll() }}
         />
       </section>
       </div></div>
