@@ -1,0 +1,53 @@
+{
+  "note": "前端路由体积预算（gzip -9，仅 JS，单位 KiB）。由 frontend/scripts/bundle-budget.mjs --write-budget 生成，调整页面体积后需同步刷新，并在提交说明里写清原因。",
+  "slack_kib": 0.3,
+  "acceptance": [
+    {
+      "route": "/login",
+      "key": "src/pages/LoginPage.jsx",
+      "max_kib": 125
+    },
+    {
+      "route": "/stats/overview",
+      "key": "src/pages/stats/StatsOverviewPage.jsx",
+      "max_kib": 150
+    }
+  ],
+  "routes": {
+    "src/pages/ChangePasswordPage.jsx": 122.11,
+    "src/pages/ChooseIdentityPage.jsx": 124.26,
+    "src/pages/DashboardPage.jsx": 139.95,
+    "src/pages/LoginPage.jsx": 123.8,
+    "src/pages/MessagesPage.jsx": 136.97,
+    "src/pages/ProfilePage.jsx": 133.93,
+    "src/pages/admin/AuditLogsPage.jsx": 137.82,
+    "src/pages/admin/BatchesPage.jsx": 139.75,
+    "src/pages/admin/OrgsPage.jsx": 124.7,
+    "src/pages/admin/SettingsPage.jsx": 128.91,
+    "src/pages/admin/UsersPage.jsx": 144.92,
+    "src/pages/archive/ArchiveDetailPage.jsx": 145.57,
+    "src/pages/archive/ArchiveListPage.jsx": 142.29,
+    "src/pages/material/BatchUploadPage.jsx": 140.44,
+    "src/pages/material/MaterialDetailPage.jsx": 150.5,
+    "src/pages/notice/NoticesPage.jsx": 141.06,
+    "src/pages/review/CrossReviewConfigPage.jsx": 124.73,
+    "src/pages/review/JobsPage.jsx": 139.36,
+    "src/pages/review/ReviewTasksPage.jsx": 142.94,
+    "src/pages/review/ReviewWorkspacePage.jsx": 156.05,
+    "src/pages/rules/CheckRulesPage.jsx": 138.78,
+    "src/pages/rules/ChecklistsPage.jsx": 137.23,
+    "src/pages/rules/MaterialTypesPage.jsx": 140.73,
+    "src/pages/rules/RuleVersionsPage.jsx": 141.68,
+    "src/pages/rules/SensitivePhrasesPage.jsx": 127.63,
+    "src/pages/rules/SuggestionTemplatesPage.jsx": 126.72,
+    "src/pages/rules/TermsPage.jsx": 140.21,
+    "src/pages/rules/TimeRulesPage.jsx": 142.89,
+    "src/pages/stats/AiQualityPage.jsx": 138.18,
+    "src/pages/stats/ExportPage.jsx": 139.55,
+    "src/pages/stats/StatsOverviewPage.jsx": 138.21,
+    "src/pages/student/MyMaterialsPage.jsx": 146.73,
+    "src/pages/student/MyProgressPage.jsx": 141.21,
+    "src/pages/student/RectificationPage.jsx": 147.21,
+    "src/pages/student/SelfCheckPage.jsx": 147.29
+  }
+}
