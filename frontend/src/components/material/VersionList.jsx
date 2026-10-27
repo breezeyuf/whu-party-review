@@ -1,6 +1,7 @@
+import { Link } from "react-router-dom"
 import { fmtDateTime, fmtSize } from "../../utils/format"
 
-export default function VersionList({ versions = [], currentId, onSelect }) {
+export default function VersionList({ versions = [], currentId, onSelect, reportHref }) {
   if (!versions.length) return <p className="text-sm text-base-content/50">没有历史版本。</p>
   return (
     <ul className="space-y-2">
@@ -12,7 +13,9 @@ export default function VersionList({ versions = [], currentId, onSelect }) {
               {v.original_filename} · {fmtSize(v.file_size)} · {v.parse_status} · {fmtDateTime(v.uploaded_at)}
             </div>
             {v.change_note && <div className="text-xs">{v.change_note}</div>}
-            {!!v.report_ids?.length && <p className="text-xs text-base-content/60">关联报告：{v.report_ids.map((id) => `#${id}`).join("、")}</p>}
+            {!!v.report_ids?.length && <p className="text-xs text-base-content/60">关联报告：{v.report_ids.map((id, index) => (
+              <span key={id}>{index > 0 && "、"}{reportHref ? <Link className="link" to={reportHref(id)}>#{id}</Link> : `#${id}`}</span>
+            ))}</p>}
             {v.parse_error && <p className="text-xs text-error">解析失败：{v.parse_error}</p>}
           </div>
           {onSelect && <button type="button" className="btn btn-ghost btn-xs" onClick={() => onSelect(v)}>查看</button>}

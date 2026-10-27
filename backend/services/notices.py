@@ -39,7 +39,8 @@ def create_rectification_notice(db: Session, sub: Submission, actor, issue_ids=N
             "problem": iss.description, "basis": iss.rule_basis, "suggestion": iss.suggestion, "example": iss.suggestion_example,
         })
     content = {
-        "student": {"name": arch.real_name, "student_no": arch.student_no, "branch": arch.branch.name if arch.branch else ""},
+        "student": {"name": arch.real_name, "student_no": arch.student_no, "anon_code": arch.anon_code,
+                    "branch": arch.branch.name if arch.branch else ""},
         "stage": stage_name(db, sub.stage_code),
         "issued_by": actor.user.real_name,
         "issued_at": now().date().isoformat(),
@@ -76,7 +77,8 @@ def create_completion_notice(db, sub: Submission, actor, completeness: dict, dea
             "missing": it.get("missing"), "requirement": it.get("requirement_text"),
         })
     content = {
-        "student": {"name": arch.real_name, "student_no": arch.student_no, "branch": arch.branch.name if arch.branch else ""},
+        "student": {"name": arch.real_name, "student_no": arch.student_no, "anon_code": arch.anon_code,
+                    "branch": arch.branch.name if arch.branch else ""},
         "stage": stage_name(db, sub.stage_code),
         "issued_by": actor.user.real_name,
         "issued_at": now().date().isoformat(),

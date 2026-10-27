@@ -163,6 +163,20 @@ def _cell(v):
     return v
 
 
+_AUDIT_COLUMNS = {"id", "created_at", "updated_at", "updated_by"}
+
+
+def _required_columns(model) -> list[str]:
+    """表上 NOT NULL 且没有默认值的列：导入预检必须和实际写入用同一套必填口径。"""
+    return [
+        column.name
+        for column in model.__table__.columns
+        if not column.nullable and not column.primary_key
+        and column.default is None and column.server_default is None
+        and column.name not in _AUDIT_COLUMNS
+    ]
+
+
 def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> dict:
     model = KIND_MAP.get(kind, (None, None))[0]
     if model is None:
@@ -176,6 +190,8 @@ def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> di
     errors = []
     total = 0
     unique_field = "code" if hasattr(model, "code") else ("standard_text" if hasattr(model, "standard_text") else "phrase")
+    required = _required_columns(model)
+    seen_keys: set = set()
     if not dry_run:
         lock_rule_publication(db)
     records = []
@@ -189,9 +205,20 @@ def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> di
         if not key:
             errors.append({"row": i, "message": f"缺少 {unique_field}"})
             continue
+        if key in seen_keys:
+            errors.append({"row": i, "message": f"同一文件重复 {unique_field}：{key}"})
+            continue
+        seen_keys.add(key)
         existing = db.query(model).filter(getattr(model, unique_field) == key).first() if mode != "replace" and hasattr(model, unique_field) else None
         if existing and mode == "append":
             skipped += 1
+            continue
+        missing = [
+            name for name in required
+            if rec.get(name, getattr(existing, name, None) if existing else None) in (None, "")
+        ]
+        if missing:
+            errors.append({"row": i, "message": "缺少必填字段：" + "、".join(missing)})
             continue
         if kind == "time-rules":
             try:

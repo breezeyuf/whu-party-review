@@ -51,6 +51,13 @@ def _writer(actor: Actor):
         raise forbidden("仅组织部可维护规则库")
 
 
+def _required(body: dict, fields: tuple[str, ...]) -> None:
+    """缺字段按 422 返回，避免直接取 body[...] 抛 KeyError 变成 500。"""
+    missing = [name for name in fields if body.get(name) in (None, "")]
+    if missing:
+        raise unprocessable("缺少必填字段", [{"field": name, "message": "必填"} for name in missing])
+
+
 def _page(q, page, page_size):
     page, page_size = page_params(page, page_size)
     total = q.count()
@@ -67,6 +74,7 @@ def get_checklists(stage_code: int | None = None, q: str | None = None, is_activ
 @router.post("/checklists")
 def post_checklist(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("stage_code", "material_type_id"))
     obj = ChecklistItem(
         stage_code=body["stage_code"], material_type_id=body["material_type_id"],
         quantity_mode=body.get("quantity_mode") or "FIXED", fixed_count=body.get("fixed_count") or 1,
@@ -123,6 +131,7 @@ def post_mt(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(ge
     code = body.get("code") or ""
     if not re.match(r"^[A-Z][A-Z0-9_]{2,40}$", code):
         raise unprocessable("code 格式不正确")
+    _required(body, ("name",))
     obj = MaterialType(
         code=code, name=body["name"], stage_codes=body.get("stage_codes") or [],
         title_keywords=body.get("title_keywords") or [], exclude_keywords=body.get("exclude_keywords") or [],
@@ -171,6 +180,7 @@ def list_tn(db: Session = Depends(get_db), actor: Actor = Depends(get_current_us
 @router.post("/time-nodes")
 def post_tn(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "name", "value_kind"))
     obj = TimeNodeDef(
         code=body["code"], name=body["name"], value_kind=body["value_kind"], has_hours=body.get("has_hours") or False,
         stage_code=body.get("stage_code"), required_from_stage=body.get("required_from_stage"),
@@ -213,6 +223,7 @@ def list_tr(q: str | None = None, is_active: bool | None = None, db: Session = D
 @router.post("/time-rules")
 def post_tr(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "name", "rule_type", "severity", "message_template"))
     obj = TimeRule(
         code=body["code"], name=body["name"], rule_type=body["rule_type"], params=body.get("params") or {"checks": []},
         applies_stages=body.get("applies_stages") or [], severity=body["severity"], basis=body.get("basis"),
@@ -263,6 +274,7 @@ def list_cr(category: str | None = None, q: str | None = None, is_active: bool |
 @router.post("/check-rules")
 def post_cr(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "category", "name", "engine", "severity", "message_template"))
     obj = CheckRule(
         code=body["code"], category=body["category"], name=body["name"], engine=body["engine"],
         applies_to=body.get("applies_to") or [], params=body.get("params") or {}, severity=body["severity"],
@@ -314,6 +326,7 @@ def list_terms(q: str | None = None, is_active: bool | None = None, page: int = 
 @router.post("/terms")
 def post_term(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("standard_text",))
     obj = PoliticalTerm(
         term_type=body.get("term_type") or "VARIANT", standard_text=body["standard_text"],
         wrong_variants=body.get("wrong_variants") or [], sequence_items=body.get("sequence_items") or [],
@@ -368,6 +381,7 @@ def post_sp(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(ge
             re.compile(body.get("phrase") or "")
         except re.error:
             raise unprocessable("非法正则")
+    _required(body, ("phrase", "category"))
     obj = SensitivePhrase(
         phrase=body["phrase"], match_type=body.get("match_type") or "KEYWORD", category=body["category"],
         risk_level=body.get("risk_level") or "MEDIUM", risk_note=body.get("risk_note"), suggestion=body.get("suggestion"),
@@ -414,6 +428,7 @@ def list_st(db: Session = Depends(get_db), actor: Actor = Depends(get_current_us
 @router.post("/suggestion-templates")
 def post_st(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "title", "template_text"))
     obj = SuggestionTemplate(
         code=body["code"], rule_code=body.get("rule_code"), title=body["title"],
         template_text=body["template_text"], example_text=body.get("example_text"),
@@ -455,6 +470,7 @@ def list_pt(db: Session = Depends(get_db), actor: Actor = Depends(get_current_us
 @router.post("/prompt-templates")
 def post_pt(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "name", "system_prompt", "user_prompt"))
     obj = PromptTemplate(
         code=body["code"], name=body["name"], system_prompt=body["system_prompt"], user_prompt=body["user_prompt"],
         output_schema=body.get("output_schema") or {}, is_active=body.get("is_active", True),

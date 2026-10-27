@@ -6,7 +6,7 @@ from sqlalchemy.orm import Query, Session
 
 from deps import Actor
 from errors import not_found
-from models import Archive, CrossReviewPair, Submission
+from models import Archive, CrossReviewPair, Material, Submission
 from services.audit import log as audit_log
 
 
@@ -26,7 +26,7 @@ def scoped_archives(query: Query, actor: Actor, db: Session) -> Query:
         return query.filter(Archive.branch_id == org_id)
     if role == "COLLEGE_REVIEWER":
         return query.filter(Archive.college_id == org_id)
-    if role in ("ORG_ADMIN", "SYS_ADMIN"):
+    if role == "ORG_ADMIN":
         return query
     if role == "CROSS_REVIEWER":
         assigned = db.query(CrossReviewPair.id).filter(
@@ -47,7 +47,7 @@ def scoped_submissions(query: Query, actor: Actor, db: Session) -> Query:
         return query.filter(Submission.branch_id == org_id)
     if role == "COLLEGE_REVIEWER":
         return query.filter(Submission.college_id == org_id)
-    if role in ("ORG_ADMIN", "SYS_ADMIN"):
+    if role == "ORG_ADMIN":
         return query
     if role == "CROSS_REVIEWER":
         assigned = db.query(CrossReviewPair.id).filter(
@@ -83,6 +83,19 @@ def scoped_jobs(db: Session, actor: Actor):
     ))
 
 
+def scoped_stats_archives(query: Query, actor: Actor, db: Session) -> Query:
+    """统计口径：系统管理员可看聚合数据，但材料正文仍走 ensure_material_access 拦截。"""
+    if actor.role == "SYS_ADMIN":
+        return query
+    return scoped_archives(query, actor, db)
+
+
+def scoped_stats_submissions(query: Query, actor: Actor, db: Session) -> Query:
+    if actor.role == "SYS_ADMIN":
+        return query
+    return scoped_submissions(query, actor, db)
+
+
 def ensure_archive_access(db: Session, actor: Actor, archive_id: int, request=None) -> Archive:
     q = scoped_archives(db.query(Archive), actor, db).filter(Archive.id == archive_id)
     row = q.first()
@@ -97,6 +110,23 @@ def ensure_submission_access(db: Session, actor: Actor, submission_id: int, requ
     if not row:
         deny_object_access(db, actor, "submission", submission_id, request)
     return row
+
+
+def ensure_material_access(db: Session, actor: Actor, material: Material, request=None) -> Material:
+    """材料正文类接口的统一校验：档案范围 + 所属提交包范围。
+
+    材料可能属于同一档案下另一个批次的提交包；只核对档案会把未分配批次的材料放行，
+    因此正文（解析结果、原件、页面、版本、差异）都走这里。
+    """
+    ensure_archive_access(db, actor, material.archive_id, request)
+    allowed = (
+        scoped_submissions(db.query(Submission), actor, db)
+        .filter(Submission.id == material.submission_id)
+        .first()
+    )
+    if not allowed:
+        deny_object_access(db, actor, "material", material.id, request)
+    return material
 
 
 def can_review(submission: Submission, actor: Actor, db: Session) -> bool:
