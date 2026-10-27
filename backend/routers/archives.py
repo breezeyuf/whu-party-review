@@ -18,6 +18,7 @@ from models import (
     ReviewRecord,
     Submission,
     TimeNodeExtraction,
+    TimeNodeDef,
     User,
     UserRole,
 )
@@ -244,7 +245,15 @@ def put_node(aid: int, node_code: str, body: dict, request: Request, db: Session
         raise forbidden()
     a = ensure_archive_access(db, actor, aid, request)
     n = correct_node(db, a, node_code, body, actor)
-    log(db, actor, "NODE_CORRECTION", "archive", aid, {"node": node_code})
+    definition = db.query(TimeNodeDef).filter(TimeNodeDef.code == node_code).first()
+    log(db, actor, "NODE_CORRECTION", "archive", aid, {
+        "node": node_code, "node_name": definition.name,
+        "stage_code": definition.stage_code or a.current_stage,
+        "reason": n.correction_reason, "clear": bool(body.get("clear")),
+        "date": n.corrected_date.isoformat() if n.corrected_date else None,
+        "end_date": n.corrected_end_date.isoformat() if n.corrected_end_date else None,
+        "hours": n.corrected_hours,
+    })
     from services.timeline import effective_node
     return ok({"code": n.node_code, "effective": effective_node(n), "locked": n.locked, "has_conflict": n.has_conflict})
 
@@ -252,25 +261,10 @@ def put_node(aid: int, node_code: str, body: dict, request: Request, db: Session
 @router.get("/archives/{aid}/history")
 def history(aid: int, stage_code: int | None = None, request: Request = None, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     a = ensure_archive_access(db, actor, aid, request)
-    items = []
-    mats = db.query(Material).filter(Material.archive_id == aid)
-    if stage_code:
-        mats = mats.filter(Material.stage_code == stage_code)
-    for m in mats.all():
-        items.append({"time": m.created_at.isoformat() if m.created_at else None, "kind": "UPLOAD", "stage_code": m.stage_code,
-                      "title": f"上传 {m.title}", "detail": None, "actor_name": None, "link_type": "material", "link_id": m.id})
-    recs = db.query(ReviewRecord).join(Submission).filter(Submission.archive_id == aid)
-    if stage_code:
-        recs = recs.filter(Submission.stage_code == stage_code)
-    for r in recs.all():
-        items.append({"time": r.created_at.isoformat(), "kind": "REVIEW", "stage_code": None, "title": r.action,
-                      "detail": r.comment, "actor_name": r.reviewer_name, "link_type": "submission", "link_id": r.submission_id})
-    notices = db.query(Notice).filter(Notice.archive_id == aid)
-    for n in notices.all():
-        items.append({"time": n.created_at.isoformat(), "kind": "NOTICE", "stage_code": None, "title": n.title,
-                      "detail": None, "actor_name": None, "link_type": "notice", "link_id": n.id})
-    items.sort(key=lambda x: x["time"] or "", reverse=True)
-    return ok(items)
+    if stage_code is not None and stage_code not in range(1, 6):
+        raise unprocessable("阶段参数无效")
+    from services.archive_history import archive_history
+    return ok(archive_history(db, a, actor, stage_code))
 
 
 @router.get("/my/archive")

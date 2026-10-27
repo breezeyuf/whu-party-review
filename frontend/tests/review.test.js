@@ -115,6 +115,9 @@ test("batch review retains failed and unacknowledged IDs for review, including m
 
 test("history destinations use registered routes and student-accessible submission pages", () => {
   assert.equal(reviewHistoryLink({ link_type: "material", link_id: 2 }, "STUDENT").to, "/materials/2")
+  assert.equal(reviewHistoryLink({ link_type: "material", link_id: 2, version_id: 9 }, "STUDENT").to, "/materials/2?version_id=9")
+  assert.equal(reviewHistoryLink({ link_type: "archive", link_id: 2 }, "STUDENT").to, "/my/progress")
+  assert.equal(reviewHistoryLink({ link_type: "archive", link_id: 2 }, "ORG_ADMIN").to, "/archives/2")
   assert.equal(reviewHistoryLink({ link_type: "submission", link_id: 3 }, "STUDENT").to, "/my/self-check/3")
   assert.equal(reviewHistoryLink({ link_type: "submission", link_id: 3 }, "COLLEGE_REVIEWER").to, "/review/submissions/3")
   assert.equal(reviewHistoryLink({ link_type: "notice", link_id: 5 }, "BRANCH_REVIEWER").to, "/notices?notice=5")
