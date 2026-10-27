@@ -35,7 +35,15 @@ from services.rules import (
 from utils import now
 import re
 
-router = APIRouter(prefix="/rules", tags=["rules"])
+def _reader(db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    from services.audit import log
+    from services.scope import REVIEWER_ROLES
+    if actor.role not in REVIEWER_ROLES:
+        log(db, actor, "ACCESS_DENIED", "rules", detail={"reason": "role"})
+        raise forbidden("仅审核角色可访问规则库")
+
+
+router = APIRouter(prefix="/rules", tags=["rules"], dependencies=[Depends(_reader)])
 
 
 def _writer(actor: Actor):
@@ -524,6 +532,5 @@ async def import_rules(kind: str, file: UploadFile = File(...), mode: str = Form
 
 @router.get("/{kind}/export")
 def export_rules(kind: str, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
-    _writer(actor)
     wb = export_kind(db, kind)
     return xlsx_response(f"{kind}.xlsx", wb)

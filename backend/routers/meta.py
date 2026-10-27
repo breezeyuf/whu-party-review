@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from deps import Actor, get_current_user
-from models import MaterialType, Stage
+from models import MaterialType, Stage, TimeNodeDef
 from schemas.common import ok
 from utils import CATEGORY_NAMES, ROLE_NAMES, SEVERITY_NAMES, STATUS_NAMES
 
@@ -35,6 +35,9 @@ def meta(db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)
             {"code": "NOT_REQUIRED", "name": "无需接管"},
         ],
         "material_types": [{"id": t.id, "code": t.code, "name": t.name, "stage_codes": t.stage_codes} for t in mts],
+        "time_nodes": [{"code": n.code, "name": n.name, "value_kind": n.value_kind,
+                        "has_hours": n.has_hours, "is_active": n.is_active}
+                       for n in db.query(TimeNodeDef).order_by(TimeNodeDef.sort_order).all()],
         "levels": [
             {"code": "SELF", "name": "自查"}, {"code": "BRANCH", "name": "支部初审"},
             {"code": "CROSS", "name": "交叉互查"}, {"code": "COLLEGE", "name": "学院复审"},

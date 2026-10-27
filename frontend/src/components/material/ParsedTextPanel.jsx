@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { fmtDate } from "../../utils/format"
-import { timeNodes } from "../../api/rules"
+import { getMeta } from "../../api/meta"
 import { useRequest } from "../../hooks/useRequest"
 import { extractionChanges, extractionDraft } from "../../utils/extractionWorkflow"
 import { applyOcrSuggestion } from "../../utils/ocrReview"
@@ -15,8 +15,8 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
   const [reason, setReason] = useState("")
   const [reviewSource, setReviewSource] = useState(null)
   const nextKey = useRef(0)
-  const defsReq = useRequest(() => timeNodes.list(), [editable], { immediate: !!editable })
-  const definitions = defsReq.data || []
+  const defsReq = useRequest(getMeta, [editable], { immediate: !!editable })
+  const definitions = defsReq.data?.time_nodes || []
 
   useEffect(() => {
     setText(parsed?.corrected_text ?? parsed?.full_text ?? "")

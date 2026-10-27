@@ -23,12 +23,20 @@ class Base(DeclarativeBase):
 
 
 def get_db():
+    from services.audit import persist_access_denials
+
     db = SessionLocal()
     try:
         yield db
+        persist_access_denials(db)
         db.commit()
+        db.info.pop("access_denials", None)
     except Exception:
         db.rollback()
+        if db.info.get("access_denials"):
+            persist_access_denials(db)
+            db.commit()
+            db.info.pop("access_denials", None)
         raise
     finally:
         db.close()
