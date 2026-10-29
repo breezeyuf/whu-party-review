@@ -1,3 +1,8 @@
+export function pendingOcrPages(parsed) {
+  return (parsed?.pages || []).filter((page) => page.ocr_status === "NEEDS_REVIEW"
+    || page.ocr_status == null && ["scan", "image", "ocr"].includes(page.source) && !(page.text || "").trim())
+}
+
 // Only edit a unique, still-unmodified source span. Never overwrite user edits.
 export function applyOcrSuggestion(text, parsed, page, review) {
   const original = review.original_text || ""

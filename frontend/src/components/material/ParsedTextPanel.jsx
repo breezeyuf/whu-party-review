@@ -3,7 +3,7 @@ import { fmtDate } from "../../utils/format"
 import { getMeta } from "../../api/meta"
 import { useRequest } from "../../hooks/useRequest"
 import { extractionChanges, extractionDraft } from "../../utils/extractionWorkflow"
-import { applyOcrSuggestion } from "../../utils/ocrReview"
+import { applyOcrSuggestion, pendingOcrPages } from "../../utils/ocrReview"
 import MaterialViewer from "./MaterialViewer"
 
 export default function ParsedTextPanel({ parsed, editable, onSave }) {
@@ -14,6 +14,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
   const [drafts, setDrafts] = useState([])
   const [reason, setReason] = useState("")
   const [reviewSource, setReviewSource] = useState(null)
+  const [reviewedPages, setReviewedPages] = useState([])
   const nextKey = useRef(0)
   const defsReq = useRequest(getMeta, [editable], { immediate: !!editable })
   const definitions = defsReq.data?.time_nodes || []
@@ -26,9 +27,11 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
     setReason("")
     setError("")
     setReviewSource(null)
+    setReviewedPages([])
   }, [parsed])
 
   if (!parsed) return <p className="text-sm text-base-content/50">解析尚未完成。</p>
+  const pendingPages = pendingOcrPages(parsed)
 
   const save = async (recheck) => {
     if (busy || !editable) return
@@ -42,7 +45,9 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
     try {
       const changes = extractionChanges(parsed.extractions || [], drafts, definitions)
       if (changes.length && !reason.trim()) throw new Error("请填写时间节点校正原因")
-      await onSave({ version_id: parsed.version_id, corrected_text: text, corrected_fields, recheck, ...(changes.length ? { extractions: changes, reason: reason.trim() } : {}) })
+      await onSave({ version_id: parsed.version_id, corrected_text: text, corrected_fields, recheck,
+        ...(reviewedPages.length ? { ocr_reviewed_pages: reviewedPages } : {}),
+        ...(changes.length ? { extractions: changes, reason: reason.trim() } : {}) })
     } catch (e) {
       setError(e.message || "保存失败")
     } finally {
@@ -57,6 +62,14 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
     <div className="space-y-3">
       {(parsed.warnings || []).map((w, i) => <div key={i} className="alert alert-warning py-2 text-xs">{typeof w === "string" ? w : w.message}</div>)}
       <div className="text-xs text-base-content/55">解析器 {parsed.parser || "—"} · OCR {parsed.ocr_engine || "未启用"} · {parsed.page_count || 0} 页</div>
+      {pendingPages.length > 0 && <section className="space-y-2 rounded border border-warning p-3 text-xs" aria-label="OCR 待人工复核">
+        <p>空白、照片、手写页均须核对原图，保存后生效。</p>
+        {pendingPages.map((page) => <label key={page.page_no} className="flex items-center gap-2">
+          {editable && <input type="checkbox" className="checkbox checkbox-sm" disabled={busy}
+            checked={reviewedPages.includes(page.page_no)} onChange={(event) => setReviewedPages((pages) => event.target.checked ? [...pages, page.page_no] : pages.filter((number) => number !== page.page_no))} />}
+          {editable ? `已对照原图核对第 ${page.page_no} 页` : `第 ${page.page_no} 页待审核人员核对`}
+        </label>)}
+      </section>}
       {(parsed.pages || []).some((page) => page.vision_reviews?.length) && <section className="space-y-2 rounded border border-base-300 p-3" aria-label="视觉 OCR 复核结果">
         <h3 className="text-sm font-medium">视觉 OCR 复核建议</h3>
         <p className="text-xs text-base-content/60">以下为模型原始建议记录，不代表已采纳。请对照对应页原图，尤其核对姓名和日期；填入后仍须保存校正。已保存的校正以解析文本为准。</p>

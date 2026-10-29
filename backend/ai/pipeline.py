@@ -14,6 +14,7 @@ from ai.classify import classify_material
 from ai.extract import extract_fields, extract_nodes
 from ai.llm import llm_enabled
 from ai.parser import parse_version_file
+from ai.ocr_status import needs_review, review_warning, run_ocr_review
 from ai.report import issue_fp, recommend, summarize
 from ai.rule_snapshot import EvaluationContext, RuleSet
 from ai.suggest import fill_suggestions
@@ -79,6 +80,27 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
             db.flush()
             from ai.ocr import OCRProcessingError
             raise OCRProcessingError('本地 OCR 识别未完成，' + ('此前解析及人工校正已保留' if kept_previous else '部分结果已保留') + '；请检查引擎后重新解析')
+        pending = [page for page in result.get('pages', []) if needs_review(page)]
+        previous = db.query(ParseResult).filter(ParseResult.version_id == ver.id).first()
+        has_manual_nodes = db.query(TimeNodeExtraction.id).filter(
+            TimeNodeExtraction.material_version_id == ver.id,
+            TimeNodeExtraction.is_current.is_(True), TimeNodeExtraction.method == 'MANUAL').first()
+        if pending and previous is not None and ((previous.full_text or '').strip()
+                or previous.corrected_text is not None or previous.corrected_fields is not None or has_manual_nodes):
+            # Empty OCR is reviewable, not an engine failure. Never replace usable
+            # evidence or retire its time-node sources with this incomplete retry.
+            page_map = {page['page_no']: dict(page) for page in previous.pages or []}
+            for page in pending:
+                page_map.setdefault(page['page_no'], dict(page))['ocr_status'] = 'NEEDS_REVIEW'
+            previous.pages = list(page_map.values())
+            warnings = [warning for warning in previous.warnings or [] if not (
+                isinstance(warning, dict) and warning.get('code') == 'OCR-REVIEW'
+                and warning.get('page_no') in {page['page_no'] for page in pending})]
+            previous.warnings = warnings + [review_warning(page['page_no'], retained=True) for page in pending]
+            previous.updated_at = now()
+            ver.parse_status, ver.parse_error, ver.parsed_at = 'DONE', None, now()
+            db.flush()
+            return previous
         if use_llm:
             from ai.ocr_review import review_result
             review_result(db, result)
@@ -284,6 +306,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
         snapshot["node_inputs"] = node_map
         d3, r3 = run_format(db, materials, versions, parses, types, rule_set=rules)
         d4, r4 = run_content(db, sub, materials, versions, parses, types, enabled, rule_set=rules, timeline=node_map)
+        ocr_drafts, ocr_results = run_ocr_review(materials, versions, parses)
         if enabled:
             errors = list(dict.fromkeys(r["error"] for r in r4 if r.get("engine") == "LLM" and r.get("error")))
             if errors:
@@ -295,7 +318,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
                 report.llm_model = None
         report.mode = mode
         report.degrade_reason = degrade
-        drafts = d1 + d2 + d3 + d4
+        drafts = d1 + d2 + d3 + d4 + ocr_drafts
         fill_suggestions(db, drafts, rule_set=rules)
         if enabled and mode == 'RULE_LLM':
             from ai.enrichment import polish_suggestions
@@ -303,7 +326,7 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
             if suggestion_error:
                 r4.append({'rule_code':'SUGGEST','engine':'LLM','result':'SKIPPED',
                     'reason':'建议润色不可用，已保留模板建议：'+suggestion_error})
-        rule_results = r1 + r2 + r3 + r4
+        rule_results = r1 + r2 + r3 + r4 + ocr_results
         summary = summarize(drafts, len(materials), rule_results)
         rec = recommend(summary, drafts)
         classification = {

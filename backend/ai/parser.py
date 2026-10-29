@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from config import STORAGE_DIR, ensure_storage
+from ai.ocr_status import EMPTY_OCR_WARNING, review_warning
 
 
 def _ocr_enabled():
@@ -72,19 +73,23 @@ def _parse_pdf(path: Path) -> dict:
                 page_text_parts.append(line_text)
         page_text = "\n".join(page_text_parts)
         source = "text"
+        ocr_status = None
         if len(page_text.strip()) < 20:
             ocr_text, ocr_blocks, engine, warn = _ocr_page(page)
-            if warn:
+            if warn and warn != EMPTY_OCR_WARNING:
                 warnings.append(warn)
                 ocr_failed |= _ocr_enabled()
-            if ocr_text:
+            ocr_engine = engine or ocr_engine
+            if ocr_text.strip():
                 page_text = ocr_text
                 blocks = ocr_blocks
                 source = "ocr"
                 ocr_engine = engine
+                ocr_status = 'DONE'
             else:
-                warnings.append(f"第 {i+1} 页文本过少，可能为扫描件，需人工核对")
+                warnings.append(review_warning(i + 1))
                 source = "scan"
+                ocr_status = 'FAILED' if warn and warn != EMPTY_OCR_WARNING and _ocr_enabled() else 'NEEDS_REVIEW'
         texts.append(page_text)
         pages.append({
             "page_no": i + 1,
@@ -93,6 +98,7 @@ def _parse_pdf(path: Path) -> dict:
             "rotation": page.rotation,
             "text": page_text,
             "source": source,
+            **({'ocr_status': ocr_status} if ocr_status else {}),
             "blocks": blocks,
             "quality": _page_quality(page) if source != 'text' else {},
         })
@@ -158,9 +164,10 @@ def _parse_image(path: Path, ext: str) -> dict:
     out.write_bytes(doc.tobytes())
     page = doc[0]
     ocr_text, blocks, engine, warn = _ocr_page(page)
-    warnings = [warn] if warn else []
-    if not ocr_text:
-        warnings.append("图片未识别到文字，请对照原图人工核对")
+    failed = bool(warn and warn != EMPTY_OCR_WARNING) and _ocr_enabled()
+    warnings = [warn] if warn and warn != EMPTY_OCR_WARNING else []
+    if not ocr_text.strip():
+        warnings.append(review_warning(1))
     quality = _page_quality(page)
     # A standalone image's PDF canvas is synthetic, not evidence of its print DPI.
     quality['source_dpi'] = None
@@ -170,6 +177,7 @@ def _parse_image(path: Path, ext: str) -> dict:
         "height": float(page.rect.height),
         "text": ocr_text,
         "source": "ocr" if ocr_text else "image",
+        "ocr_status": 'FAILED' if failed else 'DONE' if ocr_text.strip() else 'NEEDS_REVIEW',
         "blocks": blocks,
         "quality": quality,
     }]
@@ -177,7 +185,7 @@ def _parse_image(path: Path, ext: str) -> dict:
     doc.close()
     return {
         "parser": "OCR" if ocr_text else "NONE",
-        "ocr_failed": bool(warn) and _ocr_enabled(),
+        "ocr_failed": failed,
         "ocr_engine": engine,
         "preview_pdf_path": rel,
         "full_text": ocr_text,
