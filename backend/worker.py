@@ -235,7 +235,8 @@ def _run(db, job: Job) -> None:
             run_export_job(db, job)
             _ok(db, job, job.result)
         elif job.job_type == "NOTICE_BATCH":
-            _ok(db, job, {"ok": True})
+            from services.completion_batch import run_notice_batch
+            _ok(db, job, run_notice_batch(db, job))
         else:
             _fail(db, job, f"未知任务类型 {job.job_type}")
     except Exception as e:

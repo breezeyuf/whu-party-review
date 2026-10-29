@@ -48,9 +48,9 @@ export default function SelfCheckPage() {
   const taskPending = !!jobId && String(jobId) !== String(finishedJobId)
   const issues = issueReq.data?.items || []
   // 历史报告只读：问题与完整性取报告快照，并校验报告属于当前提交包
-  const historyReport = viewingHistoryReport ? reportReq.data : null
+  const historyReport = viewingHistoryReport && String(reportReq.data?.id) === String(reportId) ? reportReq.data : null
   const historyIssues = Object.values(historyReport?.issues_by_category || {}).flat()
-  const snapshotMode = !!historyReport
+  const snapshotMode = viewingHistoryReport
   const shownIssues = snapshotMode ? historyIssues : issues
   const shownCompleteness = snapshotMode ? historyReport?.completeness : compReq.data
   const reportMismatch = !!historyReport && String(historyReport.submission_id) !== String(submissionId)
@@ -106,6 +106,7 @@ export default function SelfCheckPage() {
 
   if (subReq.loading && !sub) return <Loading />
   if (subReq.error) return <ErrorState error={subReq.error} onRetry={() => subReq.reload().catch(() => {})} />
+  if (snapshotMode && !historyReport) return <div><button type="button" className="btn btn-ghost" onClick={backToLatestReport}>返回最新报告</button>{reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <Loading label="历史报告" />}</div>
   if (reportMismatch) return (
     <div>
       <PageHeader title="自查与提交" crumbs={[{ label: "我的材料", to: "/my/materials" }, { label: "自查与提交" }]} />
@@ -153,7 +154,7 @@ export default function SelfCheckPage() {
         <h2 className="mb-2 text-sm font-medium">问题与修改建议</h2>
         {issueReq.loading && !issueReq.data && !snapshotMode ? <Loading /> : issueReq.error && !snapshotMode ? <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} /> : <IssueList issues={shownIssues}
           readonlyNote={snapshotMode ? "这是报告生成当时的问题清单，只读；如需整改请返回最新报告。" : "逐条整改或填写情况说明；材料解析失败不代表检查通过。"}
-          renderActions={(issue) => issueMaterialId(issue) && <Link className="btn btn-ghost btn-xs" to={`/materials/${issueMaterialId(issue)}?issue_id=${issue.id}`}>查看问题材料</Link>}
+          renderActions={(issue) => issueMaterialId(issue) && <Link className="btn btn-ghost btn-xs" to={`/materials/${issueMaterialId(issue)}?issue_id=${issue.id}${snapshotMode ? `&version_id=${issue.material_version_id || issue.location?.version_id || historyReport.material_versions?.find((v) => String(v.material_id) === String(issueMaterialId(issue)))?.version_id || ""}` : ""}`}>查看问题材料</Link>}
           renderFooter={(issue) => !snapshotMode && sub?.can?.submit && !taskPending && !isAiPending(sub) && <IssueResponseForm compact issue={issue} onDone={() => { refresh(); materialsReq.reload().catch(() => {}) }} onBusyChange={(value) => setReplyWork((previous) => previous[issue.id] === value ? previous : { ...previous, [issue.id]: value })} />}
         />}
       </section>

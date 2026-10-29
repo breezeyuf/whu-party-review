@@ -229,7 +229,9 @@ def validate_record(kind: str, rec: dict) -> list[str]:
         if not isinstance(value, list):
             errors.append(f"{field} 须为数组，不能是 {type(value).__name__}")
             continue
-        if field in ("wrong_variants", "sequence_items", "applies_to", "applies_stages") and any(
+        if field in ("applies_stages", "stage_codes") and any(type(item) is not int or item not in range(1, 6) for item in value):
+            errors.append(f"{field} 数组元素须为 1–5 的整数阶段")
+        if field in ("wrong_variants", "sequence_items", "applies_to") and any(
             not isinstance(item, str) for item in value
         ):
             errors.append(f"{field} 数组元素须为字符串")
