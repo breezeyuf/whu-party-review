@@ -55,6 +55,11 @@ def report_is_stale(db: Session, sub: Submission, report: Optional[AiReport]) ->
             ParseResult.version_id.in_(version_ids), ParseResult.updated_at > report.finished_at,
         ).first():
             return True
+    if sub.status != 'FILED' and (report.timeline_snapshot or {}).get('date_evidence_policy') != 1:
+        from services.timeline import node_map_for_archive
+        nodes = node_map_for_archive(db, sub.archive_id)
+        if any(source.get('usable') is False for node in nodes.values() for source in node.get('sources') or []):
+            return True
     return False
 
 

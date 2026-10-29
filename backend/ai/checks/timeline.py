@@ -15,6 +15,7 @@ def nodes_from_map(node_map: dict) -> dict[str, NodeVal]:
     for code, n in node_map.items():
         out[code] = NodeVal(
             code=code,
+            pending_review=bool(n.get("pending_review")),
             date=as_date(n.get("date") or n.get("value_date")),
             end=as_date(n.get("end") or n.get("end_date") or n.get("value_end_date")),
             hours=n.get("hours"),
@@ -44,6 +45,9 @@ def _valid_date_sources(ctx: DSLContext, node_map: dict, check: dict):
             results.append((result, None))
             continue
         for source in sources:
+            if source.get("usable") is False:
+                results.append((CheckResult(ok=True, skipped=True, reason="日期待人工确认", node_code=code), source))
+                continue
             value_date = as_date(source.get("date"))
             end_date = as_date(source.get("end_date"))
             upload_day = as_date(source.get("upload_date"))
@@ -83,7 +87,7 @@ def _issue_evidence(node_map: dict, check: dict, result: CheckResult, source: di
         sources = []
         for code in codes:
             node = node_map.get(code) or {}
-            candidates = node.get("sources") or []
+            candidates = [source for source in node.get("sources") or [] if source.get("usable") is not False]
             effective = node.get("date") or node.get("value_date")
             candidates = sorted(candidates, key=lambda item: item.get("date") != effective)
             sources.extend(candidates)
@@ -102,6 +106,17 @@ def _issue_evidence(node_map: dict, check: dict, result: CheckResult, source: di
     return primary, location
 
 
+def _node_refs(value):
+    if isinstance(value, str):
+        yield value.replace('[*]', '').split('.', 1)[0]
+    elif isinstance(value, Mapping):
+        for part in value.values():
+            yield from _node_refs(part)
+    elif isinstance(value, (list, tuple)):
+        for part in value:
+            yield from _node_refs(part)
+
+
 def run_timeline(db, submission, node_map: dict, upload_date: date | None = None, *, rule_set=None, context=None):
     cal = context.calendar if context else get_setting(db, "calendar", {})
     holidays = {as_date(x) for x in (cal.get("holidays") or []) if as_date(x)}
@@ -114,6 +129,23 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
     results = []
     derived = {}
     stage = submission.stage_code
+    from ai.date_evidence import REVIEW_CODE, MIN_CONFIDENCE
+    for code, node in node_map.items():
+        for source in node.get('sources') or []:
+            if source.get('usable') is not False:
+                continue
+            drafts.append(IssueDraft(category='TIME', severity='WARN', title='日期待人工确认',
+                description=source.get('review_reason') or '日期识别证据不足，须核对原图后确认',
+                rule_code=REVIEW_CODE, material_id=source.get('material_id'), material_version_id=source.get('version_id'),
+                location=loc(node_code=code, extraction_id=source.get('extraction_id'), material_id=source.get('material_id'),
+                             page_no=source.get('page_no'), bbox=source.get('bbox')),
+                actual_value=source.get('date'), expected_value='对照原图确认的日期',
+                suggestion='请在解析文本面板核对并确认该条日期，填写依据，再重新校验。',
+                needs_human_judgement=True, confidence=source.get('confidence') or 0.0,
+                fingerprint_parts=(REVIEW_CODE, source.get('material_id'), source.get('version_id'), code,
+                                   source.get('seq_index'), source.get('date'), source.get('end_date'))))
+            results.append({'rule_code': REVIEW_CODE, 'result': 'FAIL', 'node_code': code,
+                            'extraction_id': source.get('extraction_id'), 'reason': '日期未参与时间计算，等待人工确认'})
     for rule in rules:
         applies = rule.applies_stages or []
         if applies and stage not in applies and str(stage) not in [str(x) for x in applies]:
@@ -156,7 +188,10 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                         raise ValueError("invalid selected nodes")
                     evaluated = _valid_date_sources(ctx, node_map, chk)
                 else:
-                    evaluated = [(run_checks(ctx, [chk])[0], None)]
+                    pending_input = any(node_map.get(code, {}).get('pending_review') or (
+                        str(chk.get('op', '')).startswith('seq_') and node_map.get(code, {}).get('pending_sources'))
+                        for code in _node_refs(chk))
+                    evaluated = [(CheckResult(ok=True, skipped=True, reason='日期待人工确认'), None)] if pending_input else [(run_checks(ctx, [chk])[0], None)]
             except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
                 evaluated = [(CheckResult(ok=False, skipped=True, reason="时间规则参数无效或日期计算超出范围"), None)]
             for r, source in evaluated:
@@ -178,7 +213,8 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
         date_only = all(isinstance(chk, Mapping) and chk.get("op") == "valid_date" for chk in checks)
         invalid = next((r.reason for r in cres if r.skipped and r.reason.startswith("时间规则参数无效")), None)
         if skip_all and (invalid or not (required_failed or (date_only and fail))):
-            reason = invalid or ("缺少真实材料上传日期或日期来源" if date_incomplete else "节点缺失")
+            reason = invalid or ("日期待人工确认" if any(r.skipped and r.reason.startswith("日期待人工确认") for r in cres)
+                                else "缺少真实材料上传日期或日期来源" if date_incomplete else "节点缺失")
             results.append({"rule_code": rule.code, "result": "SKIPPED", "reason": reason})
             continue
         if fail:
@@ -223,6 +259,8 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                 passed["derived"] = dict(derived)
             results.append(passed)
     snapshot = {
+        "date_evidence_policy": 1,
+        "date_confidence_threshold": MIN_CONFIDENCE,
         "nodes": {c: (n.date.isoformat() if n.date else None) for c, n in ctx.nodes.items()},
         "date_inputs": [source for node in node_map.values() for source in (node.get("sources") or [])],
         "derived": derived,

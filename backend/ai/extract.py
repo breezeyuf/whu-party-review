@@ -123,7 +123,8 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
             for r in results:
                 if r["node_code"] == "T10":
                     r["value_date"], r["value_end_date"] = rng
-    return results
+    from ai.date_evidence import bound_extractions
+    return bound_extractions(results, pages)
 
 
 def _find_hours(text: str) -> Optional[float]:

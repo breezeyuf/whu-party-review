@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react"
+import { Suspense, useEffect, useRef, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import MaterialViewer from "../../components/material/MaterialViewer"
-import ParsedTextPanel from "../../components/material/ParsedTextPanel"
+import { lazyWithRetry } from "../../utils/lazyLoad"
 import VersionList from "../../components/material/VersionList"
 import VersionDiff from "../../components/material/VersionDiff"
 import TypeConfirmSelect from "../../components/material/TypeConfirmSelect"
@@ -19,6 +19,8 @@ import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
 import { isReviewer, isStudent } from "../../utils/permissions"
 import { materialFocus, PARSE_PENDING, positiveInteger } from "../../utils/materialWorkflow"
+
+const ParsedTextPanel = lazyWithRetry(() => import("../../components/material/ParsedTextPanel"))
 
 export default function MaterialDetailPage() {
   const { id } = useParams()
@@ -196,12 +198,12 @@ export default function MaterialDetailPage() {
     </>}
     {tab === "text" && <div className="surface-card p-4">
       {parsed.loading || (parsed.data && String(parsed.data.version_id) !== String(vid)) ? <Loading label="解析文本" /> : parsed.error ? <ErrorState error={parsed.error} onRetry={parsed.reload} /> :
-        <ParsedTextPanel parsed={parsed.data} editable={canCorrect && !historical && selectedVersion?.parse_status === "DONE"} onSave={async (body) => {
+        <Suspense fallback={<Loading label="解析文本" />}><ParsedTextPanel parsed={parsed.data} editable={canCorrect && !historical && selectedVersion?.parse_status === "DONE"} onSave={async (body) => {
           const result = await putParsed(id, body)
           toast.success(body.recheck ? "已保存校正，正在重新校验" : "已保存校正")
           if (result.job_id) setTaskId(result.job_id)
           await parsed.reload()
-        }} />}
+        }} /></Suspense>}
     </div>}
     {tab === "versions" && <div className="grid gap-4 lg:grid-cols-2">
       <div>

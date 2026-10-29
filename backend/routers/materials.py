@@ -309,6 +309,8 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
         raise not_found("材料版本不存在")
     pr = db.query(ParseResult).filter(ParseResult.version_id == vid).first() if vid else None
     exs = db.query(TimeNodeExtraction).filter(TimeNodeExtraction.material_version_id == vid, TimeNodeExtraction.is_current.is_(True)).order_by(TimeNodeExtraction.id).all() if vid else []
+    from ai.date_evidence import states_for
+    states = states_for(db, exs)
     return ok({
         "material_id": mid, "version_id": vid, "version_no": ver.version_no if ver else None,
         "parser": pr.parser if pr else None, "ocr_engine": pr.ocr_engine if pr else None,
@@ -321,7 +323,8 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
             "date": e.value_date.isoformat() if e.value_date else None,
             "end_date": e.value_end_date.isoformat() if e.value_end_date else None,
             "hours": e.hours, "raw_text": e.raw_text, "page_no": e.page_no, "bbox": e.bbox,
-            "method": e.method, "confidence": e.confidence, "invalid_reason": e.invalid_reason,
+            "method": e.method, "confidence": states[e.id][2], "invalid_reason": e.invalid_reason,
+            "usable": states[e.id][0], "review_reason": states[e.id][1],
         } for e in exs],
         "warnings": pr.warnings if pr else [],
     })
