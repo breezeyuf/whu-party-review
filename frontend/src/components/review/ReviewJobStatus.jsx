@@ -28,12 +28,13 @@ function JobWatcher({ jobId, onDone, onRetry }) {
   return (
     <div className="surface-card space-y-2 p-3 text-xs" aria-live="polite">
       <div className="flex items-center justify-between gap-2">
-        <span>AI 审核任务 #{jobId} · {job ? LABEL[job.status] || job.status : "加载中"}{job?.stage_text ? ` · ${job.stage_text}` : ""}</span>
+        <span>{job?.job_type === "NOTICE_BATCH" ? "补全提示任务" : "AI 审核任务"} #{jobId} · {job ? LABEL[job.status] || job.status : "加载中"}{job?.stage_text ? ` · ${job.stage_text}` : ""}</span>
         <span className="mono">{total ? `${done}/${total}` : `${progress}%`}{job?.failed_count ? ` · 失败 ${job.failed_count}` : ""}</span>
       </div>
       <progress className={`progress w-full ${failed ? "progress-error" : "progress-primary"}`} value={progress} max="100" />
       {error && <p className="text-error">任务状态获取失败：{error.message}。正在自动重试。</p>}
       {job?.error && <p className="text-error">{job.error}</p>}
+      {job?.job_type === "NOTICE_BATCH" && job.result && <p>已生成 {job.result.created?.length || 0} 条，跳过 {job.result.skipped?.length || 0} 份。<Link className="link ml-2" to="/notices">查看通知</Link></p>}
       {!!job?.failed_children?.length && <ul className="space-y-1">{job.failed_children.map((child) => <li key={child.id}><Link className="link" to={`/review/submissions/${child.target_id}`}>提交包 #{child.target_id}</Link>：{child.error || "AI 检查失败"}</li>)}</ul>}
       {failed && <button type="button" className="btn btn-outline btn-xs" disabled={busy} onClick={retry}>{busy ? "重试中…" : "重试失败任务"}</button>}
       {retryError && <p className="text-error" role="alert">{retryError}</p>}

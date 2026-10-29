@@ -136,6 +136,8 @@ def export_notice_file(notice: Notice, fmt: str = "pdf") -> Response:
     student = (notice.content or {}).get("student") or {}
     # 文件名只出现匿名编号：旧通知没有 anon_code 时回退到通知编号，绝不用学号
     anon = student.get("anon_code") or str(notice.id)
+    if student.get("student_no") and str(student["student_no"]) in str(anon):
+        anon = str(notice.id)
     title = notice.title
     items = (notice.content or {}).get("items") or []
     comps = (notice.content or {}).get("completion_items") or []
