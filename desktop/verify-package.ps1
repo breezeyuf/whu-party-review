@@ -52,6 +52,36 @@ try {
     $null = Request-Api 'POST' '/auth/login' @{username='admin';password=$qaPassword}
     $me = (Request-Api 'GET' '/auth/me').Content | ConvertFrom-Json
     Check 'Cookie 会话可访问受保护接口' ($me.data.username -eq 'admin')
+    $schoolId = [long]$me.data.active_role.org_id
+    $grant = @(@{role='STUDENT';org_id=$schoolId})
+    $target = Request-Api 'POST' '/users' @{username='package_scope_target';real_name='虚构目标用户';org_id=$schoolId;roles=$grant}
+    $targetId = [long](($target.Content | ConvertFrom-Json).data.user.id)
+    Check '初始密码响应禁止缓存' (($target.Headers['Cache-Control'] -join ';') -eq 'no-store, private')
+    $student = (Request-Api 'POST' '/users' @{username='package_scope_student';real_name='虚构普通用户';org_id=$schoolId;roles=$grant}).Content | ConvertFrom-Json
+    $psql = Join-Path (Split-Path -Parent $exePath) 'runtime/postgres/bin/psql.exe'
+    $previousPgPassword = $env:PGPASSWORD
+    try {
+        $env:PGPASSWORD = $qaConfig.db_password
+        $pgArguments = @('-h','127.0.0.1','-p',([string]$qaConfig.db_port),'-U','party_local','-d','party_review','-v','ON_ERROR_STOP=1')
+        $actualData = & $psql @pgArguments -Atc 'SHOW data_directory'
+        if ($LASTEXITCODE -ne 0 -or [IO.Path]::GetFullPath($actualData.Trim()) -ne [IO.Path]::GetFullPath((Join-Path $qaPath 'postgres'))) {
+            throw '拒绝操作非本次新建验收数据库。'
+        }
+        $null = & $psql @pgArguments -c ('UPDATE users SET org_id=NULL WHERE id='+$targetId)
+        if ($LASTEXITCODE -ne 0) { throw '未能建立无组织虚构账号。' }
+    } finally { $env:PGPASSWORD = $previousPgPassword }
+    $adminSession = $script:qaSession
+    $script:qaSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    try {
+        $null = Request-Api 'POST' '/auth/login' @{username='package_scope_student';password=$student.data.initial_password}
+        $studentPassword = 'Qa9'+[guid]::NewGuid().ToString('N')+'!'
+        $null = Request-Api 'PUT' '/auth/password' @{old_password=$student.data.initial_password;new_password=$studentPassword}
+        $null = Request-Api 'POST' '/auth/login' @{username='package_scope_student';password=$studentPassword}
+        $studentMe = (Request-Api 'GET' '/auth/me').Content | ConvertFrom-Json
+        Check '普通用户已完成首次改密并可正常登录' (-not $studentMe.data.must_change_password -and $studentMe.data.active_role.role -eq 'STUDENT')
+        try { $null = Request-Api 'POST' ('/users/'+$targetId+'/reset-password') @{}; Check '普通用户不能重置无组织账号密码' $false }
+        catch { Check '普通用户不能重置无组织账号密码' ([int]$_.Exception.Response.StatusCode -eq 403) }
+    } finally { $script:qaSession = $adminSession }
     try { $null = Request-Api 'POST' '/auth/logout' @{} @{Origin='https://untrusted.invalid'}; Check '拒绝跨站退出' $false }
     catch { Check '拒绝跨站退出' ([int]$_.Exception.Response.StatusCode -eq 403) }
     $ocr = (Request-Api 'POST' '/settings/ai/test' @{target='ocr';override=@{engine='rapidocr'}}).Content | ConvertFrom-Json
