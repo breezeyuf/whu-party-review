@@ -68,6 +68,10 @@ def test_periodic_recovery_handles_orphan_not_yet_stale_at_restart(sessions, mon
             current += timedelta(seconds=301)
 
     monkeypatch.setattr(worker, "_stop", TwoScans())
+    # NOTICE_BATCH 现在会真正生成批量通知并核验发起人，这里只验证恢复与领取代次，
+    # 否则缺少发起人权限会让任务回到 QUEUED，掩盖本用例要检查的状态迁移。
+    from services import completion_batch
+    monkeypatch.setattr(completion_batch, "run_notice_batch", lambda _db, _job: {"ok": True})
     worker._recovery_loop()
     assert observed == ["RUNNING", "QUEUED"]
     with sessions() as db:
