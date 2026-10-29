@@ -11,7 +11,7 @@ from schemas.common import ok, page_params
 from services.audit import log
 from services.exporter import xlsx_response
 from services.importer import import_users_xlsx, users_template
-from services.users import create_user, reset_user_password, update_user, user_to_dict, can_manage_user
+from services.users import create_user, reset_user_password, update_user, user_to_dict, can_manage_user, can_manage_account
 from services.scope import deny_object_access
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -55,10 +55,11 @@ def list_users(q: str | None = None, org_id: int | None = None, role: str | None
 
 
 @router.post("")
-def create(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+def create(body: dict, response: Response, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     user, pwd = create_user(db, actor, body)
     log(db, actor, "USER_CREATE", "user", user.id, {"username": user.username})
     db.refresh(user)
+    response.headers["Cache-Control"] = "no-store, private"
     return ok({"user": user_to_dict(user), "initial_password": pwd})
 
 
@@ -108,19 +109,19 @@ def put_user(uid: int, body: dict, db: Session = Depends(get_db), actor: Actor =
     if not user:
         raise not_found()
     update_user(db, actor, user, body)
-    log(db, actor, "USER_UPDATE", "user", uid, body)
+    log(db, actor, "USER_UPDATE", "user", uid, {"fields": sorted(set(body) & {"real_name", "gender", "email", "phone", "org_id", "is_active", "roles"})})
     db.refresh(user)
     return ok(user_to_dict(user))
 
 
 @router.post("/{uid}/reset-password")
-def reset(uid: int, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+def reset(uid: int, response: Response, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     user = db.query(User).filter(User.id == uid).first()
     if not user:
         raise not_found()
-    org = db.query(Org).filter(Org.id == user.org_id).first()
-    if org and not can_manage_user(actor, org):
+    if not can_manage_account(db, actor, user):
         raise forbidden()
     pwd = reset_user_password(db, user)
     log(db, actor, "USER_RESET_PASSWORD", "user", uid, {})
+    response.headers["Cache-Control"] = "no-store, private"
     return ok({"initial_password": pwd})
