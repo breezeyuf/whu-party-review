@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 
 from ai.extract import extract_nodes
+from ai.date_evidence import POLICY_VERSION
 import pytest
 
 from models import ParseResult, TimeNodeExtraction, ArchiveTimeNode, AuditLog
@@ -50,7 +51,7 @@ def test_review_warning_runs_even_with_no_enabled_time_rules(case):
     nodes = node_map_for_archive(case.db, case.arch.id)
     snapshot, drafts, results = run_timeline(case.db, case.sub, nodes,
         rule_set=SimpleNamespace(rows=lambda _: []))
-    assert snapshot['date_evidence_policy'] == 1
+    assert snapshot['date_evidence_policy'] == POLICY_VERSION
     assert len(drafts) == 1 and drafts[0].rule_code == 'DATE-REVIEW'
     assert drafts[0].severity == 'WARN' and drafts[0].needs_human_judgement
     assert recommend(summarize(drafts, 1, results), drafts) == 'NEEDS_REVIEW'
@@ -91,7 +92,7 @@ def test_legacy_report_using_uncertain_date_must_be_rechecked(case):
     case.report.timeline_snapshot = {}
     case.db.flush()
     assert report_is_stale(case.db, case.sub, case.report)
-    case.report.timeline_snapshot = {'date_evidence_policy': 1}
+    case.report.timeline_snapshot = {'date_evidence_policy': POLICY_VERSION}
     assert not report_is_stale(case.db, case.sub, case.report)
 
 
@@ -194,3 +195,51 @@ def test_legacy_syntactic_confidence_does_not_override_low_confidence_ocr(case):
     merge_archive_nodes(case.db, case.arch.id)
     nodes = node_map_for_archive(case.db, case.arch.id)
     assert nodes['T02']['date'] is None
+
+
+def legacy_training_range(c):
+    m, v = parsed_material(c)
+    parsed = c.db.query(ParseResult).filter_by(version_id=v.id).one()
+    text = '出生日期2000年1月1日\n培训时间2026年9月15日至2026年9月18日\n落款2026年9月20日'
+    parsed.pages = [{'page_no': 1, 'source': 'text', 'text': text, 'blocks': [{'text': text}]}]
+    row = c.add(TimeNodeExtraction, archive_id=c.arch.id, material_id=m.id, material_version_id=v.id,
+        node_code='T10', value_date=date(2000, 1, 1), value_end_date=date(2026, 9, 20), hours=24,
+        raw_text='2026年9月20日', page_no=1, confidence=.9, method='RULE', is_current=True, created_at=now())
+    merge_archive_nodes(c.db, c.arch.id)
+    return m, v, row
+
+
+def test_legacy_document_wide_range_is_excluded_and_previous_report_is_stale(case):
+    from services.workflow import report_is_stale
+    m, v, row = legacy_training_range(case)
+    assert row.value_date == date(2000, 1, 1)  # Keep original evidence.
+    nodes = node_map_for_archive(case.db, case.arch.id)
+    assert nodes['T10']['date'] is None and nodes['T10']['hours'] is None
+    assert nodes['T10']['sources'][0]['usable'] is False
+    case.report.material_versions = [{'material_id': m.id, 'version_id': v.id}]
+    case.report.finished_at = now() + timedelta(seconds=1)
+    case.report.timeline_snapshot = {'date_evidence_policy': 1}
+    case.db.flush()
+    assert report_is_stale(case.db, case.sub, case.report)
+
+
+def test_correcting_legacy_training_period_restores_only_confirmed_range(case, as_client):
+    m, v, row = legacy_training_range(case)
+    response = as_client(case.reviewer).put(f'/api/materials/{m.id}/parsed', json={
+        'version_id': v.id, 'reason': '原图明确记载培训起止，出生和落款不属于培训期间',
+        'extractions': [{'extraction_id': row.id, 'date': '2026-09-15', 'end_date': '2026-09-18', 'hours': 24}]})
+    assert response.status_code == 200, response.text
+    nodes = node_map_for_archive(case.db, case.arch.id)
+    assert nodes['T10']['date'] == '2026-09-15' and nodes['T10']['end_date'] == '2026-09-18'
+    assert nodes['T10']['hours'] == 24
+    assert row.raw_text == '2026年9月20日' and row.method == 'MANUAL'
+
+
+def test_filed_legacy_range_remains_historical_evidence(case):
+    _, _, row = legacy_training_range(case)
+    node = case.db.query(ArchiveTimeNode).filter_by(archive_id=case.arch.id, node_code='T10').one()
+    node.locked, node.value_date, node.value_end_date = True, row.value_date, row.value_end_date
+    case.sub.status = 'FILED'
+    case.db.flush()
+    nodes = node_map_for_archive(case.db, case.arch.id)
+    assert nodes['T10']['date'] == '2000-01-01' and nodes['T10']['sources'][0]['usable'] is True

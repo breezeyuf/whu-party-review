@@ -129,7 +129,7 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
     results = []
     derived = {}
     stage = submission.stage_code
-    from ai.date_evidence import REVIEW_CODE, MIN_CONFIDENCE
+    from ai.date_evidence import REVIEW_CODE, MIN_CONFIDENCE, POLICY_VERSION
     for code, node in node_map.items():
         for source in node.get('sources') or []:
             if source.get('usable') is not False:
@@ -259,7 +259,7 @@ def run_timeline(db, submission, node_map: dict, upload_date: date | None = None
                 passed["derived"] = dict(derived)
             results.append(passed)
     snapshot = {
-        "date_evidence_policy": 1,
+        "date_evidence_policy": POLICY_VERSION,
         "date_confidence_threshold": MIN_CONFIDENCE,
         "nodes": {c: (n.date.isoformat() if n.date else None) for c, n in ctx.nodes.items()},
         "date_inputs": [source for node in node_map.values() for source in (node.get("sources") or [])],

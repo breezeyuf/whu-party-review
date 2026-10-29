@@ -5,6 +5,7 @@ from sqlalchemy import and_
 from models import ParseResult, TimeNodeExtraction, Material, Submission, ArchiveTimeNode
 
 MIN_CONFIDENCE = .7
+POLICY_VERSION = 2
 REVIEW_CODE = 'DATE-REVIEW'
 REVIEW_PREFIX = '待人工确认日期：'
 
@@ -39,6 +40,19 @@ def evidence_state(row, pages=None):
         reason = '抽取置信度不足，须对照原图确认'
     page_no, raw, box = _get(row, 'page_no'), _get(row, 'raw_text') or '', _get(row, 'bbox')
     range_values = {_get(row, 'value_date'), _get(row, 'value_end_date')} - {None} if _get(row, 'value_end_date') else set()
+    # Older rule extraction used the document-wide minimum/maximum as T10's
+    # range. High OCR confidence does not prove those dates belong together.
+    if range_values and _get(row, 'method') == 'RULE' and pages and _get(row, 'node_code') in ('T10', 'T11'):
+        from ai.date_ranges import explicit_ranges
+        from ai.dates import find_dates
+        text = '\n'.join(page.get('text') or '\n'.join(block.get('text') or '' for block in page.get('blocks') or [])
+                         for page in pages)
+        keywords = ['培训', '学时', '结业'] if _get(row, 'node_code') == 'T10' else ['公示']
+        candidates = explicit_ranges(text, find_dates(text), keywords, typed=True)
+        matching = [hit for hit in candidates if hit['date'] == _get(row, 'value_date')
+                    and hit['end_date'] == _get(row, 'value_end_date')]
+        if text.strip() and not any(not hit.get('invalid_reason') for hit in matching):
+            reason = reason or '原文不能唯一支持此日期区间，须核对完整起止日期'
     found_range = set()
     has_ocr_range = False
     for page in pages or []:
@@ -73,7 +87,9 @@ def evidence_state(row, pages=None):
         if any(block.get('handwritten') or block.get('handwriting_hint') for block in blocks):
             reason = '原文块含手写标记，须人工确认'
         for review in page.get('vision_reviews') or []:
-            if review.get('status') == 'pending' and (not box or not review.get('bbox') or _overlap(box, review['bbox'])):
+            boxes = [block.get('bbox') for block in blocks] if range_values else [box]
+            if review.get('status') == 'pending' and (not boxes or not review.get('bbox')
+                    or any(not anchor or _overlap(anchor, review['bbox']) for anchor in boxes)):
                 reason = '日期所在区域的视觉复核尚未确认'
     if has_ocr_range and not range_values.issubset(found_range):
         reason = "日期区间有端点缺少可核对原文，须人工确认完整区间"
