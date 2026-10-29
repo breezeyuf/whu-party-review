@@ -124,6 +124,10 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
                 {def?.value_kind === "DATE_RANGE" && <label className="form-control text-xs"><span>结束日期</span><input aria-label={`记录 ${index + 1} 结束日期`} className="input input-bordered input-sm mt-1" type="date" value={draft.end_date} onChange={(event) => changeDraft(draft.key, { end_date: event.target.value })} /></label>}
                 {def?.has_hours && <label className="form-control text-xs"><span>学时</span><input aria-label={`记录 ${index + 1} 学时`} className="input input-bordered input-sm mt-1" type="number" min="0" step="any" value={draft.hours} onChange={(event) => changeDraft(draft.key, { hours: event.target.value })} /></label>}
                 {def?.value_kind === "DATE_SEQ" && <label className="form-control text-xs"><span>序号（从 0 开始）</span><input aria-label={`记录 ${index + 1} 序号`} className="input input-bordered input-sm mt-1" type="number" min="0" step="1" value={draft.seq_index} onChange={(event) => changeDraft(draft.key, { seq_index: event.target.value })} /></label>}
+                {source?.usable === false && <div className="space-y-2 text-xs sm:col-span-2">
+                  <p className="text-warning" role="status">{source.review_reason || "此日期待人工确认，暂不参与时间规则计算"}</p>
+                  <label className="flex items-center gap-2"><input type="checkbox" className="checkbox checkbox-sm" checked={draft.confirmed} onChange={(event) => changeDraft(draft.key, { confirmed: event.target.checked })} />已对照原图确认此日期</label>
+                </div>}
                 {source && <p className="text-xs text-base-content/60 sm:col-span-2">原文：{source.raw_text || "未记录"} · 第 {source.page_no || "—"} 页{source.invalid_reason && <span className="text-warning"> · 原抽取提示：{source.invalid_reason}</span>}</p>}
               </div>}
             </fieldset>
@@ -134,6 +138,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
           {(parsed.extractions || []).map((ex) => (
             <li key={ex.id} className="mono">
               {ex.node_code} · {fmtDate(ex.date)} · 第 {ex.page_no || "—"} 页 · {ex.method} · {ex.raw_text}
+              {ex.usable === false && <span className="text-warning"> · 待人工确认，未用于计算</span>}
               {ex.invalid_reason && <span className="text-error"> · {ex.invalid_reason}</span>}
             </li>
           ))}
