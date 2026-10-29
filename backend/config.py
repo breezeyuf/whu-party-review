@@ -12,7 +12,7 @@ BACKEND_DIR = Path(os.environ.get("PARTY_REVIEW_BACKEND_DIR") or _HERE)
 load_dotenv(_HERE / ".env")
 load_dotenv(_HERE.parent.parent / ".env")
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 
 def _env(name: str, default: str = "") -> str:
