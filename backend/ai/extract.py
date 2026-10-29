@@ -66,7 +66,10 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
         date_map = type_row.date_node_map or {}
     fields = extract_fields(text)
     dates = find_dates(text)
+    range_defs = {nd.code: nd for nd in node_defs if nd.value_kind == 'DATE_RANGE'}
     for field_key, node_code in date_map.items():
+        if node_code in range_defs:
+            continue
         raw = None
         if field_key == "signature_date":
             raw = fields.get("signature_date_raw") or fields.get("signature_date")
@@ -90,6 +93,20 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
         })
     for nd in node_defs:
         kws = nd.extract_keywords or []
+        if nd.code in range_defs:
+            from ai.date_ranges import explicit_ranges
+            for hit in explicit_ranges(text, dates, kws, typed=nd.code in date_map.values()):
+                anchor = text[hit['start']:hit['end']].splitlines()[0] if 'start' in hit else ''
+                page_no, bbox = _locate(pages, anchor)
+                results.append({
+                    'node_code': nd.code, 'seq_index': 0,
+                    'value_date': hit['date'], 'value_end_date': hit['end_date'],
+                    'hours': _find_hours(text) if getattr(nd, 'has_hours', nd.code == 'T10') else None,
+                    'raw_text': hit['raw'], 'invalid_reason': hit.get('invalid_reason'),
+                    'page_no': page_no, 'bbox': bbox,
+                    'confidence': .9 if hit['date'] else .4, 'method': 'RULE',
+                })
+            continue
         if not kws:
             continue
         if any(r["node_code"] == nd.code for r in results):
@@ -117,25 +134,13 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
                 "confidence": 0.85 if h.get("date") else 0.4,
                 "method": "RULE",
             })
-    if any(nd.code == "T10" for nd in node_defs):
-        rng = _find_range(dates)
-        if rng:
-            for r in results:
-                if r["node_code"] == "T10":
-                    r["value_date"], r["value_end_date"] = rng
-    return results
+    from ai.date_evidence import bound_extractions
+    return bound_extractions(results, pages)
 
 
 def _find_hours(text: str) -> Optional[float]:
     m = re.search(r"(\d+(?:\.\d+)?)\s*学时", text or "")
     return float(m.group(1)) if m else None
-
-
-def _find_range(dates: list) -> Optional[tuple]:
-    valid = [d["date"] for d in dates if d.get("date")]
-    if len(valid) >= 2:
-        return min(valid), max(valid)
-    return None
 
 
 def _locate(pages: list, snippet: str) -> tuple[Optional[int], Optional[list]]:

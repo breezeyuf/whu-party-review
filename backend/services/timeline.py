@@ -18,6 +18,7 @@ from models import (
     TimeNodeExtraction,
 )
 from utils import now, stage_name, TZ8
+from ai.date_evidence import states_for
 
 
 def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None:
@@ -27,12 +28,14 @@ def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None
         .filter(TimeNodeExtraction.archive_id == archive_id, TimeNodeExtraction.is_current.is_(True))
         .all()
     )
+    states = states_for(db, exs)
     by_code: dict[str, list[TimeNodeExtraction]] = {}
     for e in exs:
         by_code.setdefault(e.node_code, []).append(e)
     existing = {n.node_code: n for n in db.query(ArchiveTimeNode).filter(ArchiveTimeNode.archive_id == archive_id).all()}
     for d in defs:
-        rows = by_code.get(d.code, [])
+        all_rows = by_code.get(d.code, [])
+        rows = [row for row in all_rows if states[row.id][0]]
         dates = [r.value_date for r in rows if r.value_date]
         ends = [r.value_end_date for r in rows if r.value_end_date]
         hours = [r.hours for r in rows if r.hours is not None]
@@ -62,7 +65,7 @@ def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None
             node.value_end_date = next((r.value_end_date for r in basis if r.value_end_date), None)
             node.seq_count = len(dates)
         node.hours = next((r.hours for r in basis if r.hours is not None), None)
-        node.source_count = len(rows)
+        node.source_count = len(all_rows)
         node.source_extraction_id = basis[0].id if basis else None
         node.has_conflict = has_conflict
         node.updated_at = now()
@@ -87,13 +90,18 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
     ).all()
     version_ids = {getattr(e, "material_version_id", None) for e in seqs} - {None}
     versions = {v.id: v for v in db.query(MaterialVersion).filter(MaterialVersion.id.in_(version_ids)).all()} if version_ids else {}
+    states = states_for(db, seqs)
+    rows_by_code = {}
+    for row in seqs:
+        rows_by_code.setdefault(row.node_code, []).append(row)
     seq_map: dict[str, list] = {}
     invalid: dict[str, str] = {}
     sources: dict[str, list] = {}
     for e in seqs:
-        if e.value_date:
+        usable, review_reason, evidence_confidence = states[e.id]
+        if e.value_date and usable:
             seq_map.setdefault(e.node_code, []).append(e.value_date.isoformat())
-        if e.invalid_reason:
+        if e.invalid_reason and usable:
             invalid[e.node_code] = e.invalid_reason
         version_id = getattr(e, "material_version_id", None)
         version = versions.get(version_id)
@@ -103,6 +111,7 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
         else:
             upload_day = uploaded_at
         sources.setdefault(e.node_code, []).append({
+            "usable": usable, "review_reason": review_reason, "confidence": evidence_confidence,
             "node_code": e.node_code, "extraction_id": getattr(e, "id", None),
             "material_id": getattr(e, "material_id", None), "version_id": version_id,
             "seq_index": getattr(e, "seq_index", None),
@@ -118,22 +127,62 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
         dfn = defs.get(n.node_code)
         eff = effective_node(n)
         node_sources = sources.get(n.node_code, [])
+        pending = any(not source['usable'] for source in node_sources)
+        computed_conflict = n.has_conflict
+        if pending and not (n.locked or n.corrected_date or n.corrected_end_date or n.corrected_hours is not None):
+            accepted = [row for row in rows_by_code.get(n.node_code, []) if states[row.id][0]]
+            manual = [row for row in accepted if row.method == 'MANUAL']
+            basis = manual or accepted
+            dates = [row.value_date for row in accepted if row.value_date]
+            if dfn and dfn.value_kind == 'DATE_SEQ':
+                eff = {'date': min(dates).isoformat() if dates else None,
+                       'end_date': max(dates).isoformat() if dates else None,
+                       'hours': next((row.hours for row in basis if row.hours is not None), None)}
+                computed_conflict = False
+            else:
+                start = next((row.value_date for row in basis if row.value_date), None)
+                end = next((row.value_end_date for row in basis if row.value_end_date), None)
+                eff = {'date': start.isoformat() if start else None, 'end_date': end.isoformat() if end else None,
+                       'hours': next((row.hours for row in basis if row.hours is not None), None)}
+                computed_conflict = any(len({getattr(row, field) for row in basis if getattr(row, field) is not None}) > 1
+                                        for field in ('value_date', 'value_end_date', 'hours'))
         # An explicit archive correction replaces the selected source value;
         # its upload date still comes from that source's original file version.
         for source in node_sources:
             if source["extraction_id"] == getattr(n, "source_extraction_id", None) and n.corrected_date:
-                source.update(date=eff["date"], end_date=eff["end_date"], invalid_reason=None)
+                source.update(candidate_date=source["date"], date=eff["date"], end_date=eff["end_date"],
+                              invalid_reason=None, usable=True, review_reason=None, confirmation="ARCHIVE_MANUAL")
+        if n.locked:
+            for source in node_sources:
+                if source['date'] == eff['date'] and source.get('end_date') == eff['end_date']:
+                    source.update(usable=True, review_reason=None, confirmation='FILED_STAGE')
+        pending = any(not source['usable'] for source in node_sources)
         out[n.node_code] = {
             "date": eff["date"],
             "end_date": eff["end_date"],
             "end": eff["end_date"],
             "hours": eff["hours"],
             "seq": seq_map.get(n.node_code, []),
-            "has_conflict": n.has_conflict,
+            "has_conflict": computed_conflict,
+            "pending_review": pending and not bool(eff["date"] or seq_map.get(n.node_code)),
+            "pending_sources": pending,
             "invalid_reason": invalid.get(n.node_code),
             "value_kind": dfn.value_kind if dfn else "DATE",
             "sources": node_sources,
         }
+    for code, node_sources in sources.items():
+        if code not in out and any(not source['usable'] for source in node_sources):
+            out[code] = {'date': None, 'end_date': None, 'end': None, 'hours': None, 'seq': seq_map.get(code, []),
+                         'has_conflict': False, 'pending_review': True, 'pending_sources': True, 'invalid_reason': invalid.get(code),
+                         'value_kind': defs[code].value_kind if code in defs else 'DATE', 'sources': node_sources}
+    for code, definition in defs.items():
+        if definition.value_kind != 'DERIVED':
+            continue
+        base = (definition.derive_expr or {}).get('base') if isinstance(definition.derive_expr, dict) else None
+        if isinstance(base, str) and out.get(base, {}).get('pending_review') and code in out:
+            existing = next((node for node in nodes if node.node_code == code), None)
+            if existing and not existing.locked and not existing.corrected_date:
+                out[code].update(date=None, end_date=None, end=None, seq=[], pending_review=True)
     return out
 
 
@@ -157,6 +206,8 @@ def timeline_view(db: Session, archive: Archive, actor=None) -> dict:
         visible_materials = db.query(Material.id).filter(Material.submission_id.in_(allowed_sub_ids))
         exq = exq.filter(or_(TimeNodeExtraction.material_id.is_(None), TimeNodeExtraction.material_id.in_(visible_materials)))
     exs = exq.all()
+    states = states_for(db, exs)
+    calculated = node_map_for_archive(db, archive.id, node_defs=defs)
     by_code: dict[str, list] = {}
     for e in exs:
         by_code.setdefault(e.node_code, []).append(e)
@@ -198,6 +249,7 @@ def timeline_view(db: Session, archive: Archive, actor=None) -> dict:
             mat = db.query(Material).filter(Material.id == e.material_id).first() if e.material_id else None
             ver = db.query(MaterialVersion).filter(MaterialVersion.id == e.material_version_id).first() if e.material_version_id else None
             sources.append({
+                "usable": states[e.id][0], "review_reason": states[e.id][1],
                 "extraction_id": e.id,
                 "material_id": e.material_id,
                 "material_title": mat.title if mat else None,
@@ -209,12 +261,12 @@ def timeline_view(db: Session, archive: Archive, actor=None) -> dict:
                 "end_date": e.value_end_date.isoformat() if e.value_end_date else None,
                 "hours": e.hours,
                 "method": e.method,
-                "confidence": e.confidence,
+                "confidence": states[e.id][2],
             })
         if d.value_kind == "DERIVED":
             date_v = None
-            if n and (n.corrected_date or n.value_date):
-                date_v = (n.corrected_date or n.value_date).isoformat()
+            if d.code in calculated:
+                date_v = calculated[d.code].get("date")
             derived.append({
                 "code": d.code, "name": d.name, "date": date_v,
                 "base": (d.derive_expr or {}).get("base"),
@@ -225,7 +277,7 @@ def timeline_view(db: Session, archive: Archive, actor=None) -> dict:
             "name": d.name,
             "value_kind": d.value_kind,
             "stage_code": d.stage_code,
-            "effective": effective_node(n) if n else {"date": None, "end_date": None, "hours": None},
+            "effective": {key: calculated.get(d.code, {}).get(key) for key in ("date", "end_date", "hours")},
             "extracted": {"date": n.value_date.isoformat() if n and n.value_date else None} if n else None,
             "corrected": {"date": n.corrected_date.isoformat() if n and n.corrected_date else None,
                           "reason": n.correction_reason} if n and n.corrected_date else None,

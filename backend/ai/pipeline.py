@@ -135,6 +135,8 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
             if error: result.setdefault('warnings', []).append('模型补抽未采用：'+error)
         # A retry of the same file must keep manually checked node values. New
         # file versions still replace all sources from the old version.
+        from ai.date_evidence import bound_extractions
+        extractions = bound_extractions(extractions, result.get('pages') or [])
         manual = db.query(TimeNodeExtraction).filter(
             TimeNodeExtraction.material_version_id == ver.id,
             TimeNodeExtraction.is_current.is_(True),
