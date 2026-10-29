@@ -130,6 +130,37 @@ export async function runUiScenarios() {
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
 
+  await test("历史报告预览旧版本并定位旧问题，时间轴不混入当前日期", async () => {
+    const oldIssue = { id: 8001, title: "旧问题", category: "TIME", severity: "WARN", material_id: 12, material_version_id: 401, location: { page_no: 2, node_code: "T02" } }
+    await mount(<ReviewWorkspacePage />, { path: "/review/submissions/101?report=111", pattern: "/review/submissions/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+      if (c.url === "/submissions/101") return { ...baseSubmission, status: "BRANCH_REVIEW", materials: [{ id: 12, title: "材料", current_version_id: 402, version_no: 2 }], can: { add_issue: true, review: true } }
+      if (c.url === "/reports/111") return { ...baseReport, id: 111, submission_id: 101, issues_by_category: { TIME: [oldIssue] }, material_versions: [{ material_id: 12, version_id: 401, version_no: 1 }], timeline_snapshot: { node_inputs: { T02: { date: "2020-01-02", value_kind: "DATE" } } } }
+      if (c.url === "/archives/1/timeline") return { nodes: [{ code: "T02", effective: { date: "2026-10-29" } }] }
+    } })
+    assert.ok(requests.some(r => r.url === "/materials/12/pages/1" && r.params?.version_id === 401))
+    assert.ok(!requests.some(r => /\/materials\/12\/pages\//.test(r.url) && r.params?.version_id === 402))
+    await click([...document.querySelectorAll("button")].find(b => b.textContent.includes("旧问题") && b.textContent.includes("定位材料")))
+    assert.ok(requests.some(r => r.url === "/materials/12/pages/2" && r.params?.version_id === 401))
+    assert.equal(button("确认问题"), undefined)
+    await click(button("参考资料"))
+    await input(document.querySelector('[aria-label="查看参考资料"]'), "timeline")
+    assert.ok(text().includes("2020-01-02"))
+    assert.ok(!text().includes("2026-10-29"))
+  })
+
+  await test("历史报告加载失败不会回退为可编辑的当前审核", async () => {
+    for (const student of [false, true]) {
+      await mount(student ? <SelfCheckPage /> : <ReviewWorkspacePage />, { path: student ? "/my/self-check/101?report=111" : "/review/submissions/101?report=111", pattern: student ? "/my/self-check/:submissionId" : "/review/submissions/:id", roleCode: student ? "STUDENT" : "BRANCH_REVIEWER", handler: c => {
+        if (c.url === "/reports/111") throw new Error("历史报告暂不可用")
+        if (c.url === "/submissions/101") return { ...baseSubmission, can: { submit: true, add_issue: true, ai_check: true, review: true } }
+      } })
+      assert.ok(text().includes("历史报告暂不可用"))
+      assert.equal(button("新增问题"), undefined)
+      assert.equal(button("提交审核"), undefined)
+      assert.ok(button("返回最新报告"))
+    }
+  })
+
   await test("可编辑材料可重新解析，接口失败保留页面供重试", async () => {
     await mount(<MaterialDetailPage />, { path: "/materials/12", pattern: "/materials/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
       if (c.url === "/submissions/101") return { ...baseSubmission, can: { upload: true } }

@@ -49,7 +49,7 @@ export default function MaterialDetailPage() {
   const vid = versionId || m?.current_version?.id
   const parsed = useRequest(() => getParsed(id, { version_id: vid }), [id, vid], { immediate: !!vid })
   const subId = m?.submission_id
-  const issues = useRequest(() => listIssues(subId, { material_id: id }), [subId, id], { immediate: !!subId })
+  const issues = useRequest(() => listIssues(subId, { material_id: id, active: !searchParams.get("version_id") }), [subId, id, queryKey], { immediate: !!subId })
   const submission = useRequest(() => getSubmission(subId), [subId, activeRole?.role, activeRole?.org_id], { immediate: !!subId })
   const reviewer = isReviewer(activeRole)
   const student = isStudent(activeRole)

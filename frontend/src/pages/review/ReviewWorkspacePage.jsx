@@ -23,6 +23,7 @@ import { useAuth } from "../../context/AuthContext"
 import { issueHighlights, issueLocation, loadAllReviewIssues, reportBlockReason, sameId } from "../../utils/review"
 import { ModalLoading } from "../../components/common/Modal"
 import { lazyWithRetry, whenIdle } from "../../utils/lazyLoad"
+import { reportMaterials, reportTimeline } from "../../utils/reportSnapshot"
 
 // 只在打开时才用到的弹窗不进页面首屏；有权使用时在页面空闲时提前下载，打开时不再等待
 const AddIssueModal = lazyWithRetry(() => import("../../components/review/AddIssueModal"))
@@ -83,30 +84,31 @@ export default function ReviewWorkspacePage() {
     setJobId(null); setNoticeId(null); setLocationNote(""); setTimelineHighlight(null)
     setAdding(false); setNewIssueLocation(null); setCorrecting(null); setTab("issues")
     return () => { locateSequence.current += 1 }
-  }, [id, roleKey])
+  }, [id, roleKey, reportId])
 
   const canAddIssue = !!sub?.can?.add_issue
   const canEditTimeline = !!sub?.can?.edit_timeline
   useEffect(() => (canAddIssue ? whenIdle(() => AddIssueModal.preload().catch(() => {}), 0) : undefined), [canAddIssue])
   useEffect(() => (canEditTimeline ? whenIdle(() => NodeCorrectionModal.preload().catch(() => {}), 0) : undefined), [canEditTimeline])
 
-  const materials = sub?.materials || []
   const issues = issueReq.data?.items || []
   // 历史报告模式用报告自带快照：问题、完整性、材料版本都按当时那一刻展示，不混入当前状态
-  const historyReport = viewingHistoryReport ? reportReq.data : null
+  const historyReport = viewingHistoryReport && sameId(reportReq.data?.id, reportId) ? reportReq.data : null
   const historyIssues = Object.values(historyReport?.issues_by_category || {}).flat()
-  const snapshotMode = !!historyReport
+  const snapshotMode = viewingHistoryReport
+  const materials = snapshotMode ? reportMaterials(historyReport, sub?.materials) : sub?.materials || []
+  const shownTimeline = snapshotMode ? reportTimeline(historyReport) : timeReq.data
   const shownIssues = snapshotMode ? historyIssues : issues
   const shownCompleteness = snapshotMode ? historyReport?.completeness : compReq.data
   // 报告必须属于当前提交包，否则会把别的问题挂在这条提交包下
   const reportMismatch = !!historyReport && !sameId(historyReport.submission_id, id)
-  const activeIssue = issues.find((issue) => sameId(issue.id, activeIssueId))
+  const activeIssue = shownIssues.find((issue) => sameId(issue.id, activeIssueId))
   const currentMat = materialSelection ? materials.find((m) => sameId(m.id, materialSelection.materialId)) : materials[0]
   const currentVersion = materialSelection?.versionId || currentMat?.current_version_id
   const highlights = useMemo(() => [
-    ...issueHighlights(issueReq.data?.items || [], currentMat, currentVersion),
+    ...issueHighlights(shownIssues, currentMat, currentVersion),
     ...(timelineHighlight && sameId(timelineHighlight.materialId, currentMat?.id) && sameId(timelineHighlight.versionId, currentVersion) ? [timelineHighlight] : []),
-  ], [issueReq.data, currentMat, currentVersion, timelineHighlight])
+  ], [shownIssues, currentMat, currentVersion, timelineHighlight])
   const trackedJobId = jobId || (["QUEUED", "RUNNING", "FAILED"].includes(sub?.ai_status) ? sub?.ai_job_id : null)
 
   const selectIssue = (issue) => {
@@ -161,6 +163,7 @@ export default function ReviewWorkspacePage() {
   if (subReq.loading && !sub) return <Loading />
   if (subReq.error) return <ErrorState error={subReq.error} onRetry={() => subReq.reload().catch(() => {})} />
   if (!sub) return null
+  if (snapshotMode && !historyReport) return <div><button type="button" className="btn btn-ghost" onClick={backToLatestReport}>返回最新报告</button>{reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <Loading label="历史报告" />}</div>
   if (reportMismatch) return (
     <div className="review-workspace">
       <PageHeader title="报告与提交包不匹配" extra={<Link className="btn btn-outline btn-sm" to={`/review/submissions/${historyReport.submission_id}?report=${historyReport.id}`}>打开所属提交包</Link>} />
@@ -208,7 +211,7 @@ export default function ReviewWorkspacePage() {
           </select>}
           {locationNote && <p className="mb-2 text-xs text-warning" role="status">{locationNote}</p>}
           {currentMat && <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
-            <span>{sameId(currentVersion, currentMat.current_version_id) ? `当前版本 v${currentMat.version_no || "—"}` : `问题原文版本 #${currentVersion}（历史版本）`}</span>
+            <span>{snapshotMode ? `报告原文版本 #${currentVersion}` : sameId(currentVersion, currentMat.current_version_id) ? `当前版本 v${currentMat.version_no || "—"}` : `问题原文版本 #${currentVersion}（历史版本）`}</span>
             {!sameId(currentVersion, currentMat.current_version_id) && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setMaterialSelection({ materialId: currentMat.id, versionId: currentMat.current_version_id }); setActiveIssueId(null); setTimelineHighlight(null); setPage(1) }}>查看当前版本</button>}
             <Link className="link" to={`/materials/${currentMat.id}?version_id=${currentVersion || ""}&page=${page}${activeIssue ? `&issue_id=${activeIssue.id}` : ""}`}>材料详情</Link>
           </div>}
@@ -239,16 +242,16 @@ export default function ReviewWorkspacePage() {
             <IssueList
               issues={shownIssues}
               activeId={activeIssue?.id}
-              onSelect={snapshotMode ? undefined : selectIssue}
+              onSelect={selectIssue}
               renderActions={(issue) => !snapshotMode && sub.can?.add_issue ? <IssueActions issue={issue} disabled={issueReq.loading || subReq.loading} onChanged={refreshAll} /> : null}
             />
           )}
-          {tab === "timeline" && timeReq.error && <ErrorState error={timeReq.error} onRetry={() => timeReq.reload().catch(() => {})} />}
-          {tab === "timeline" && timeReq.loading && <Loading label="时间轴" />}
-          {tab === "timeline" && !timeReq.loading && !timeReq.error && (
+          {tab === "timeline" && !snapshotMode && timeReq.error && <ErrorState error={timeReq.error} onRetry={() => timeReq.reload().catch(() => {})} />}
+          {tab === "timeline" && !snapshotMode && timeReq.loading && <Loading label="时间轴" />}
+          {tab === "timeline" && (snapshotMode || (!timeReq.loading && !timeReq.error)) && (
             <TimelineView
               allowLockedCorrection={activeRole?.role === "ORG_ADMIN"}
-              timeline={timeReq.data}
+              timeline={shownTimeline}
               onCorrect={!snapshotMode && sub.can?.edit_timeline ? setCorrecting : undefined}
               onLocate={locateTimeline}
             />
