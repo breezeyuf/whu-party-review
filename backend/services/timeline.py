@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from errors import conflict, forbidden, unprocessable
@@ -136,18 +137,32 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
     return out
 
 
-def timeline_view(db: Session, archive: Archive) -> dict:
+def timeline_view(db: Session, archive: Archive, actor=None) -> dict:
+    """档案时间轴。
+
+    传 actor 时按该用户的提交包范围过滤：档案改到批次 B 后，旧批次提交包里的抽取原文
+    不能再从时间轴旁路读出（材料正文通道已由 ensure_material_access 收口，这里是同一口径）。
+    """
     defs = db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).order_by(TimeNodeDef.sort_order).all()
     nodes = {n.node_code: n for n in db.query(ArchiveTimeNode).filter(ArchiveTimeNode.archive_id == archive.id).all()}
-    exs = (
-        db.query(TimeNodeExtraction)
-        .filter(TimeNodeExtraction.archive_id == archive.id, TimeNodeExtraction.is_current.is_(True))
-        .all()
+    allowed_sub_ids = None
+    if actor is not None:
+        from services.scope import scoped_submissions
+
+        allowed_sub_ids = {row[0] for row in scoped_submissions(db.query(Submission.id), actor, db).all()}
+    exq = db.query(TimeNodeExtraction).filter(
+        TimeNodeExtraction.archive_id == archive.id, TimeNodeExtraction.is_current.is_(True)
     )
+    if allowed_sub_ids is not None:
+        visible_materials = db.query(Material.id).filter(Material.submission_id.in_(allowed_sub_ids))
+        exq = exq.filter(or_(TimeNodeExtraction.material_id.is_(None), TimeNodeExtraction.material_id.in_(visible_materials)))
+    exs = exq.all()
     by_code: dict[str, list] = {}
     for e in exs:
         by_code.setdefault(e.node_code, []).append(e)
     subs = db.query(Submission).filter(Submission.archive_id == archive.id).all()
+    if allowed_sub_ids is not None:
+        subs = [s for s in subs if s.id in allowed_sub_ids]
     sub_by_stage = {s.stage_code: s for s in subs}
     stages = []
     for code in range(1, 6):
@@ -159,12 +174,14 @@ def timeline_view(db: Session, archive: Archive) -> dict:
             "submission_id": s.id if s else None,
             "filed_at": s.filed_at.isoformat() if s and s.filed_at else None,
         })
-    issues = (
+    issq = (
         db.query(Issue)
         .join(Submission, Submission.id == Issue.submission_id)
         .filter(Submission.archive_id == archive.id, Issue.is_active.is_(True), Issue.category == "TIME")
-        .all()
     )
+    if allowed_sub_ids is not None:
+        issq = issq.filter(Issue.submission_id.in_(allowed_sub_ids))
+    issues = issq.all()
     issues_by_node: dict[str, list] = {}
     for iss in issues:
         nc = (iss.location or {}).get("node_code")

@@ -29,6 +29,7 @@ from services.rules import (
     list_checklists,
     orm_dict,
     update_and_snapshot,
+    validate_record,
     version_diff,
     _checklist_dict,
 )
@@ -56,6 +57,13 @@ def _required(body: dict, fields: tuple[str, ...]) -> None:
     missing = [name for name in fields if body.get(name) in (None, "")]
     if missing:
         raise unprocessable("缺少必填字段", [{"field": name, "message": "必填"} for name in missing])
+
+
+def _valid(kind: str, body: dict) -> None:
+    """枚举与 JSON 结构与导入预检同一口径，避免字符串写进 JSONB 或非法枚举落库。"""
+    errors = validate_record(kind, body)
+    if errors:
+        raise unprocessable("；".join(errors))
 
 
 def _page(q, page, page_size):
@@ -327,6 +335,7 @@ def list_terms(q: str | None = None, is_active: bool | None = None, page: int = 
 def post_term(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
     _required(body, ("standard_text",))
+    _valid("terms", body)
     obj = PoliticalTerm(
         term_type=body.get("term_type") or "VARIANT", standard_text=body["standard_text"],
         wrong_variants=body.get("wrong_variants") or [], sequence_items=body.get("sequence_items") or [],
@@ -345,6 +354,7 @@ def put_term(oid: int, body: dict, db: Session = Depends(get_db), actor: Actor =
     obj = db.query(PoliticalTerm).filter(PoliticalTerm.id == oid).first()
     if not obj:
         raise not_found()
+    _valid("terms", body)
     obj, ver = update_and_snapshot(db, actor, "terms", obj, body, "更新术语")
     d = orm_dict(obj)
     d["rule_version_no"] = ver
@@ -382,6 +392,7 @@ def post_sp(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(ge
         except re.error:
             raise unprocessable("非法正则")
     _required(body, ("phrase", "category"))
+    _valid("sensitive-phrases", body)
     obj = SensitivePhrase(
         phrase=body["phrase"], match_type=body.get("match_type") or "KEYWORD", category=body["category"],
         risk_level=body.get("risk_level") or "MEDIUM", risk_note=body.get("risk_note"), suggestion=body.get("suggestion"),
@@ -404,6 +415,7 @@ def put_sp(oid: int, body: dict, db: Session = Depends(get_db), actor: Actor = D
             re.compile(body.get("phrase") or obj.phrase)
         except re.error:
             raise unprocessable("非法正则")
+    _valid("sensitive-phrases", body)
     obj, ver = update_and_snapshot(db, actor, "sensitive-phrases", obj, body, "更新敏感表述")
     d = orm_dict(obj)
     d["rule_version_no"] = ver

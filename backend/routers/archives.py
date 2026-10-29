@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
@@ -151,7 +153,7 @@ def create_archive(body: dict, db: Session = Depends(get_db), actor: Actor = Dep
         native_place=stu.get("native_place"), id_card_enc=encrypt_field(stu.get("id_card")),
         id_card_masked=mask_id_card(stu.get("id_card")), major=stu.get("major"), class_name=stu.get("class_name"),
         college_id=college.id if college else branch.id, branch_id=branch.id, batch_id=body.get("batch_id"),
-        current_stage=stage, status="ACTIVE", anon_code=f"A{stu['student_no']}", data_source="MANUAL",
+        current_stage=stage, status="ACTIVE", anon_code="A" + uuid4().hex, data_source="MANUAL",
         created_by=actor.id, created_at=now(), updated_at=now(),
     )
     db.add(arch)
@@ -222,7 +224,22 @@ def update_archive(aid: int, body: dict, request: Request, db: Session = Depends
                 {"branch_id": a.branch_id, "college_id": a.college_id}, synchronize_session=False
             )
     if "batch_id" in body:
-        a.batch_id = body["batch_id"]
+        new_batch = body["batch_id"]
+        if new_batch in (None, ""):
+            a.batch_id = None
+        else:
+            try:
+                new_batch = int(new_batch)
+            except (TypeError, ValueError):
+                raise unprocessable("批次参数无效")
+            if not db.query(Batch).filter(Batch.id == new_batch).first():
+                raise unprocessable("批次无效")
+            a.batch_id = new_batch
+            # 提交包必须和档案同批次：否则旧批次互查员能看提交包、看不到材料，
+            # 新批次互查员能看档案、看不到提交包。已归档提交包保留历史归属。
+            db.query(Submission).filter(Submission.archive_id == a.id, Submission.status != "FILED").update(
+                {"batch_id": new_batch}, synchronize_session=False
+            )
     a.updated_at = now()
     # Basic profile data is input to identity and cross-material checks.
     a.timeline_updated_at = now()
@@ -236,7 +253,7 @@ def update_archive(aid: int, body: dict, request: Request, db: Session = Depends
 @router.get("/archives/{aid}/timeline")
 def get_timeline(aid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     a = ensure_archive_access(db, actor, aid, request)
-    return ok(timeline_view(db, a))
+    return ok(timeline_view(db, a, actor))
 
 
 @router.put("/archives/{aid}/timeline/{node_code}")
