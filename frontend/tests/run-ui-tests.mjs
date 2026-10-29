@@ -19,6 +19,8 @@ try {
   const results = await runUiScenarios()
   const { runIdentityScenarios } = await server.ssrLoadModule("/tests/identity-scenarios.jsx")
   results.push(...await runIdentityScenarios())
+  const { runStatsFilterScenarios } = await server.ssrLoadModule("/tests/stats-filter-scenarios.jsx")
+  results.push(...await runStatsFilterScenarios())
   for (const result of results) console.log(`${result.passed ? "PASS" : "FAIL"} ${result.name}${result.error ? `: ${result.error}` : ""}`)
   console.log(`UI scenarios: ${results.filter((result) => result.passed).length}/${results.length} passed (isolated API fixtures, no database writes)`)
   process.exitCode = results.some((result) => !result.passed) ? 1 : 0

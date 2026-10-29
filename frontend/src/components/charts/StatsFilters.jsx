@@ -18,8 +18,9 @@ export default function StatsFilters({ value, onChange, exportMode = false }) {
     return { orgs, batches }
   }, [])
   const orgs = options.data?.orgs || []
-  const colleges = orgs.filter((o) => o.org_type === "COLLEGE" && (activeRole?.role === "ORG_ADMIN" || Number(o.id) === Number(activeRole?.org_id)))
-  const branches = orgs.filter((o) => o.org_type === "BRANCH" && (!value.college_id || Number(o.parent_id) === Number(value.college_id)) && (activeRole?.role === "ORG_ADMIN" || Number(o.parent_id) === Number(activeRole?.org_id) || Number(o.id) === Number(activeRole?.org_id)))
+  const allStats = ["ORG_ADMIN", "SYS_ADMIN"].includes(activeRole?.role)
+  const colleges = orgs.filter((o) => o.org_type === "COLLEGE" && (allStats || Number(o.id) === Number(activeRole?.org_id)))
+  const branches = orgs.filter((o) => o.org_type === "BRANCH" && (!value.college_id || Number(o.parent_id) === Number(value.college_id)) && (allStats || Number(o.parent_id) === Number(activeRole?.org_id) || Number(o.id) === Number(activeRole?.org_id)))
   return <div>
     {options.error && <ErrorState error={options.error} onRetry={options.reload} />}
     <FilterBar values={value} onChange={(patch) => onChange({ ...value, ...patch, ...("college_id" in patch ? { branch_id: "" } : {}) })} onReset={() => onChange({})} fields={[
