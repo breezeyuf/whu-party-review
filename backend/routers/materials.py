@@ -353,6 +353,13 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         raise unprocessable('校正文本须为文字或 null')
     if 'corrected_fields' in body and body['corrected_fields'] is not None and not isinstance(body['corrected_fields'], dict):
         raise unprocessable('校正字段须为对象或 null')
+    from ai.ocr_status import pending_pages, refresh_warnings
+    pending_ocr = {page['page_no'] for page in pending_pages(pr)}
+    reviewed_pages = body.get('ocr_reviewed_pages', [])
+    if (not isinstance(reviewed_pages, list) or any(type(number) is not int for number in reviewed_pages)
+            or len(set(reviewed_pages)) != len(reviewed_pages)
+            or not set(reviewed_pages).issubset(pending_ocr)):
+        raise unprocessable('OCR 核对页号须为当前版本中待复核的有效页号，且不能重复')
     from ai.evidence import effective_fields
     previous_fields = effective_fields(pr)
     previous_text = pr.corrected_text if pr.corrected_text is not None else (pr.full_text or '')
@@ -382,11 +389,33 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
             pr.corrected_fields = None
     if "corrected_fields" in body and ("corrected_text" not in body or body['corrected_text'] is None):
         pr.corrected_fields = body.get("corrected_fields")
+    # Non-empty manual transcription can resolve a wholly empty single page.
+    # Mixed/multiple pages require explicit per-page confirmation, so merely
+    # resaving other recognized text cannot accidentally waive missing evidence.
+    transcribed = set()
+    if ('corrected_text' in body and (pr.corrected_text or '').strip()
+            and not (pr.full_text or '').strip() and len(pr.pages or []) == 1):
+        transcribed = pending_ocr - set(reviewed_pages)
+    pages = []
+    for page in pr.pages or []:
+        page = dict(page)
+        number = page.get('page_no')
+        if number in reviewed_pages or number in transcribed:
+            page['ocr_status'] = 'MANUALLY_REVIEWED'
+            page['ocr_review_method'] = 'confirmed' if number in reviewed_pages else 'corrected_text'
+        elif ('corrected_text' in body and not (pr.corrected_text or '').strip()
+                and page.get('ocr_review_method') == 'corrected_text'):
+            page['ocr_status'] = 'NEEDS_REVIEW'
+            page.pop('ocr_review_method', None)
+        pages.append(page)
+    pr.pages = pages
+    refresh_warnings(pr)
     pr.corrected_by = actor.id
     pr.corrected_at = now()
     pr.updated_at = now()
     merge_archive_nodes(db, m.archive_id)
-    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid, "extractions": corrections})
+    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid,
+        "extractions": corrections, "ocr_reviewed_pages": reviewed_pages, "ocr_transcribed_pages": sorted(transcribed)})
     job_id = None
     if body.get("recheck"):
         job = enqueue_job(db, "AI_CHECK", actor.id, "submission", m.submission_id,

@@ -59,7 +59,7 @@ def report_case(monkeypatch):
             Submission: [sub], RuleVersion: [rv], Material: materials,
             MaterialType: [NS(id=1, code="THOUGHT_REPORT", name="思想汇报")],
             MaterialVersion: [NS(id=10, version_no=1, parse_status="DONE")],
-            ParseResult: [NS(corrected_text=None, full_text=texts[0])],
+            ParseResult: [NS(corrected_text=None, full_text=texts[0], pages=[])],
         })
         db = ReportSession(base.rows)
         local_issue = IssueDraft(category="COMPLETENESS", severity="BLOCK", title="缺材料",

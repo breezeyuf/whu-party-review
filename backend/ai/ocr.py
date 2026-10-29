@@ -90,7 +90,11 @@ def _ocr_pixmap(pix):
         # Child errors can contain material text, local paths, or native runtime
         # details. Only a fixed message may become persisted parse diagnostics.
         return "", [], None, 'OCR 引擎识别失败，请检查模型后重试'
-    blocks = [{"text": normalize_ocr_text(t), "raw_text": t, "bbox": b, "conf": c} for t, b, c in lines]
+    blocks = [{"text": normalize_ocr_text(t), "raw_text": t, "bbox": b, "conf": c}
+              for t, b, c in lines if normalize_ocr_text(t).strip()]
+    if not blocks:
+        from ai.ocr_status import EMPTY_OCR_WARNING
+        return '', [], selected, EMPTY_OCR_WARNING
     return "\n".join(block['text'] for block in blocks), blocks, selected, None
 
 

@@ -4,7 +4,7 @@ import threading
 import time
 from datetime import timedelta
 
-from sqlalchemy import text
+from sqlalchemy import event as sqlalchemy_event, text
 
 from config import WORKER_ENABLED
 from database import SessionLocal
@@ -34,19 +34,22 @@ _threads: list[threading.Thread] = []
 _last_scan = 0.0
 
 
+class _LostAttempt(Exception):
+    """Another claim owns the job; discard this attempt's database work."""
+
+
 def start_workers() -> None:
     _stop.clear()
     if not WORKER_ENABLED:
         event("worker.disabled")
         return
+    n = 2
     db = SessionLocal()
     try:
         cfg = get_setting(db, "worker", {"concurrency": 2, "heartbeat_timeout_s": 300})
         n = int(cfg.get("concurrency") or 2)
         timeout = int(cfg.get("heartbeat_timeout_s") or 300)
-        db.query(Job).filter(Job.status == "RUNNING").filter(
-            (Job.heartbeat_at.is_(None)) | (Job.heartbeat_at < now() - timedelta(seconds=timeout))
-        ).update({"status": "QUEUED"}, synchronize_session=False)
+        _recover(db, timeout)
         db.commit()
     except Exception as e:
         log_exception("worker.recovery_failed", e)
@@ -57,6 +60,9 @@ def start_workers() -> None:
         t = threading.Thread(target=_loop, name=f"worker-{i}", daemon=True)
         t.start()
         _threads.append(t)
+    recovery = threading.Thread(target=_recovery_loop, name="worker-recovery", daemon=True)
+    recovery.start()
+    _threads.append(recovery)
     event("worker.started", threads=len(_threads))
 
 
@@ -75,7 +81,7 @@ def _loop() -> None:
             job = _claim(db)
             if job:
                 did = True
-                _run(db, job)
+                _run_claimed(db, job)
             if time.time() - _last_scan > 600:
                 _scan(db)
                 _last_scan = time.time()
@@ -101,13 +107,84 @@ def _claim(db) -> Job | None:
     if not job:
         return None
     job.status = "RUNNING"
-    job.started_at = now()
+    job.stage_text = "执行中"
+    # Together with attempts this is a claim generation, including manual retries
+    # which reset attempts. Preserve uniqueness if the system clock moves back.
+    job.started_at = max(now(), job.started_at + timedelta(microseconds=1)) if job.started_at else now()
     job.heartbeat_at = now()
     job.attempts = (job.attempts or 0) + 1
     db.flush()
     # 先提交领取结果：任务随后失败/回滚时 attempts 不会丢失，避免无限重试
     db.commit()
+    job._worker_attempt = (job.id, job.attempts, job.started_at)
     return job
+
+
+def _lock_attempt(db, attempt, *, protect=False):
+    job_id, attempts, started_at = attempt
+    with db.no_autoflush:
+        return (db.query(Job).filter(Job.id == job_id, Job.status == "RUNNING",
+                                    Job.attempts == attempts, Job.started_at == started_at)
+                .with_for_update(read=protect, key_share=True).populate_existing().first())
+
+
+def _no_business_commit(db):
+    # Releasing the outer transaction would release the execution lock. Savepoints
+    # used by parsing/imports remain supported; only the worker commits the result.
+    if not db.in_nested_transaction():
+        raise RuntimeError("Job handlers must not commit the worker transaction")
+
+
+def _run_claimed(db, job: Job) -> None:
+    attempt = job._worker_attempt
+    job = _lock_attempt(db, attempt, protect=True)
+    if job is None:
+        db.rollback()
+        return
+    job._worker_attempt = attempt
+    # FOR KEY SHARE survives until the business result commits or rolls back. It
+    # permits heartbeat UPDATEs but makes recovery's FOR UPDATE SKIP LOCKED skip
+    # an active handler even if its heartbeat thread has stalled.
+    sqlalchemy_event.listen(db, "before_commit", _no_business_commit)
+    try:
+        _run(db, job)
+    finally:
+        sqlalchemy_event.remove(db, "before_commit", _no_business_commit)
+
+
+def _recovery_loop() -> None:
+    while not _stop.is_set():
+        timeout = 300
+        try:
+            with SessionLocal() as db:
+                cfg = get_setting(db, "worker", {})
+                timeout = max(1, int(cfg.get("heartbeat_timeout_s") or 300))
+                _recover(db, timeout)
+                db.commit()
+        except Exception as exc:
+            log_exception("worker.recovery_failed", exc)
+        _stop.wait(min(30, max(1, timeout / 3)))
+
+
+def _recover(db, timeout: int) -> int:
+    cutoff = now() - timedelta(seconds=max(1, timeout))
+    jobs = (db.query(Job).filter(Job.status == "RUNNING")
+            .filter((Job.heartbeat_at.is_(None)) | (Job.heartbeat_at < cutoff))
+            .order_by(Job.id).with_for_update(skip_locked=True).limit(100).all())
+    for job in jobs:
+        if job.job_type == "BATCH_AI_CHECK" and db.query(Job.id).filter(Job.parent_id == job.id).first():
+            # A split parent is a coordinator, not an executing attempt. Its
+            # heartbeat naturally stops while children run; do not retry/split it.
+            _bump_parent(db, job.id, True)
+            if job.status == "RUNNING":
+                job.stage_text = "等待子任务完成"
+        else:
+            _apply_fail(db, job, "任务执行中断，正在重试" if job.attempts < (job.max_attempts or 3)
+                        else "任务执行中断，已达到自动重试上限")
+            if job.parent_id:
+                _bump_parent(db, job.parent_id, False)
+    db.flush()
+    return len(jobs)
 
 
 def _heartbeat(db, job: Job) -> None:
@@ -115,22 +192,31 @@ def _heartbeat(db, job: Job) -> None:
     db.flush()
 
 
-def _fail(db, job: Job, err: str) -> None:
+def _fail(db, job: Job, err: str, *, attempt=None) -> bool:
+    attempt = attempt or job._worker_attempt
+    job_id = attempt[0]
     if not db.is_active:
         db.rollback()
     try:
-        _apply_fail(db, job, err)
+        fresh = _lock_attempt(db, attempt)
+        if fresh is None:
+            db.rollback()
+            return False
+        _apply_fail(db, fresh, err)
+        return True
     except Exception as exc:
-        log_exception("worker.failure_record_failed", exc, job_id=job.id)
+        log_exception("worker.failure_record_failed", exc, job_id=job_id)
         # 会话可能处于 aborted 状态（如 run_check 内部 flush 失败），回滚后重新加载任务再写
         db.rollback()
-        fresh = db.query(Job).filter(Job.id == job.id).first()
+        fresh = _lock_attempt(db, attempt)
         if fresh:
             try:
                 _apply_fail(db, fresh, err)
+                return True
             except Exception as exc:
-                log_exception("worker.failure_retry_record_failed", exc, job_id=job.id)
+                log_exception("worker.failure_retry_record_failed", exc, job_id=job_id)
                 db.rollback()
+    return False
 
 
 def _apply_fail(db, job: Job, err: str) -> None:
@@ -138,6 +224,8 @@ def _apply_fail(db, job: Job, err: str) -> None:
     if job.attempts < (job.max_attempts or 3):
         job.status = "QUEUED"
         job.stage_text = "等待重试"
+        job.finished_at = None
+        job.heartbeat_at = None
     else:
         job.status = "FAILED"
         job.finished_at = now()
@@ -146,6 +234,14 @@ def _apply_fail(db, job: Job, err: str) -> None:
 
 
 def _ok(db, job: Job, result=None, status="SUCCEEDED") -> None:
+    attempt = job._worker_attempt
+    with db.no_autoflush:
+        owned = (db.query(Job.id).filter(Job.id == attempt[0], Job.status == "RUNNING",
+                                        Job.attempts == attempt[1], Job.started_at == attempt[2])
+                 .with_for_update(key_share=True).first())
+    if owned is None:
+        db.rollback()
+        raise _LostAttempt()
     job.status = status
     job.progress = 100
     job.result = result
@@ -168,12 +264,10 @@ def _notify_done(db, job: Job) -> None:
 
 
 def _run(db, job: Job) -> None:
-    job.stage_text = "执行中"
-    _heartbeat(db, job)
-    # Release the job row before starting an independent heartbeat transaction.
-    db.commit()
+    attempt = getattr(job, "_worker_attempt", None)
+    job_id, job_type, parent_id = job.id, job.job_type, getattr(job, "parent_id", None)
     pulse_stop = threading.Event()
-    pulse = threading.Thread(target=_pulse, args=(job.id, pulse_stop), daemon=True)
+    pulse = threading.Thread(target=_pulse, args=(job_id, pulse_stop), kwargs={"attempt": attempt}, daemon=True)
     pulse.start()
     try:
         if job.job_type == "PARSE":
@@ -215,17 +309,7 @@ def _run(db, job: Job) -> None:
                 job.stage_text = "已拆分子任务"
                 job.status = "RUNNING"
                 return
-            done = sum(1 for k in kids if k.status in ("SUCCEEDED", "FAILED", "PARTIAL"))
-            failed = sum(1 for k in kids if k.status == "FAILED")
-            job.done_count = done
-            job.failed_count = failed
-            job.progress = int(100 * done / max(1, len(kids)))
-            if done >= len(kids):
-                st = "SUCCEEDED" if failed == 0 else ("FAILED" if failed == len(kids) else "PARTIAL")
-                _ok(db, job, {"total": len(kids), "failed": failed}, st)
-            else:
-                job.heartbeat_at = now()
-                job.status = "RUNNING"
+            _bump_parent(db, job.id, True)
         elif job.job_type == "BATCH_UPLOAD":
             from services.importer import process_batch_upload
             process_batch_upload(db, job)
@@ -237,26 +321,33 @@ def _run(db, job: Job) -> None:
         elif job.job_type == "NOTICE_BATCH":
             _ok(db, job, {"ok": True})
         else:
-            _fail(db, job, f"未知任务类型 {job.job_type}")
+            _fail(db, job, f"未知任务类型 {job.job_type}", attempt=attempt)
+    except _LostAttempt:
+        db.rollback()
     except Exception as e:
-        log_exception("worker.job_failed", e, job_id=job.id, job_type=job.job_type)
-        _fail(db, job, "任务执行失败，请联系管理员并提供任务编号")
-        if job.job_type == "AI_CHECK" and job.parent_id:
-            _bump_parent(db, job.parent_id, False)
+        log_exception("worker.job_failed", e, job_id=job_id, job_type=job_type)
+        owned = _fail(db, job, "任务执行失败，请联系管理员并提供任务编号", attempt=attempt)
+        if owned and job_type == "AI_CHECK" and parent_id:
+            _bump_parent(db, parent_id, False)
     finally:
         pulse_stop.set()
         pulse.join(timeout=2)
 
 
-def _pulse(job_id, stopped, interval=5):
+def _pulse(job_id, stopped, interval=5, *, attempt=None):
     while not stopped.wait(interval):
         try:
             with SessionLocal() as heartbeat_db:
                 # Avoid blocking shutdown when the worker has already locked its final result.
                 heartbeat_db.execute(text("SET LOCAL lock_timeout = '500ms'"))
-                heartbeat_db.query(Job).filter(Job.id == job_id, Job.status == 'RUNNING').update(
+                query = heartbeat_db.query(Job).filter(Job.id == job_id, Job.status == 'RUNNING')
+                if attempt is not None:
+                    query = query.filter(Job.attempts == attempt[1], Job.started_at == attempt[2])
+                changed = query.update(
                     {'heartbeat_at': now()}, synchronize_session=False)
                 heartbeat_db.commit()
+                if not changed:
+                    return
         except Exception:
             continue
 
@@ -276,11 +367,13 @@ def _bump_parent(db, parent_id: int, ok: bool) -> None:
     p.heartbeat_at = now()
     if kids and done >= len(kids):
         st = "SUCCEEDED" if failed == 0 else ("FAILED" if failed == len(kids) else "PARTIAL")
+        notify = p.status != st
         p.status = st
         p.progress = 100
         p.result = {"total": len(kids), "failed": failed}
         p.finished_at = now()
-        _notify_done(db, p)
+        if notify:
+            _notify_done(db, p)
 
 
 def _scan(db) -> None:
