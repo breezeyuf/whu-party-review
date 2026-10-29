@@ -12,6 +12,7 @@ from services.audit import log
 from services.exporter import xlsx_response
 from services.importer import import_users_xlsx, users_template
 from services.users import create_user, reset_user_password, update_user, user_to_dict, can_manage_user
+from services.scope import deny_object_access
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -95,11 +96,9 @@ def download_import_passwords(file_id: int, db: Session = Depends(get_db), actor
 
 @router.get("/{uid}")
 def get_user(uid: int, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
-    user = db.query(User).options(selectinload(User.roles).selectinload(UserRole.org), selectinload(User.org)).filter(User.id == uid).first()
+    user = _scope_users(db, actor, db.query(User).options(selectinload(User.roles).selectinload(UserRole.org), selectinload(User.org))).filter(User.id == uid).first()
     if not user:
-        raise not_found()
-    if actor.id != uid and not _scope_users(db, actor, db.query(User).filter(User.id == uid)).first():
-        raise forbidden()
+        deny_object_access(db, actor, "user", uid)
     return ok(user_to_dict(user))
 
 

@@ -29,18 +29,41 @@ from services.rules import (
     list_checklists,
     orm_dict,
     update_and_snapshot,
+    validate_record,
     version_diff,
     _checklist_dict,
 )
 from utils import now
 import re
 
-router = APIRouter(prefix="/rules", tags=["rules"])
+def _reader(db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    from services.audit import log
+    from services.scope import REVIEWER_ROLES
+    if actor.role not in REVIEWER_ROLES:
+        log(db, actor, "ACCESS_DENIED", "rules", detail={"reason": "role"})
+        raise forbidden("仅审核角色可访问规则库")
+
+
+router = APIRouter(prefix="/rules", tags=["rules"], dependencies=[Depends(_reader)])
 
 
 def _writer(actor: Actor):
     if actor.role != "ORG_ADMIN":
         raise forbidden("仅组织部可维护规则库")
+
+
+def _required(body: dict, fields: tuple[str, ...]) -> None:
+    """缺字段按 422 返回，避免直接取 body[...] 抛 KeyError 变成 500。"""
+    missing = [name for name in fields if body.get(name) in (None, "")]
+    if missing:
+        raise unprocessable("缺少必填字段", [{"field": name, "message": "必填"} for name in missing])
+
+
+def _valid(kind: str, body: dict) -> None:
+    """枚举与 JSON 结构与导入预检同一口径，避免字符串写进 JSONB 或非法枚举落库。"""
+    errors = validate_record(kind, body)
+    if errors:
+        raise unprocessable("；".join(errors))
 
 
 def _page(q, page, page_size):
@@ -59,6 +82,7 @@ def get_checklists(stage_code: int | None = None, q: str | None = None, is_activ
 @router.post("/checklists")
 def post_checklist(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("stage_code", "material_type_id"))
     obj = ChecklistItem(
         stage_code=body["stage_code"], material_type_id=body["material_type_id"],
         quantity_mode=body.get("quantity_mode") or "FIXED", fixed_count=body.get("fixed_count") or 1,
@@ -115,6 +139,7 @@ def post_mt(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(ge
     code = body.get("code") or ""
     if not re.match(r"^[A-Z][A-Z0-9_]{2,40}$", code):
         raise unprocessable("code 格式不正确")
+    _required(body, ("name",))
     obj = MaterialType(
         code=code, name=body["name"], stage_codes=body.get("stage_codes") or [],
         title_keywords=body.get("title_keywords") or [], exclude_keywords=body.get("exclude_keywords") or [],
@@ -163,6 +188,7 @@ def list_tn(db: Session = Depends(get_db), actor: Actor = Depends(get_current_us
 @router.post("/time-nodes")
 def post_tn(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "name", "value_kind"))
     obj = TimeNodeDef(
         code=body["code"], name=body["name"], value_kind=body["value_kind"], has_hours=body.get("has_hours") or False,
         stage_code=body.get("stage_code"), required_from_stage=body.get("required_from_stage"),
@@ -184,6 +210,8 @@ def put_tn(oid: int, body: dict, db: Session = Depends(get_db), actor: Actor = D
         raise not_found()
     body = dict(body)
     body.pop("code", None)
+    if body.get("value_kind", obj.value_kind) != "DERIVED":
+        body["derive_expr"] = None
     obj, ver = update_and_snapshot(db, actor, "time-nodes", obj, body, "更新节点")
     d = orm_dict(obj)
     d["rule_version_no"] = ver
@@ -203,6 +231,7 @@ def list_tr(q: str | None = None, is_active: bool | None = None, db: Session = D
 @router.post("/time-rules")
 def post_tr(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "name", "rule_type", "severity", "message_template"))
     obj = TimeRule(
         code=body["code"], name=body["name"], rule_type=body["rule_type"], params=body.get("params") or {"checks": []},
         applies_stages=body.get("applies_stages") or [], severity=body["severity"], basis=body.get("basis"),
@@ -253,6 +282,7 @@ def list_cr(category: str | None = None, q: str | None = None, is_active: bool |
 @router.post("/check-rules")
 def post_cr(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "category", "name", "engine", "severity", "message_template"))
     obj = CheckRule(
         code=body["code"], category=body["category"], name=body["name"], engine=body["engine"],
         applies_to=body.get("applies_to") or [], params=body.get("params") or {}, severity=body["severity"],
@@ -304,6 +334,8 @@ def list_terms(q: str | None = None, is_active: bool | None = None, page: int = 
 @router.post("/terms")
 def post_term(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("standard_text",))
+    _valid("terms", body)
     obj = PoliticalTerm(
         term_type=body.get("term_type") or "VARIANT", standard_text=body["standard_text"],
         wrong_variants=body.get("wrong_variants") or [], sequence_items=body.get("sequence_items") or [],
@@ -322,6 +354,7 @@ def put_term(oid: int, body: dict, db: Session = Depends(get_db), actor: Actor =
     obj = db.query(PoliticalTerm).filter(PoliticalTerm.id == oid).first()
     if not obj:
         raise not_found()
+    _valid("terms", body)
     obj, ver = update_and_snapshot(db, actor, "terms", obj, body, "更新术语")
     d = orm_dict(obj)
     d["rule_version_no"] = ver
@@ -358,6 +391,8 @@ def post_sp(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(ge
             re.compile(body.get("phrase") or "")
         except re.error:
             raise unprocessable("非法正则")
+    _required(body, ("phrase", "category"))
+    _valid("sensitive-phrases", body)
     obj = SensitivePhrase(
         phrase=body["phrase"], match_type=body.get("match_type") or "KEYWORD", category=body["category"],
         risk_level=body.get("risk_level") or "MEDIUM", risk_note=body.get("risk_note"), suggestion=body.get("suggestion"),
@@ -380,6 +415,7 @@ def put_sp(oid: int, body: dict, db: Session = Depends(get_db), actor: Actor = D
             re.compile(body.get("phrase") or obj.phrase)
         except re.error:
             raise unprocessable("非法正则")
+    _valid("sensitive-phrases", body)
     obj, ver = update_and_snapshot(db, actor, "sensitive-phrases", obj, body, "更新敏感表述")
     d = orm_dict(obj)
     d["rule_version_no"] = ver
@@ -404,6 +440,7 @@ def list_st(db: Session = Depends(get_db), actor: Actor = Depends(get_current_us
 @router.post("/suggestion-templates")
 def post_st(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "title", "template_text"))
     obj = SuggestionTemplate(
         code=body["code"], rule_code=body.get("rule_code"), title=body["title"],
         template_text=body["template_text"], example_text=body.get("example_text"),
@@ -445,6 +482,7 @@ def list_pt(db: Session = Depends(get_db), actor: Actor = Depends(get_current_us
 @router.post("/prompt-templates")
 def post_pt(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
+    _required(body, ("code", "name", "system_prompt", "user_prompt"))
     obj = PromptTemplate(
         code=body["code"], name=body["name"], system_prompt=body["system_prompt"], user_prompt=body["user_prompt"],
         output_schema=body.get("output_schema") or {}, is_active=body.get("is_active", True),
@@ -505,67 +543,8 @@ def get_version(vid: int, diff_with: int | None = None, db: Session = Depends(ge
 @router.post("/dry-run")
 def dry_run(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     _writer(actor)
-    ids = (body.get("submission_ids") or [])[:20]
-    results = []
-    from models import Submission
-    from ai.pipeline import run_check
-    # dry-run: compare current latest summary vs a simulated run without persisting new issues if possible.
-    # For safety we run completeness+timeline in memory using current rules (overrides applied in-session).
-    overrides = body.get("overrides") or {}
-    orig = {}
-    try:
-        for o in overrides.get("time_rules") or []:
-            row = db.query(TimeRule).filter(TimeRule.code == o.get("code")).first()
-            if row:
-                orig.setdefault("tr", []).append((row, dict(params=row.params, severity=row.severity, is_active=row.is_active)))
-                if "params" in o:
-                    row.params = o["params"]
-                if "severity" in o:
-                    row.severity = o["severity"]
-                if "is_active" in o:
-                    row.is_active = o["is_active"]
-        for o in overrides.get("check_rules") or []:
-            row = db.query(CheckRule).filter(CheckRule.code == o.get("code")).first()
-            if row:
-                orig.setdefault("cr", []).append((row, dict(params=row.params, severity=row.severity, is_active=row.is_active)))
-                for k in ("params", "severity", "is_active"):
-                    if k in o:
-                        setattr(row, k, o[k])
-        for sid in ids:
-            sub = db.query(Submission).filter(Submission.id == sid).first()
-            if not sub:
-                continue
-            current = db.query(AiReport).filter(AiReport.id == sub.latest_report_id).first() if sub.latest_report_id else None
-            cur_sum = current.summary if current else {}
-            cur_keys = []
-            if current:
-                from models import Issue
-                cur_keys = [i.fingerprint for i in db.query(Issue).filter(Issue.report_id == current.id).all() if i.fingerprint]
-            from models import Material
-            from ai.checks.completeness import run_completeness
-            from ai.checks.timeline import run_timeline
-            from services.timeline import node_map_for_archive
-            from utils import as_date
-            mats = db.query(Material).filter(Material.submission_id == sid, Material.status == "ACTIVE").all()
-            nm = node_map_for_archive(db, sub.archive_id)
-            nodes = {c: type("N", (), {"date": as_date(n.get("date")), "end": as_date(n.get("end")), "hours": n.get("hours"), "seq": n.get("seq") or [], "missing": not n.get("date")})() for c, n in nm.items()}
-            _, d1, _ = run_completeness(db, sub, mats, nodes)
-            _, d2, _ = run_timeline(db, sub, nm)
-            trial_keys = []
-            from security import fingerprint
-            for d in d1 + d2:
-                trial_keys.append(fingerprint(*(d.fingerprint_parts or (d.rule_code, d.title))))
-            added = [k for k in trial_keys if k not in cur_keys]
-            removed = [k for k in cur_keys if k not in trial_keys]
-            results.append({
-                "submission_id": sid,
-                "current": {"summary": cur_sum, "issue_keys": cur_keys},
-                "trial": {"summary": {"total": len(trial_keys)}, "issue_keys": trial_keys},
-                "added": added, "removed": removed,
-            })
-    finally:
-        db.rollback()
-    return ok({"results": results})
+    from services.rule_trial import trial_rules
+    return ok(trial_rules(db, body, actor))
 
 
 @router.post("/{kind}/import")
@@ -581,6 +560,5 @@ async def import_rules(kind: str, file: UploadFile = File(...), mode: str = Form
 
 @router.get("/{kind}/export")
 def export_rules(kind: str, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
-    _writer(actor)
     wb = export_kind(db, kind)
     return xlsx_response(f"{kind}.xlsx", wb)

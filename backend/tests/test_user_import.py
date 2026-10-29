@@ -45,7 +45,8 @@ def student(**values):
 @pytest.mark.parametrize("changes,column", [({"branch_code": "missing"}, "branch_code"),
     ({"branch_code": "COL"}, "branch_code"), ({"birth_date": "2026-02-30"}, "birth_date"),
     ({"T02": "2026-01-01garbage"}, "T02"), ({"T02": "=TODAY()"}, "T02"),
-    ({"batch_name": "不存在"}, "batch_name")])
+    ({"batch_name": "不存在"}, "batch_name"),
+    ({"T02": (now().date() + timedelta(days=1)).isoformat()}, "T02")])
 def test_dry_run_and_formal_reject_same_bad_student_rows_without_writes(case, changes, column):
     c = case
     prepare(c)
@@ -56,6 +57,23 @@ def test_dry_run_and_formal_reject_same_bad_student_rows_without_writes(case, ch
     dry = import_users_xlsx(c.db, c.org, data)
     assert dry["valid"] == 0
     assert any(e["column"] == column for e in dry["errors"])
+    with pytest.raises(AppError) as exc:
+        import_users_xlsx(c.db, c.org, data, dry_run=False)
+    assert exc.value.status_code == 422
+    assert c.db.query(User).count() == before
+    assert c.db.query(ImportPasswordFile).count() == 0
+
+
+def test_closed_batch_rejects_preview_and_formal_import(case):
+    c = case
+    prepare(c)
+    c.batches[0].status = "CLOSED"
+    c.db.flush()
+    data = workbook(students=[student(batch_name=c.batches[0].name)])
+    before = c.db.query(User).count()
+    result = import_users_xlsx(c.db, c.org, data)
+    assert result["valid"] == 0
+    assert any(e["column"] == "batch_name" for e in result["errors"])
     with pytest.raises(AppError) as exc:
         import_users_xlsx(c.db, c.org, data, dry_run=False)
     assert exc.value.status_code == 422

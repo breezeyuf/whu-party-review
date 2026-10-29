@@ -8,25 +8,25 @@ export function SeverityBadge({ code }) {
   return <span className={`badge badge-sm ${SEVERITY_BADGE[code] || "badge-ghost"}`}>{severityName(meta, code)}</span>
 }
 
-export function StatusBadge({ code, map }) {
+export function StatusBadge({ code, map, soft = false }) {
   const meta = useMeta()
   if (!code) return <span className="text-base-content/40">—</span>
   const name = map ? (map[code] || code) : statusName(meta, code)
-  return <span className={`badge badge-sm ${STATUS_BADGE[code] || "badge-ghost"}`}>{name}</span>
+  return <span className={`badge badge-sm inline-flex shrink-0 whitespace-nowrap ${STATUS_BADGE[code] || "badge-ghost"} ${soft ? "badge-soft" : ""}`}>{name}</span>
 }
 
-export function RecoBadge({ code }) {
+export function RecoBadge({ code, soft = false }) {
   const meta = useMeta()
   if (!code) return <span className="text-base-content/40">—</span>
   const cls = code === "SUGGEST_RETURN" ? "badge-error" : code === "NEEDS_REVIEW" ? "badge-warning" : "badge-success"
-  return <span className={`badge badge-sm ${cls}`}>{recoName(meta, code)}</span>
+  return <span className={`badge badge-sm inline-flex shrink-0 whitespace-nowrap ${cls} ${soft ? "badge-soft" : ""}`}>{recoName(meta, code)}</span>
 }
 
-export function HandoverBadge({ code }) {
+export function HandoverBadge({ code, soft = false }) {
   const meta = useMeta()
   if (!code) return null
   const cls = code === "REQUIRED" ? "badge-warning" : code === "DONE" ? "badge-success" : "badge-ghost"
-  return <span className={`badge badge-sm ${cls}`}>{handoverName(meta, code)}</span>
+  return <span className={`badge badge-sm inline-flex shrink-0 whitespace-nowrap ${cls} ${soft ? "badge-soft" : ""}`}>{handoverName(meta, code)}</span>
 }
 
 export function CategoryBadge({ code }) {

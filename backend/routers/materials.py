@@ -26,7 +26,9 @@ from services.audit import log
 from services.extractions import correct_extractions
 from services.importer import assign_batch_items, parse_assign_body, rebuild_job_result
 from services.materials import add_version, create_material_with_file, enqueue_job, file_response, text_diff
-from services.scope import can_review, ensure_archive_access, ensure_submission_access, scoped_archives, scoped_jobs
+from services.scope import (can_review, deny_object_access, ensure_archive_access,
+                            ensure_material_access, ensure_submission_access,
+                            scoped_archives, scoped_jobs, scoped_submissions)
 from services import storage as store
 from services.timeline import merge_archive_nodes
 from services.uploads import read_material_upload, save_zip_upload
@@ -95,6 +97,9 @@ def list_materials(aid: int, stage_code: int | None = None, include_deleted: boo
     arch = ensure_archive_access(db, actor, aid, request)
     sc = stage_code or arch.current_stage
     sub = db.query(Submission).filter(Submission.archive_id == aid, Submission.stage_code == sc).first()
+    # 档案可见不等于该阶段提交包可见（批次/互查范围可能不同），列表也按提交包范围收口
+    if sub and not scoped_submissions(db.query(Submission), actor, db).filter(Submission.id == sub.id).first():
+        deny_object_access(db, actor, "submission", sub.id, request)
     mats = db.query(Material).filter(Material.archive_id == aid, Material.stage_code == sc)
     if not include_deleted:
         mats = mats.filter(Material.status == "ACTIVE")
@@ -163,7 +168,7 @@ def get_material(mid: int, request: Request, db: Session = Depends(get_db), acto
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     return ok(_material_dict(db, m))
 
 
@@ -172,7 +177,7 @@ def delete_material(mid: int, request: Request, db: Session = Depends(get_db), a
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     sub = _editable_submission(db, actor, m)
     if sub.status not in ("DRAFT", "RETURNED"):
         raise conflict("审核中不可删除")
@@ -195,7 +200,7 @@ def get_file(mid: int, version_id: int | None = None, disposition: str = "inline
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     vid = version_id or m.current_version_id
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == vid, MaterialVersion.material_id == mid).first()
     if not ver:
@@ -212,7 +217,7 @@ def get_page(mid: int, n: int, version_id: int | None = None, scale: float = 1.5
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     vid = version_id or m.current_version_id
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == vid, MaterialVersion.material_id == mid).first()
     if not ver:
@@ -246,7 +251,7 @@ async def post_version(mid: int, file: UploadFile = File(...), change_note: str 
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     _editable_submission(db, actor, m)
     data = await read_material_upload(db, file)
     ver, job, responded = add_version(db, m, actor, file.filename or "file", data, change_note, issue_ids)
@@ -258,14 +263,37 @@ def list_versions(mid: int, request: Request, db: Session = Depends(get_db), act
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     vers = db.query(MaterialVersion).filter(MaterialVersion.material_id == mid).order_by(MaterialVersion.version_no).all()
     out = []
+    reports = db.query(AiReport).filter(AiReport.submission_id == m.submission_id, AiReport.status == 'DONE').order_by(AiReport.report_no).all()
     for v in vers:
         d = _ver_brief(db, v, v.id == m.current_version_id)
-        d["report_ids"] = []
+        d["report_ids"] = [r.id for r in reports if any(item.get('version_id') == v.id for item in (r.material_versions or []))]
         out.append(d)
     return ok(out)
+
+
+@router.post('/materials/{mid}/retry-parse')
+def retry_parse(mid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    material = db.query(Material).filter(Material.id == mid).first()
+    if not material:
+        raise not_found()
+    ensure_material_access(db, actor, material, request)
+    _editable_submission(db, actor, material)
+    version = db.query(MaterialVersion).filter(MaterialVersion.id == material.current_version_id).with_for_update().first()
+    if not version or version.is_frozen:
+        raise conflict('仅可重新解析当前未冻结材料')
+    pending = db.query(Job).filter(Job.job_type == 'PARSE', Job.target_id == version.id,
+                                    Job.status.in_(['QUEUED','RUNNING'])).first()
+    if pending:
+        return ok({'parse_job_id': pending.id})
+    job = enqueue_job(db, 'PARSE', actor.id, 'material_version', version.id, {'version_id': version.id})
+    version.parse_status = 'PENDING'
+    version.parse_error = None
+    material.updated_at = now()
+    log(db, actor, 'RETRY_PARSE', 'material_version', version.id)
+    return ok({'parse_job_id': job.id})
 
 
 @router.get("/materials/{mid}/parsed")
@@ -274,7 +302,7 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     vid = version_id or m.current_version_id
     ver = db.query(MaterialVersion).filter(MaterialVersion.id == vid, MaterialVersion.material_id == mid).first() if vid else None
     if vid and not ver:
@@ -306,7 +334,7 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     sub = _editable_submission(db, actor, m, reviewer=True)
     vid = body.get("version_id") or m.current_version_id
     if vid != m.current_version_id:
@@ -321,10 +349,38 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         raise not_found()
     if ver.parse_status != "DONE":
         raise conflict("材料完成解析后才能校正")
+    if 'corrected_text' in body and body['corrected_text'] is not None and not isinstance(body['corrected_text'], str):
+        raise unprocessable('校正文本须为文字或 null')
+    if 'corrected_fields' in body and body['corrected_fields'] is not None and not isinstance(body['corrected_fields'], dict):
+        raise unprocessable('校正字段须为对象或 null')
+    from ai.evidence import effective_fields
+    previous_fields = effective_fields(pr)
+    previous_text = pr.corrected_text if pr.corrected_text is not None else (pr.full_text or '')
     corrections = correct_extractions(db, m, ver, body.get("extractions", []))
     if "corrected_text" in body:
         pr.corrected_text = body.get("corrected_text")
-    if "corrected_fields" in body:
+        if pr.corrected_text is not None:
+            from ai.extract import extract_fields
+            derived = extract_fields(pr.corrected_text)
+            # Preserve prior manual overrides (including deliberate field removal)
+            # when the UI resubmits the same displayed values. Derived values may
+            # follow edited text, but an earlier explicit field edit must survive.
+            if pr.corrected_fields is not None and body.get('corrected_fields', {}) is not None:
+                baseline = extract_fields(previous_text)
+                derived.update({k:v for k,v in previous_fields.items() if baseline.get(k) != v})
+                for k in baseline.keys() - previous_fields.keys():
+                    derived.pop(k, None)
+            # The UI submits the displayed fields even when untouched. Only
+            # intentional field edits override fields freshly derived from text.
+            requested = body.get('corrected_fields')
+            if isinstance(requested, dict):
+                derived.update({k:v for k,v in requested.items() if previous_fields.get(k) != v})
+                for k in previous_fields.keys() - requested.keys():
+                    derived.pop(k, None)
+            pr.corrected_fields = derived
+        elif 'corrected_fields' not in body:
+            pr.corrected_fields = None
+    if "corrected_fields" in body and ("corrected_text" not in body or body['corrected_text'] is None):
         pr.corrected_fields = body.get("corrected_fields")
     pr.corrected_by = actor.id
     pr.corrected_at = now()
@@ -347,7 +403,7 @@ def set_type(mid: int, body: dict, request: Request, db: Session = Depends(get_d
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     sub = _editable_submission(db, actor, m, reviewer=True)
     mt = db.query(MaterialType).filter(MaterialType.id == body.get("material_type_id")).first()
     if not mt:
@@ -367,7 +423,7 @@ def diff(mid: int, from_version: int | None = None, to_version: int | None = Non
     m = db.query(Material).filter(Material.id == mid).first()
     if not m:
         raise not_found()
-    ensure_archive_access(db, actor, m.archive_id, request)
+    ensure_material_access(db, actor, m, request)
     vers = db.query(MaterialVersion).filter(MaterialVersion.material_id == mid).order_by(MaterialVersion.version_no).all()
     if len(vers) < 1:
         return ok({"from": None, "to": None, "stats": {}, "hunks": []})

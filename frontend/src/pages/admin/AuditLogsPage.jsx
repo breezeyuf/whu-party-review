@@ -32,6 +32,8 @@ const ACTION_NAME = {
   ORG_DELETE: "删除组织",
   ORG_UPDATE: "修改组织",
   PARSE_CORRECT: "解析结果修正",
+  RETRY_PARSE: "重新解析材料",
+  RETENTION_KEEP: "到期材料确认保留",
   REVIEW_PASS: "审核通过",
   REVIEW_RETURN: "审核退回",
   SEED_DEMO: "初始化演示数据",
@@ -49,6 +51,7 @@ const OBJECT_NAME = {
   batch: "批次",
   export: "导出任务",
   material: "材料",
+  material_version: "材料版本",
   org: "组织",
   rule: "规则",
   settings: "系统配置",
@@ -64,7 +67,7 @@ export default function AuditLogsPage() {
   const req = useRequest(() => listAuditLogs(query), [JSON.stringify(query)])
   return (
     <div>
-      <PageHeader title="审计日志">登录、上传、审核、退回、备案、规则修改和导出都会留痕，日志不可删除。</PageHeader>
+      <PageHeader title="操作日志">登录、上传、审核、退回、备案、规则修改和导出都会留痕，日志不可删除。</PageHeader>
       <FilterBar values={query} onChange={setQuery} onReset={() => setQuery({ username: "", action: "", object_type: "", date_from: "", date_to: "" })} fields={[
         { key: "username", label: "账号" },
         { key: "action", label: "动作（编码）" },
@@ -73,7 +76,7 @@ export default function AuditLogsPage() {
         { key: "date_to", label: "结束", placeholder: "YYYY-MM-DD" },
       ]} />
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="没有符合条件的审计记录" emptyHint="可以调整账号、动作或日期范围后再查询。" columns={[
+        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="没有符合条件的操作记录" emptyHint="可以调整账号、动作或日期范围后再查询。" columns={[
           { key: "time", title: "时间", render: (r) => <span className="mono text-xs">{fmtDateTime(r.created_at)}</span> },
           { key: "who", title: "操作人", render: (r) => <span className="text-xs">{r.username}<br /><span className="text-base-content/50">{roleName(meta, r.role)}</span></span> },
           { key: "act", title: "动作", render: (r) => (
@@ -83,7 +86,7 @@ export default function AuditLogsPage() {
           { key: "ip", title: "IP", render: (r) => <span className="mono text-xs">{r.ip}</span> },
           { key: "detail", title: "详情", render: (r) => <span className="line-clamp-2 text-xs">{typeof r.detail === "string" ? r.detail : JSON.stringify(r.detail || {})}</span> },
         ]} />
-        {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} />}
+        {!req.error && <Pager page={req.data?.page ?? query.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} />}
       </div>
     </div>
   )

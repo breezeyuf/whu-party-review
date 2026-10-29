@@ -32,8 +32,7 @@ def log(
     if request is not None:
         ip = client_ip(request) or None
         ua = request.headers.get("user-agent", ua)
-    db.add(
-        AuditLog(
+    values = dict(
             user_id=user_id,
             username=username,
             role=role,
@@ -45,5 +44,15 @@ def log(
             user_agent=ua,
             created_at=now(),
         )
-    )
+    if action == "ACCESS_DENIED":
+        # Denials must survive rollback of the rejected business transaction.
+        # Keep scalar values only: the actor may expire after rollback.
+        db.info.setdefault("access_denials", []).append(values)
+        return
+    db.add(AuditLog(**values))
     db.flush()
+
+
+def persist_access_denials(db: Session) -> None:
+    for values in db.info.get("access_denials", []):
+        db.add(AuditLog(**values))

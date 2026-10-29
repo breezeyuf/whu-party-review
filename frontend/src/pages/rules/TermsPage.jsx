@@ -56,20 +56,22 @@ export default function TermsPage() {
 
   return (
     <div>
-      <PageHeader title="政治术语库" extra={writable && (
+      <PageHeader title="规范术语" extra={writable && (
         <>
-          <button type="button" className="btn btn-outline btn-sm" onClick={async () => saveBlob(await exportRules("terms"))}>导出</button>
+          <button type="button" className="btn btn-sm rule-action-export" onClick={async () => saveBlob(await exportRules("terms"))}>导出</button>
           <button type="button" className="btn btn-primary btn-sm" onClick={() => setEdit({ term_type: "VARIANT", severity: "WARN", is_active: true })}>新增</button>
         </>
-      )} />
+      )}>
+        维护政治术语的标准表述、常见错误写法及并列项顺序。
+      </PageHeader>
       <FilterBar values={query} onChange={setQuery} fields={[{ key: "q", label: "检索标准表述" }]} />
       {writable && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-          <label className="btn btn-ghost btn-xs">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <label className="btn btn-sm rule-action-import font-normal">
             预检导入
             <input type="file" accept=".xlsx" className="hidden" onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0], true)} />
           </label>
-          <label className="btn btn-ghost btn-xs">
+          <label className="btn btn-sm rule-action-import font-normal">
             正式导入
             <input type="file" accept=".xlsx" className="hidden" onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0], false)} />
           </label>

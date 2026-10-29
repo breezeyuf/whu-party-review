@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models import AiReport, Archive, Batch, Issue, Material, Message, Submission
-from services.scope import scoped_archives, scoped_submissions
+from services.scope import scoped_stats_archives, scoped_stats_submissions
 from utils import now, stage_name
 
 
@@ -29,7 +29,7 @@ def dashboard(db: Session, actor, batch_id=None) -> dict:
         batch = db.query(Batch).filter(Batch.id == int(batch_id)).first()
     else:
         batch = db.query(Batch).filter(Batch.status == "ACTIVE").order_by(Batch.id.desc()).first()
-    q = scoped_submissions(db.query(Submission), actor, db)
+    q = scoped_stats_submissions(db.query(Submission), actor, db)
     if batch_id:
         q = q.filter(Submission.batch_id == int(batch_id))
     subs = q.all()
@@ -66,7 +66,7 @@ def dashboard(db: Session, actor, batch_id=None) -> dict:
     deadlines.sort(key=lambda d: d["days_left"])
     deadlines = deadlines[:8]
     def scoped_issues(cols):
-        iq = scoped_submissions(db.query(*cols).join(Submission, Submission.id == Issue.submission_id), actor, db)
+        iq = scoped_stats_submissions(db.query(*cols).join(Submission, Submission.id == Issue.submission_id), actor, db)
         iq = iq.filter(Issue.is_active.is_(True))
         if batch_id:
             iq = iq.filter(Submission.batch_id == int(batch_id))

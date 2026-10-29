@@ -1,0 +1,75 @@
+name: party-review
+services:
+  db:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: party_review
+      POSTGRES_USER: party_review
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the private env file}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U party_review -d party_review"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [data]
+
+  backend:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set a URL-encoded database password in DATABASE_URL}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?Set APP_SECRET_KEY}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD}
+      DEPLOYMENT_MODE: server
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set HTTPS PUBLIC_BASE_URL}
+      HOST: 0.0.0.0
+      PORT: 8000
+      STORAGE_DIR: /data/storage
+      TRUSTED_PROXY_CIDRS: 172.30.217.2/32
+      CORS_ORIGINS: ""
+      DEMO_LOGIN_HINT: "0"
+      WORKER_ENABLED: "1"
+    volumes:
+      - storage:/data/storage
+    networks: [edge, data]
+
+  proxy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      PARTY_REVIEW_DOMAIN: ${PARTY_REVIEW_DOMAIN:?Set PARTY_REVIEW_DOMAIN}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./${CADDY_CONFIG:-Caddyfile.public}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      edge:
+        ipv4_address: 172.30.217.2
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.217.0/24
+  data:
+    internal: true
+
+volumes:
+  pgdata:
+  storage:
+  caddy_data:
+  caddy_config:

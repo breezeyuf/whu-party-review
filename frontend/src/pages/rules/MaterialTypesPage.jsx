@@ -11,6 +11,7 @@ import { useMeta } from "../../context/MetaContext"
 import { can } from "../../utils/permissions"
 import { stageName, stageShort } from "../../utils/format"
 import { useToast } from "../../context/ToastContext"
+import { jsonObject } from "../../utils/adminWorkflow"
 
 const FIELDS = [
   { key: "code", label: "编码" },
@@ -20,6 +21,7 @@ const FIELDS = [
   { key: "exclude_keywords", label: "排除关键词", wide: true },
   { key: "element_template", label: "内容要素模板（JSON 数组或换行）", type: "textarea", wide: true, rows: 5 },
   { key: "format_requirements", label: "形式要素（JSON）", type: "textarea", wide: true, rows: 4 },
+  { key: "date_node_map", label: '日期到节点映射（JSON，例如 {"signature_date":"T02"}）', type: "textarea", wide: true, rows: 4 },
   { key: "description", label: "说明", type: "textarea", wide: true },
   { key: "is_active", label: "启用", type: "checkbox" },
 ]
@@ -49,13 +51,16 @@ export default function MaterialTypesPage() {
     exclude_keywords: (row.exclude_keywords || []).join(","),
     element_template: typeof row.element_template === "string" ? row.element_template : JSON.stringify(row.element_template || [], null, 2),
     format_requirements: typeof row.format_requirements === "string" ? row.format_requirements : JSON.stringify(row.format_requirements || {}, null, 2),
+    date_node_map: JSON.stringify(row.date_node_map || {}, null, 2),
   } : { is_active: true }
 
   const save = async (form) => {
     let element_template = form.element_template
     let format_requirements = form.format_requirements
     try { element_template = JSON.parse(form.element_template || "[]") } catch { element_template = asList(form.element_template) }
-    try { format_requirements = JSON.parse(form.format_requirements || "{}") } catch { /* keep string rejected by api */ }
+    format_requirements = jsonObject(form.format_requirements, "形式要素")
+    const date_node_map = jsonObject(form.date_node_map, "日期到节点映射")
+    if (Object.values(date_node_map).some((value) => typeof value !== "string" || !value.trim())) throw new Error("日期映射的节点编码须为非空字符串")
     const body = {
       ...form,
       stage_codes: asList(form.stage_codes).map(Number),
@@ -63,6 +68,7 @@ export default function MaterialTypesPage() {
       exclude_keywords: asList(form.exclude_keywords),
       element_template,
       format_requirements,
+      date_node_map,
       is_active: form.is_active !== false,
     }
     if (edit?.id) await materialTypes.update(edit.id, body)

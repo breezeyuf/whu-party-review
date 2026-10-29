@@ -7,7 +7,8 @@ from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import Session
 
-from errors import conflict, unprocessable
+from errors import AppError, conflict, not_found, unprocessable
+from schemas.time_rules import validate_published_time_params
 from models import (
     CheckRule,
     ChecklistItem,
@@ -20,7 +21,7 @@ from models import (
     TimeNodeDef,
     TimeRule,
 )
-from seed_rules import snapshot_rules
+from seed_rules import snapshot_rules, lock_rule_publication
 from services.audit import log
 from utils import now
 
@@ -82,6 +83,9 @@ def _audit_rule(db, actor, action, kind, object_id, summary, version_no):
 
 
 def create_and_snapshot(db, actor, kind, obj, summary) -> tuple:
+    lock_rule_publication(db)
+    if kind == "time-rules":
+        obj.params = validate_published_time_params(db, obj.params)
     db.add(obj)
     db.flush()
     ver = snapshot_rules(db, kind, "CREATE", summary, obj.id if hasattr(obj, "id") else None, actor.id)
@@ -90,8 +94,14 @@ def create_and_snapshot(db, actor, kind, obj, summary) -> tuple:
 
 
 def update_and_snapshot(db, actor, kind, obj, fields, summary):
+    _lock_and_refresh(db, obj)
+    if kind == "time-rules" and "params" in fields:
+        fields = {**fields, "params": validate_published_time_params(db, fields["params"])}
+    elif kind == "time-rules" and fields.get("is_active") is True:
+        validate_published_time_params(db, obj.params)
     for k, v in fields.items():
-        if v is not None and hasattr(obj, k) and k not in ("id", "code", "created_at"):
+        may_clear = kind == "time-nodes" and k in ("stage_code", "required_from_stage", "derive_expr")
+        if (v is not None or may_clear) and hasattr(obj, k) and k not in ("id", "code", "created_at"):
             setattr(obj, k, v)
     if hasattr(obj, "updated_at"):
         obj.updated_at = now()
@@ -102,6 +112,7 @@ def update_and_snapshot(db, actor, kind, obj, fields, summary):
 
 
 def delete_and_snapshot(db, actor, kind, obj, summary):
+    _lock_and_refresh(db, obj)
     oid = getattr(obj, "id", None)
     try:
         db.delete(obj)
@@ -111,6 +122,15 @@ def delete_and_snapshot(db, actor, kind, obj, summary):
     ver = snapshot_rules(db, kind, "DELETE", summary, oid, actor.id)
     _audit_rule(db, actor, "DELETE", kind, oid, summary, ver.version_no)
     return ver.version_no
+
+
+def _lock_and_refresh(db, obj):
+    from sqlalchemy.exc import InvalidRequestError
+    lock_rule_publication(db)
+    try:
+        db.refresh(obj)
+    except InvalidRequestError:
+        raise not_found('规则条目已被删除，请刷新后重试')
 
 
 def export_kind(db: Session, kind: str) -> Workbook:
@@ -143,37 +163,169 @@ def _cell(v):
     return v
 
 
+_AUDIT_COLUMNS = {"id", "created_at", "updated_at", "updated_by"}
+
+
+def _required_columns(model) -> list[str]:
+    """表上 NOT NULL 且没有默认值的列：导入预检必须和实际写入用同一套必填口径。"""
+    return [
+        column.name
+        for column in model.__table__.columns
+        if not column.nullable and not column.primary_key
+        and column.default is None and column.server_default is None
+        and column.name not in _AUDIT_COLUMNS
+    ]
+
+
+# 每类规则的字段口径：枚举与 JSON 结构。导入预检、正式导入、单条新增/更新共用，
+# 避免“预检通过、正式导入 500”或把字符串写进 JSONB 列。
+_ENUM_FIELDS = {
+    "terms": {"term_type": ("VARIANT", "SEQUENCE"), "severity": ("BLOCK", "WARN", "INFO")},
+    "sensitive-phrases": {
+        "match_type": ("KEYWORD", "REGEX"),
+        "category": ("IDEOLOGY", "MOTIVATION", "OTHER"),
+        "risk_level": ("HIGH", "MEDIUM", "LOW"),
+    },
+    "check-rules": {
+        "category": ("FORMAT", "CONTENT"), "engine": ("RULE", "LLM", "RULE_LLM"),
+        "severity": ("BLOCK", "WARN", "INFO"),
+    },
+    "time-rules": {
+        "rule_type": ("AGE", "INTERVAL", "ORDER", "SEQ_GAP", "SEQ_COUNT", "DURATION",
+                      "DERIVED", "CONSISTENCY", "VALID_DATE", "REQUIRED_NODES", "IN_RANGE", "COMPOSITE"),
+        "severity": ("BLOCK", "WARN", "INFO", "CALC"),
+    },
+    "time-nodes": {"value_kind": ("DATE", "DATE_RANGE", "DATE_SEQ", "DERIVED")},
+    "checklists": {"quantity_mode": ("FIXED", "PER_PERIOD")},
+}
+_LIST_FIELDS = {
+    "terms": ("wrong_variants", "sequence_items"),
+    "check-rules": ("applies_to",),
+    "time-rules": ("applies_stages",),
+    "time-nodes": ("source_material_codes", "extract_keywords"),
+    "material-types": ("stage_codes", "title_keywords", "exclude_keywords", "element_template"),
+}
+_DICT_FIELDS = {
+    "time-rules": ("params",),
+    "check-rules": ("params",),
+    "material-types": ("format_requirements", "date_node_map"),
+    "prompt-templates": ("output_schema",),
+}
+
+
+def validate_record(kind: str, rec: dict) -> list[str]:
+    """按规则类别校验枚举与 JSON 结构，返回错误说明（空列表表示通过）。"""
+    errors: list[str] = []
+    for field, allowed in _ENUM_FIELDS.get(kind, {}).items():
+        value = rec.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, str) or value not in allowed:
+            errors.append(f"{field} 取值无效：{value}（可选 {'/'.join(allowed)}）")
+    for field in _LIST_FIELDS.get(kind, ()):
+        value = rec.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, list):
+            errors.append(f"{field} 须为数组，不能是 {type(value).__name__}")
+            continue
+        if field in ("wrong_variants", "sequence_items", "applies_to", "applies_stages") and any(
+            not isinstance(item, str) for item in value
+        ):
+            errors.append(f"{field} 数组元素须为字符串")
+    for field in _DICT_FIELDS.get(kind, ()):
+        value = rec.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, dict):
+            errors.append(f"{field} 须为对象，不能是 {type(value).__name__}")
+    return errors
+
+
+def key_fields(kind: str, model) -> tuple[str, ...]:
+    """各表实际业务唯一键：敏感短语是 (phrase, category)，不是 phrase。"""
+    if kind == "sensitive-phrases":
+        return ("phrase", "category")
+    if kind == "checklists":
+        return ("stage_code", "material_type_id")
+    if hasattr(model, "code"):
+        return ("code",)
+    if hasattr(model, "standard_text"):
+        return ("standard_text",)
+    return ("phrase",)
+
+
 def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> dict:
     model = KIND_MAP.get(kind, (None, None))[0]
     if model is None:
         raise unprocessable("不支持导入该类型")
+    if mode not in ("append", "upsert", "replace"):
+        raise unprocessable("不支持的导入模式")
     wb = load_workbook(BytesIO(data), data_only=True)
     ws = wb.active
     headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
     created = updated = skipped = 0
     errors = []
     total = 0
-    unique_field = "code" if hasattr(model, "code") else ("standard_text" if hasattr(model, "standard_text") else "phrase")
-    if mode == "replace" and not dry_run:
-        db.query(model).delete()
-        db.flush()
+    required = _required_columns(model)
+    seen_keys: set = set()
+    if not dry_run:
+        lock_rule_publication(db)
+    records = []
     for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         if not any(row):
             continue
         total += 1
         rec = dict(zip(headers, row))
         rec = {k: _parse_cell(v) for k, v in rec.items() if k}
-        key = rec.get(unique_field)
-        if not key:
-            errors.append({"row": i, "message": f"缺少 {unique_field}"})
+        key_names = key_fields(kind, model)
+        key = tuple(rec.get(name) for name in key_names)
+        missing_key = [name for name, value in zip(key_names, key) if value in (None, "")]
+        if missing_key:
+            errors.append({"row": i, "message": "缺少 " + "、".join(missing_key)})
             continue
-        existing = db.query(model).filter(getattr(model, unique_field) == key).first() if hasattr(model, unique_field) else None
+        if key in seen_keys:
+            label = "、".join(str(part) for part in key)
+            errors.append({"row": i, "message": f"同一文件重复 {'+'.join(key_names)}：{label}"})
+            continue
+        seen_keys.add(key)
+        existing = (
+            db.query(model).filter(*[getattr(model, name) == value for name, value in zip(key_names, key)]).first()
+            if mode != "replace" else None
+        )
+        if existing and mode == "append":
+            skipped += 1
+            continue
+        missing = [
+            name for name in required
+            if rec.get(name, getattr(existing, name, None) if existing else None) in (None, "")
+        ]
+        if missing:
+            errors.append({"row": i, "message": "缺少必填字段：" + "、".join(missing)})
+            continue
+        shape_errors = validate_record(kind, rec)
+        if shape_errors:
+            errors.append({"row": i, "message": "；".join(shape_errors)})
+            continue
+        if kind == "time-rules":
+            try:
+                rec["params"] = validate_published_time_params(db, rec.get("params", existing.params if existing else None))
+            except AppError as exc:
+                errors.append({"row": i, "message": exc.biz_message, "details": exc.biz_data})
+                continue
+        records.append((i, rec, existing))
         if dry_run:
             if existing:
                 updated += 1
             else:
                 created += 1
             continue
+    if errors and not dry_run:
+        raise unprocessable("导入存在错误，未保存任何修改", errors)
+    if mode == "replace" and not dry_run:
+        db.query(model).delete()
+        db.flush()
+    for i, rec, existing in records if not dry_run else []:
         try:
             if existing and mode in ("upsert", "replace"):
                 for k, v in rec.items():

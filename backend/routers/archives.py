@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
@@ -18,6 +20,7 @@ from models import (
     ReviewRecord,
     Submission,
     TimeNodeExtraction,
+    TimeNodeDef,
     User,
     UserRole,
 )
@@ -150,7 +153,7 @@ def create_archive(body: dict, db: Session = Depends(get_db), actor: Actor = Dep
         native_place=stu.get("native_place"), id_card_enc=encrypt_field(stu.get("id_card")),
         id_card_masked=mask_id_card(stu.get("id_card")), major=stu.get("major"), class_name=stu.get("class_name"),
         college_id=college.id if college else branch.id, branch_id=branch.id, batch_id=body.get("batch_id"),
-        current_stage=stage, status="ACTIVE", anon_code=f"A{stu['student_no']}", data_source="MANUAL",
+        current_stage=stage, status="ACTIVE", anon_code="A" + uuid4().hex, data_source="MANUAL",
         created_by=actor.id, created_at=now(), updated_at=now(),
     )
     db.add(arch)
@@ -221,8 +224,25 @@ def update_archive(aid: int, body: dict, request: Request, db: Session = Depends
                 {"branch_id": a.branch_id, "college_id": a.college_id}, synchronize_session=False
             )
     if "batch_id" in body:
-        a.batch_id = body["batch_id"]
+        new_batch = body["batch_id"]
+        if new_batch in (None, ""):
+            a.batch_id = None
+        else:
+            try:
+                new_batch = int(new_batch)
+            except (TypeError, ValueError):
+                raise unprocessable("批次参数无效")
+            if not db.query(Batch).filter(Batch.id == new_batch).first():
+                raise unprocessable("批次无效")
+            a.batch_id = new_batch
+            # 提交包必须和档案同批次：否则旧批次互查员能看提交包、看不到材料，
+            # 新批次互查员能看档案、看不到提交包。已归档提交包保留历史归属。
+            db.query(Submission).filter(Submission.archive_id == a.id, Submission.status != "FILED").update(
+                {"batch_id": new_batch}, synchronize_session=False
+            )
     a.updated_at = now()
+    # Basic profile data is input to identity and cross-material checks.
+    a.timeline_updated_at = now()
     safe_detail = dict(body)
     if "id_card" in safe_detail:
         safe_detail["id_card"] = mask_id_card(safe_detail.get("id_card"))
@@ -233,7 +253,7 @@ def update_archive(aid: int, body: dict, request: Request, db: Session = Depends
 @router.get("/archives/{aid}/timeline")
 def get_timeline(aid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     a = ensure_archive_access(db, actor, aid, request)
-    return ok(timeline_view(db, a))
+    return ok(timeline_view(db, a, actor))
 
 
 @router.put("/archives/{aid}/timeline/{node_code}")
@@ -242,7 +262,15 @@ def put_node(aid: int, node_code: str, body: dict, request: Request, db: Session
         raise forbidden()
     a = ensure_archive_access(db, actor, aid, request)
     n = correct_node(db, a, node_code, body, actor)
-    log(db, actor, "NODE_CORRECTION", "archive", aid, {"node": node_code})
+    definition = db.query(TimeNodeDef).filter(TimeNodeDef.code == node_code).first()
+    log(db, actor, "NODE_CORRECTION", "archive", aid, {
+        "node": node_code, "node_name": definition.name,
+        "stage_code": definition.stage_code or a.current_stage,
+        "reason": n.correction_reason, "clear": bool(body.get("clear")),
+        "date": n.corrected_date.isoformat() if n.corrected_date else None,
+        "end_date": n.corrected_end_date.isoformat() if n.corrected_end_date else None,
+        "hours": n.corrected_hours,
+    })
     from services.timeline import effective_node
     return ok({"code": n.node_code, "effective": effective_node(n), "locked": n.locked, "has_conflict": n.has_conflict})
 
@@ -250,25 +278,10 @@ def put_node(aid: int, node_code: str, body: dict, request: Request, db: Session
 @router.get("/archives/{aid}/history")
 def history(aid: int, stage_code: int | None = None, request: Request = None, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     a = ensure_archive_access(db, actor, aid, request)
-    items = []
-    mats = db.query(Material).filter(Material.archive_id == aid)
-    if stage_code:
-        mats = mats.filter(Material.stage_code == stage_code)
-    for m in mats.all():
-        items.append({"time": m.created_at.isoformat() if m.created_at else None, "kind": "UPLOAD", "stage_code": m.stage_code,
-                      "title": f"上传 {m.title}", "detail": None, "actor_name": None, "link_type": "material", "link_id": m.id})
-    recs = db.query(ReviewRecord).join(Submission).filter(Submission.archive_id == aid)
-    if stage_code:
-        recs = recs.filter(Submission.stage_code == stage_code)
-    for r in recs.all():
-        items.append({"time": r.created_at.isoformat(), "kind": "REVIEW", "stage_code": None, "title": r.action,
-                      "detail": r.comment, "actor_name": r.reviewer_name, "link_type": "submission", "link_id": r.submission_id})
-    notices = db.query(Notice).filter(Notice.archive_id == aid)
-    for n in notices.all():
-        items.append({"time": n.created_at.isoformat(), "kind": "NOTICE", "stage_code": None, "title": n.title,
-                      "detail": None, "actor_name": None, "link_type": "notice", "link_id": n.id})
-    items.sort(key=lambda x: x["time"] or "", reverse=True)
-    return ok(items)
+    if stage_code is not None and stage_code not in range(1, 6):
+        raise unprocessable("阶段参数无效")
+    from services.archive_history import archive_history
+    return ok(archive_history(db, a, actor, stage_code))
 
 
 @router.get("/my/archive")

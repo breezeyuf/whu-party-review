@@ -16,6 +16,7 @@ import { availableBranches, canManageArchive } from "../../utils/archiveWorkflow
 import { useAuth } from "../../context/AuthContext"
 import { useMeta } from "../../context/MetaContext"
 import { useToast } from "../../context/ToastContext"
+import { validDate } from "../../utils/adminWorkflow"
 
 const EMPTY = {
   real_name: "", gender: "男", student_no: "", branch_id: "", batch_id: "", current_stage: "1", major: "", class_name: "",
@@ -28,7 +29,7 @@ export default function ArchiveListPage() {
   const canCreate = canManageArchive(activeRole)
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listArchives(query), [JSON.stringify(query)])
-  const batches = useRequest(() => listBatches({ page_size: 50 }), [])
+  const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const orgs = useRequest(() => listOrgs({ flat: true }), [], { immediate: canCreate })
   const branches = availableBranches(orgs.data || [], activeRole)
   const [open, setOpen] = useState(false)
@@ -41,6 +42,7 @@ export default function ArchiveListPage() {
 
   const save = async () => {
     if (saving) return
+    if (form.birth_date && !validDate(form.birth_date)) { toast.error("出生日期无效"); return }
     if (!form.real_name.trim() || !form.student_no.trim() || !branches.some((b) => Number(b.id) === Number(form.branch_id))) {
       toast.error("请填写姓名、学号并选择支部")
       return
@@ -54,6 +56,9 @@ export default function ArchiveListPage() {
           student_no: form.student_no.trim(),
           major: form.major || undefined,
           class_name: form.class_name || undefined,
+          ethnicity: form.ethnicity || undefined,
+          birth_date: form.birth_date || undefined,
+          native_place: form.native_place || undefined,
         },
         branch_id: Number(form.branch_id),
         batch_id: form.batch_id ? Number(form.batch_id) : undefined,
@@ -101,14 +106,14 @@ export default function ArchiveListPage() {
             ) },
             { key: "org", title: "组织", render: (r) => <span className="text-xs">{r.college_name}<br />{r.branch_name}</span> },
             { key: "stage", title: "阶段", render: (r) => r.stage_name || stageShort(meta, r.current_stage) },
-            { key: "sub", title: "当前提交", render: (r) => r.submission ? (
-              <Link className="link" to={`/review/submissions/${r.submission.id}`}><StatusBadge code={r.submission.status} /></Link>
+            { key: "sub", title: "当前提交", className: "min-w-[8rem] whitespace-nowrap", render: (r) => r.submission ? (
+              <Link className="link inline-flex max-w-full no-underline hover:no-underline" to={`/review/submissions/${r.submission.id}`}><StatusBadge code={r.submission.status} soft /></Link>
             ) : "—" },
-            { key: "ai", title: "AI", render: (r) => <RecoBadge code={r.submission?.recommendation} /> },
+            { key: "ai", title: "AI", className: "min-w-[7rem] whitespace-nowrap", render: (r) => <RecoBadge code={r.submission?.recommendation} soft /> },
             { key: "issues", title: "问题", render: (r) => <span className="text-xs">{issueCountsText(r.submission?.issue_counts)}</span> },
           ]}
         />
-        <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size} total={req.data?.total} onPage={setPage} /></div>
+        <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>
       </div>
       )}
       <Modal open={open} title="新建发展档案" onClose={close} footer={
@@ -142,6 +147,9 @@ export default function ArchiveListPage() {
             </select>
             <input className="input input-bordered input-sm" placeholder="专业" value={form.major} onChange={(e) => set("major", e.target.value)} />
             <input className="input input-bordered input-sm" placeholder="班级" value={form.class_name} onChange={(e) => set("class_name", e.target.value)} />
+            <input aria-label="民族" className="input input-bordered input-sm" placeholder="民族" value={form.ethnicity || ""} onChange={(e) => set("ethnicity", e.target.value)} />
+            <label className="text-xs">出生日期<input aria-label="出生日期" type="date" className="input input-bordered input-sm w-full" value={form.birth_date || ""} onChange={(e) => set("birth_date", e.target.value)} /></label>
+            <input aria-label="籍贯" className="input input-bordered input-sm" placeholder="籍贯" value={form.native_place || ""} onChange={(e) => set("native_place", e.target.value)} />
           </div>
         )}
       </Modal>

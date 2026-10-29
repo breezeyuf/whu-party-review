@@ -3,7 +3,7 @@ import { getJob } from "../api/jobs"
 
 const DONE = new Set(["SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"])
 
-export function useJobPolling(jobId, { interval = 1500, onDone } = {}) {
+export function useJobPolling(jobId, { interval = 1500, onDone, restartKey = 0 } = {}) {
   const [job, setJob] = useState(null)
   const [error, setError] = useState(null)
   const doneRef = useRef(onDone)
@@ -41,7 +41,7 @@ export function useJobPolling(jobId, { interval = 1500, onDone } = {}) {
       alive = false
       if (timer) clearTimeout(timer)
     }
-  }, [jobId, interval])
+  }, [jobId, interval, restartKey])
 
   return { job, error }
 }

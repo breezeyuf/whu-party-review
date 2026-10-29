@@ -4,10 +4,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build --manifest && node scripts/bundle-budget.mjs --check",
     "test": "node --test tests/*.test.js",
     "preview": "vite preview",
-    "test:ui": "node tests/run-ui-tests.mjs"
+    "test:ui": "node tests/run-ui-tests.mjs",
+    "bundle:report": "node scripts/bundle-budget.mjs",
+    "bundle:budget": "node scripts/bundle-budget.mjs --write-budget"
   },
   "dependencies": {
     "axios": "1.20.0",

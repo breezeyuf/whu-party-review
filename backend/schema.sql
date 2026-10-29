@@ -843,7 +843,7 @@ INSERT INTO system_settings (key, value, description) VALUES
     ('retention',    '{"material_years": 10, "export_days": 7}', '材料与导出文件保留期限'),
     ('notification', '{"in_app": true, "deadline_remind_days": [3, 1], "email": false, "sms": false}', '通知开关'),
     ('ai',           '{"llm_enabled": false, "base_url": "", "model": "", "api_key_enc": "", "timeout_s": 60, "max_concurrency": 2, "temperature": 0.1, "desensitize": true, "classify_confidence_threshold": 0.7}', '大模型配置（密钥加密存储，不回显）'),
-    ('ocr',          '{"engine": "auto", "timeout_s": 120, "min_dpi": 150, "blur_threshold": 60}', 'OCR 配置：auto 表示检测到 PaddleOCR 则启用，否则跳过 OCR 并提示人工核对'),
+    ('ocr',          '{"engine": "auto", "timeout_s": 120, "min_dpi": 150, "blur_threshold": 60}', 'OCR 配置：auto 表示检测到 RapidOCR 则启用，否则跳过 OCR 并提示人工核对'),
     ('security',     '{"max_failed_login": 5, "lock_minutes": 15, "access_token_minutes": 120, "refresh_token_days": 7}', '登录安全参数'),
     ('worker',       '{"concurrency": 2, "poll_interval_s": 1, "heartbeat_timeout_s": 300}', '后台任务执行参数'),
     ('calendar',     '{"holidays": [], "extra_workdays": [], "period_min_tail_days": 30}', '工作日计算（默认周一至周五，节假日与调休日 YYYY-MM-DD）；按周期计份时末段不足该天数不计一期')

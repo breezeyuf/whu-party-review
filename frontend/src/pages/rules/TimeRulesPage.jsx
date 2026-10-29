@@ -14,6 +14,7 @@ import { severityName, stageName } from "../../utils/format"
 const VALUE_KIND = { DATE: "日期", DATETIME: "日期时间", NUMBER: "数值", INT: "整数", TEXT: "文本", BOOL: "是否" }
 import { can } from "../../utils/permissions"
 import { useToast } from "../../context/ToastContext"
+import { nodePayload, stringList } from "../../utils/ruleWorkflow"
 
 export default function TimeRulesPage() {
   const toast = useToast()
@@ -32,7 +33,7 @@ export default function TimeRulesPage() {
   const ruleRows = rules.data?.items || rules.data || []
 
   const saveNode = async (form) => {
-    const body = { ...form, stage_code: form.stage_code ? Number(form.stage_code) : undefined, sort_order: form.sort_order ? Number(form.sort_order) : undefined, has_hours: !!form.has_hours, is_active: form.is_active !== false }
+    const body = nodePayload(form)
     if (nodeEdit?.id) await timeNodes.update(nodeEdit.id, body)
     else await timeNodes.create(body)
     toast.success("节点已保存")
@@ -59,10 +60,12 @@ export default function TimeRulesPage() {
         title="时间规则"
         extra={writable && (
           tab === "nodes"
-            ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setNodeEdit({})}>新增节点</button>
-            : <button type="button" className="btn btn-primary btn-sm" onClick={() => { setParams({ checks: [] }); setRuleEdit({}) }}>新增规则</button>
+            ? <button type="button" className="btn btn-primary btn-sm" onClick={() => setNodeEdit({})}>新增</button>
+            : <button type="button" className="btn btn-primary btn-sm" onClick={() => { setParams({ checks: [] }); setRuleEdit({}) }}>新增</button>
         )}
-      />
+      >
+        维护发展党员各阶段的时间顺序、培养周期与节点完整性要求。
+      </PageHeader>
       <div role="tablist" className="tabs tabs-bordered mb-3">
         <button type="button" className={`tab ${tab === "rules" ? "tab-active" : ""}`} onClick={() => setTab("rules")}>时间规则</button>
         <button type="button" className={`tab ${tab === "nodes" ? "tab-active" : ""}`} onClick={() => setTab("nodes")}>节点定义</button>
@@ -123,13 +126,17 @@ export default function TimeRulesPage() {
         fields={[
           { key: "code", label: "编码" },
           { key: "name", label: "名称" },
-          { key: "value_kind", label: "取值", type: "select", options: [{ value: "DATE", label: "日期" }, { value: "RANGE", label: "区间" }, { value: "DATE_SEQ", label: "日期序列" }] },
+          { key: "value_kind", label: "取值", type: "select", options: [{ value: "DATE", label: "日期" }, { value: "DATE_RANGE", label: "区间" }, { value: "DATE_SEQ", label: "日期序列" }, { value: "DERIVED", label: "派生日期" }] },
           { key: "stage_code", label: "所属阶段", type: "number" },
+          { key: "required_from_stage", label: "从第几阶段起必需", type: "number" },
+          { key: "source_material_codes", label: "来源材料编码（逗号分隔）", wide: true },
           { key: "has_hours", label: "含学时", type: "checkbox" },
           { key: "extract_keywords", label: "抽取关键词", wide: true },
+          { key: "derive_expr", label: '派生表达式（仅派生日期必填，例如 {"base":"T14","offset":{"value":1,"unit":"YEAR"}}）', type: "textarea", wide: true },
+          { key: "sort_order", label: "排序", type: "number" },
           { key: "is_active", label: "启用", type: "checkbox" },
         ]}
-        initial={nodeEdit || { is_active: true, value_kind: "DATE" }}
+        initial={nodeEdit ? { ...nodeEdit, source_material_codes: stringList(nodeEdit.source_material_codes).join(","), extract_keywords: stringList(nodeEdit.extract_keywords).join(","), derive_expr: typeof nodeEdit.derive_expr === "string" ? nodeEdit.derive_expr : JSON.stringify(nodeEdit.derive_expr || {}, null, 2) } : { is_active: true, value_kind: "DATE" }}
         onClose={() => setNodeEdit(null)}
         onSubmit={saveNode}
       />
@@ -148,8 +155,14 @@ export default function TimeRulesPage() {
           <input className="input input-bordered input-sm" placeholder="适用阶段 3,4,5" value={Array.isArray(ruleEdit?.applies_stages) ? ruleEdit.applies_stages.join(",") : (ruleEdit?.applies_stages || "")} onChange={(e) => setRuleEdit({ ...ruleEdit, applies_stages: e.target.value })} />
           <textarea className="textarea textarea-bordered text-xs sm:col-span-2" rows={2} placeholder="提示文案，可用 {T04} {实际值}" value={ruleEdit?.message_template || ""} onChange={(e) => setRuleEdit({ ...ruleEdit, message_template: e.target.value })} />
         </div>
-        <p className="mt-3 text-xs text-base-content/55">DSL op：{DSL_OPS.map((o) => `${o.op}(${o.hint})`).join("；")}</p>
-        <JsonEditor value={params || { checks: [] }} onChange={(parsed) => setParams(parsed)} />
+        <details className="mt-3 rounded-lg border border-base-300 bg-base-200/40 p-3">
+          <summary className="cursor-pointer text-sm font-medium">高级参数（JSON）与规则条件说明</summary>
+          <p className="mt-2 text-xs text-base-content/60">下列条件名是系统识别用的配置字段，保持英文不变；括号中的说明已改为中文。</p>
+          <ul className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+            {DSL_OPS.map((o) => <li key={o.op} className="min-w-0"><code className="whitespace-nowrap">{o.op}</code><span className="ml-1 text-base-content/65">{o.label}：{o.description}</span></li>)}
+          </ul>
+          <div className="mt-3"><JsonEditor value={params || { checks: [] }} onChange={(parsed) => setParams(parsed)} /></div>
+        </details>
       </Modal>
       <ConfirmDialog open={!!removeId} danger title="删除时间规则" message="确认删除？已有报告不受影响。" onClose={() => setRemoveId(null)} onConfirm={async () => { await timeRules.remove(removeId); setRemoveId(null); rules.reload() }} />
     </div>

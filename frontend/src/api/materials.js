@@ -1,4 +1,5 @@
 import { api, getBlob } from "./client"
+export const retryParse = (id) => api.post(`/materials/${id}/retry-parse`)
 
 function form(file, fields = {}) {
   const fd = new FormData()

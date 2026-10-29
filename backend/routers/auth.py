@@ -149,6 +149,8 @@ def change_password(body: dict, db: Session = Depends(get_db), actor: Actor = De
     actor.user.must_change_password = False
     actor.user.token_version = (actor.user.token_version or 0) + 1
     db.flush()
+    # The client immediately logs in again; persist before sending a success response.
+    db.commit()
     return ok({})
 
 

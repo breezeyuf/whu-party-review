@@ -140,10 +140,21 @@ def add_version(db, material: Material, actor, filename: str, data: bytes, chang
     material.version_count = no
     material.updated_at = now()
     responded = []
+    from services.audit import log
     for iss in target_issues:
         iss.response_type = "MODIFIED"
         iss.response_version_id = ver.id
+        # 上传时填写的新说明就是当前整改说明；只改审计不改正文会让页面说明停在旧文字
+        if (change_note or "").strip():
+            iss.response_text = change_note.strip()
         iss.responded_at = now()
+        iss.updated_at = now()
+        # 与显式回复走同一事件，档案历史才能逐次还原“哪一版对应哪个问题”
+        log(db, actor, "ISSUE_RESPONSE", "issue", iss.id, {
+            "submission_id": sub.id, "stage_code": sub.stage_code,
+            "response_type": "MODIFIED", "response_text": change_note,
+            "version_id": ver.id,
+        })
         responded.append(iss.id)
     job = enqueue_job(db, "PARSE", actor.id, "material_version", ver.id, {"version_id": ver.id})
     return ver, job, responded

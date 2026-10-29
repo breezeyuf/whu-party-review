@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from errors import conflict, forbidden, unprocessable
@@ -16,7 +17,7 @@ from models import (
     TimeNodeDef,
     TimeNodeExtraction,
 )
-from utils import as_date, now, stage_name
+from utils import now, stage_name, TZ8
 
 
 def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None:
@@ -84,17 +85,44 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
     seqs = db.query(TimeNodeExtraction).filter(
         TimeNodeExtraction.archive_id == archive_id, TimeNodeExtraction.is_current.is_(True)
     ).all()
+    version_ids = {getattr(e, "material_version_id", None) for e in seqs} - {None}
+    versions = {v.id: v for v in db.query(MaterialVersion).filter(MaterialVersion.id.in_(version_ids)).all()} if version_ids else {}
     seq_map: dict[str, list] = {}
     invalid: dict[str, str] = {}
+    sources: dict[str, list] = {}
     for e in seqs:
         if e.value_date:
             seq_map.setdefault(e.node_code, []).append(e.value_date.isoformat())
         if e.invalid_reason:
             invalid[e.node_code] = e.invalid_reason
+        version_id = getattr(e, "material_version_id", None)
+        version = versions.get(version_id)
+        uploaded_at = version.uploaded_at if version else None
+        if isinstance(uploaded_at, datetime):
+            upload_day = (uploaded_at.replace(tzinfo=TZ8) if uploaded_at.tzinfo is None else uploaded_at).astimezone(TZ8).date()
+        else:
+            upload_day = uploaded_at
+        sources.setdefault(e.node_code, []).append({
+            "node_code": e.node_code, "extraction_id": getattr(e, "id", None),
+            "material_id": getattr(e, "material_id", None), "version_id": version_id,
+            "seq_index": getattr(e, "seq_index", None),
+            "date": e.value_date.isoformat() if e.value_date else None,
+            "end_date": e.value_end_date.isoformat() if e.value_end_date else None,
+            "uploaded_at": uploaded_at.isoformat() if uploaded_at else None,
+            "upload_date": upload_day.isoformat() if upload_day else None,
+            "invalid_reason": e.invalid_reason, "page_no": getattr(e, "page_no", None),
+            "bbox": getattr(e, "bbox", None),
+        })
     out = {}
     for n in nodes:
         dfn = defs.get(n.node_code)
         eff = effective_node(n)
+        node_sources = sources.get(n.node_code, [])
+        # An explicit archive correction replaces the selected source value;
+        # its upload date still comes from that source's original file version.
+        for source in node_sources:
+            if source["extraction_id"] == getattr(n, "source_extraction_id", None) and n.corrected_date:
+                source.update(date=eff["date"], end_date=eff["end_date"], invalid_reason=None)
         out[n.node_code] = {
             "date": eff["date"],
             "end_date": eff["end_date"],
@@ -104,22 +132,37 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
             "has_conflict": n.has_conflict,
             "invalid_reason": invalid.get(n.node_code),
             "value_kind": dfn.value_kind if dfn else "DATE",
+            "sources": node_sources,
         }
     return out
 
 
-def timeline_view(db: Session, archive: Archive) -> dict:
+def timeline_view(db: Session, archive: Archive, actor=None) -> dict:
+    """档案时间轴。
+
+    传 actor 时按该用户的提交包范围过滤：档案改到批次 B 后，旧批次提交包里的抽取原文
+    不能再从时间轴旁路读出（材料正文通道已由 ensure_material_access 收口，这里是同一口径）。
+    """
     defs = db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).order_by(TimeNodeDef.sort_order).all()
     nodes = {n.node_code: n for n in db.query(ArchiveTimeNode).filter(ArchiveTimeNode.archive_id == archive.id).all()}
-    exs = (
-        db.query(TimeNodeExtraction)
-        .filter(TimeNodeExtraction.archive_id == archive.id, TimeNodeExtraction.is_current.is_(True))
-        .all()
+    allowed_sub_ids = None
+    if actor is not None:
+        from services.scope import scoped_submissions
+
+        allowed_sub_ids = {row[0] for row in scoped_submissions(db.query(Submission.id), actor, db).all()}
+    exq = db.query(TimeNodeExtraction).filter(
+        TimeNodeExtraction.archive_id == archive.id, TimeNodeExtraction.is_current.is_(True)
     )
+    if allowed_sub_ids is not None:
+        visible_materials = db.query(Material.id).filter(Material.submission_id.in_(allowed_sub_ids))
+        exq = exq.filter(or_(TimeNodeExtraction.material_id.is_(None), TimeNodeExtraction.material_id.in_(visible_materials)))
+    exs = exq.all()
     by_code: dict[str, list] = {}
     for e in exs:
         by_code.setdefault(e.node_code, []).append(e)
     subs = db.query(Submission).filter(Submission.archive_id == archive.id).all()
+    if allowed_sub_ids is not None:
+        subs = [s for s in subs if s.id in allowed_sub_ids]
     sub_by_stage = {s.stage_code: s for s in subs}
     stages = []
     for code in range(1, 6):
@@ -131,12 +174,14 @@ def timeline_view(db: Session, archive: Archive) -> dict:
             "submission_id": s.id if s else None,
             "filed_at": s.filed_at.isoformat() if s and s.filed_at else None,
         })
-    issues = (
+    issq = (
         db.query(Issue)
         .join(Submission, Submission.id == Issue.submission_id)
         .filter(Submission.archive_id == archive.id, Issue.is_active.is_(True), Issue.category == "TIME")
-        .all()
     )
+    if allowed_sub_ids is not None:
+        issq = issq.filter(Issue.submission_id.in_(allowed_sub_ids))
+    issues = issq.all()
     issues_by_node: dict[str, list] = {}
     for iss in issues:
         nc = (iss.location or {}).get("node_code")
@@ -215,43 +260,76 @@ def timeline_view(db: Session, archive: Archive) -> dict:
     }
 
 
+def _strict_date(value, label: str) -> Optional[date]:
+    """校正入口只接受完整的 YYYY-MM-DD；与主动清空区分开，避免非法输入把旧值抹掉。"""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or len(value) != 10:
+        raise unprocessable(f"{label}须为 YYYY-MM-DD")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        raise unprocessable(f"{label}不是有效日期")
+    if parsed.isoformat() != value:
+        raise unprocessable(f"{label}须为 YYYY-MM-DD")
+    return parsed
+
+
 def correct_node(db: Session, archive: Archive, node_code: str, body: dict, actor) -> ArchiveTimeNode:
     dfn = db.query(TimeNodeDef).filter(TimeNodeDef.code == node_code).first()
     if not dfn:
         from errors import not_found
         raise not_found("节点不存在")
     node = db.query(ArchiveTimeNode).filter(ArchiveTimeNode.archive_id == archive.id, ArchiveTimeNode.node_code == node_code).first()
-    if not node:
-        node = ArchiveTimeNode(archive_id=archive.id, node_code=node_code, updated_at=now())
-        db.add(node)
-        db.flush()
-    if node.locked and actor.role != "ORG_ADMIN":
+    if node and node.locked and actor.role != "ORG_ADMIN":
         raise forbidden("该节点已随备案锁定，仅组织部可改")
     reason = (body.get("reason") or "").strip()
     if not reason:
         raise unprocessable("必须填写校正原因")
+    clear = body.get("clear", False)
+    if type(clear) is not bool:
+        raise unprocessable("clear 必须为布尔值")
+    # 先完整校验再落库：非法日期、空日期或结束早于开始都不能改到原值
+    value = end = hours = None
+    if not clear:
+        value = _strict_date(body.get("date"), "校正日期")
+        if value is None:
+            raise unprocessable("校正日期不能为空；如需清空请使用 clear")
+        end = _strict_date(body.get("end_date"), "结束日期")
+        if end and end < value:
+            raise unprocessable("结束日期不能早于开始日期")
+        raw_hours = body.get("hours")
+        if raw_hours not in (None, ""):
+            if not dfn.has_hours:
+                raise unprocessable("该节点不接受学时")
+            if isinstance(raw_hours, bool) or not isinstance(raw_hours, (int, float)):
+                raise unprocessable("学时必须为数字")
+            if raw_hours < 0 or raw_hours > 10000:
+                raise unprocessable("学时须在 0 到 10000 之间")
+            hours = raw_hours
+    if not node:
+        node = ArchiveTimeNode(archive_id=archive.id, node_code=node_code, updated_at=now())
+        db.add(node)
+        db.flush()
     # 反复校正时先停用旧的手工值，避免手工抽取记录累积、来源重复计数
     db.query(TimeNodeExtraction).filter(
         TimeNodeExtraction.archive_id == archive.id, TimeNodeExtraction.node_code == node_code,
         TimeNodeExtraction.method == "MANUAL", TimeNodeExtraction.is_current.is_(True),
     ).update({"is_current": False})
-    if body.get("clear"):
+    node.correction_reason = reason
+    node.corrected_by = actor.id
+    node.corrected_at = now()
+    if clear:
         node.corrected_date = None
         node.corrected_end_date = None
         node.corrected_hours = None
-        node.correction_reason = reason
-        node.corrected_by = actor.id
-        node.corrected_at = now()
     else:
-        node.corrected_date = as_date(body.get("date"))
-        node.corrected_end_date = as_date(body.get("end_date"))
-        node.corrected_hours = body.get("hours")
-        node.correction_reason = reason
-        node.corrected_by = actor.id
-        node.corrected_at = now()
+        node.corrected_date = value
+        node.corrected_end_date = end
+        node.corrected_hours = hours
         db.add(TimeNodeExtraction(
             archive_id=archive.id, node_code=node_code, seq_index=0,
-            value_date=node.corrected_date, value_end_date=node.corrected_end_date, hours=node.corrected_hours,
+            value_date=value, value_end_date=end, hours=hours,
             raw_text=reason, method="MANUAL", is_current=True, created_at=now(),
         ))
     archive.timeline_updated_at = now()

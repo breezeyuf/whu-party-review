@@ -262,6 +262,7 @@ def test_material_parse_failure_logs_the_version_without_document_text(caplog, m
     material = SimpleNamespace(id=9, submission_id=10)
     db = Mock()
     db.query.return_value.filter.return_value.first.side_effect = [ver, material]
+    monkeypatch.setattr(pipeline, "get_setting", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(pipeline, "parse_version_file", Mock(side_effect=RuntimeError(secret)))
     with caplog.at_level(logging.ERROR, logger="party_review"):
         with pytest.raises(RuntimeError):

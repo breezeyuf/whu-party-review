@@ -19,7 +19,7 @@ const JOB_STATUS = { QUEUED: "排队中", RUNNING: "识别中", SUCCEEDED: "识�
 export default function BatchUploadPage() {
   const toast = useToast()
   const meta = useMeta()
-  const batches = useRequest(() => listBatches({ page_size: 50 }), [])
+  const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const [batchId, setBatchId] = useState("")
   const [stage, setStage] = useState("")
   const [jobId, setJobId] = useState(null)
@@ -34,7 +34,8 @@ export default function BatchUploadPage() {
   const [lastResult, setLastResult] = useState(null)
   const [search, setSearch] = useState("")
   const [query, setQuery] = useState("")
-  const archives = useRequest(() => listArchives({ batch_id: batchId || undefined, q: query || undefined, page_size: 50 }), [batchId, query])
+  const [archivePageSize, setArchivePageSize] = useState(50)
+  const archives = useRequest(() => listArchives({ batch_id: batchId || undefined, q: query || undefined, page_size: archivePageSize }), [batchId, query, archivePageSize])
   const { job, error: pollingError } = useJobPolling(jobId, { onDone: (completed) => setSettledItems(completed.result?.items || []) })
   const currentJob = Number(job?.id) === Number(jobId) ? job : null
   const items = settledItems ?? currentJob?.result?.items ?? []
@@ -84,7 +85,7 @@ export default function BatchUploadPage() {
   }
 
   return <div>
-    <PageHeader title="批量上传">ZIP 内按「学号_材料名」或学号目录识别归属，识别后确认导入。单包不超过 500 MB。</PageHeader>
+    <PageHeader title="批量材料导入">ZIP 内按「学号_材料名」或学号目录识别归属，识别后确认导入。单包不超过 500 MB。</PageHeader>
     <div className="mb-4 flex flex-wrap gap-2">
       <select aria-label="发展批次" className="select select-bordered select-sm" disabled={!!locked} value={batchId} onChange={(e) => setBatchId(e.target.value)}>
         <option value="">批次（可选）</option>
@@ -112,6 +113,11 @@ export default function BatchUploadPage() {
         <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); setQuery(search.trim()) }}>
           <input aria-label="搜索归属档案" className="input input-bordered input-sm" placeholder="输入姓名或学号查找档案" value={search} onChange={(e) => setSearch(e.target.value)} />
           <button type="submit" className="btn btn-outline btn-sm" disabled={archives.loading}>查找归属档案</button>
+          <label className="flex items-center gap-2 text-xs text-base-content/70">每次显示
+            <select aria-label="每次显示档案条数" className="select select-bordered select-sm" value={archivePageSize} onChange={(e) => setArchivePageSize(Number(e.target.value))}>
+              {[20, 50, 100, 200].map((size) => <option key={size} value={size}>{size} 条</option>)}
+            </select>
+          </label>
         </form>
         {archives.error && <ErrorState title="档案查询失败" error={archives.error} onRetry={archives.reload} />}
         {query && !archives.loading && !archives.error && !archives.data?.items?.length && <p>未找到匹配档案，请更换姓名或学号。</p>}

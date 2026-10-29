@@ -37,8 +37,8 @@ export default function SensitivePhrasesPage() {
     <div>
       <PageHeader title="敏感表述库" extra={writable && (
         <>
-          <button type="button" className="btn btn-outline btn-sm" onClick={async () => saveBlob(await exportRules("sensitive-phrases"))}>导出</button>
-          <label className="btn btn-ghost btn-sm">
+          <button type="button" className="btn btn-sm rule-action-export" onClick={async () => saveBlob(await exportRules("sensitive-phrases"))}>导出</button>
+          <label className="btn btn-sm rule-action-import">
             导入
             <input type="file" accept=".xlsx" className="hidden" onChange={async (e) => {
               const file = e.target.files?.[0]

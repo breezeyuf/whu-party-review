@@ -12,6 +12,9 @@ import { listOrgs } from "../../api/orgs"
 import { roleName, fmtDateTime } from "../../utils/format"
 import { useMeta } from "../../context/MetaContext"
 import { useToast } from "../../context/ToastContext"
+import { useAuth } from "../../context/AuthContext"
+import RoleGrantsEditor from "../../components/admin/RoleGrantsEditor"
+import { normalizeGrants, manageableOrgs } from "../../utils/adminWorkflow"
 
 const ROLES = ["STUDENT", "BRANCH_REVIEWER", "CROSS_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN", "SYS_ADMIN"]
 const ORG_TYPE_NAMES = { SCHOOL: "学校", COLLEGE: "学院", BRANCH: "党支部" }
@@ -23,9 +26,10 @@ const formatImportError = (error) => {
 export default function UsersPage() {
   const meta = useMeta()
   const toast = useToast()
+  const { activeRole } = useAuth()
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listUsers(query), [JSON.stringify(query)])
-  const batches = useRequest(() => listBatches({ page_size: 20 }), [])
+  const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const orgs = useRequest(() => listOrgs({ flat: true }), [])
   const [edit, setEdit] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -58,7 +62,6 @@ export default function UsersPage() {
     const username = String(edit.username || "").trim()
     const realName = String(edit.real_name || "").trim()
     const orgId = Number(edit.org_id)
-    const role = String(edit.role || "").trim()
     setFieldErrors({})
     if (!edit.id && !username) {
       setFieldErrors({ username: "请填写账号（工号或学号）" })
@@ -76,10 +79,6 @@ export default function UsersPage() {
       setFieldErrors({ org_id: "请选择有效组织" })
       return
     }
-    if (!role) {
-      setFieldErrors({ role: "请选择角色" })
-      return
-    }
     if (orgs.loading) {
       setFormError("组织列表正在加载，请稍后再保存")
       return
@@ -94,10 +93,13 @@ export default function UsersPage() {
     }
     setFormError("")
     setSaving(true)
-    const roles = [{ role, org_id: orgId }]
+    const grantsChanged = !edit.id || JSON.stringify(edit.grants) !== JSON.stringify(edit.original_grants)
+    let roles
+    try { if (grantsChanged) roles = normalizeGrants(edit.grants, orgs.data || [], activeRole) }
+    catch (error) { setFormError(error.message); setSaving(false); return }
     try {
       if (edit.id) {
-        await updateUser(edit.id, { real_name: realName, org_id: orgId, roles, is_active: edit.is_active !== false })
+        await updateUser(edit.id, { real_name: realName, org_id: orgId, ...(grantsChanged ? { roles } : {}), is_active: edit.is_active !== false })
         toast.success("已更新")
         setStatusConfirm(false)
         setEdit(null)
@@ -234,7 +236,7 @@ export default function UsersPage() {
             {downloadingTemplate && <span className="loading loading-spinner loading-xs" />}
             {downloadingTemplate ? "模板准备中…" : "下载导入模板"}
           </button>
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => { setSecret(""); setFormError(""); setFieldErrors({}); setEdit({ username: "", real_name: "", org_id: "", role: "STUDENT", is_active: true }) }}>新增用户</button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => { setSecret(""); setFormError(""); setFieldErrors({}); setEdit({ username: "", real_name: "", org_id: "", grants: [{ role: "STUDENT", org_id: "" }], is_active: true }) }}>新增用户</button>
         </>
       } />
       <FilterBar values={{ ...query, q: searchTerm }} onChange={(patch) => {
@@ -246,6 +248,14 @@ export default function UsersPage() {
         { key: "org_id", label: "所属组织", type: "select", placeholder: "全部组织", options: (orgs.data || []).map((org) => ({ id: org.id, name: `${org.name}（${ORG_TYPE_NAMES[org.org_type] || org.org_type}）` })) },
         { key: "is_active", label: "状态", type: "select", options: [{ code: "true", name: "启用" }, { code: "false", name: "停用" }] },
       ]} />
+      {req.error && (
+        <div className="alert alert-error mb-4 flex items-center justify-between gap-3 text-sm" role="alert">
+          <span>{req.error.message || "用户列表加载失败"}</span>
+          <button type="button" className="btn btn-error btn-outline btn-xs" onClick={() => req.reload()}>
+            重新加载
+          </button>
+        </div>
+      )}
       <div className="surface-card mb-4 p-3 text-sm">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-base-content/60">Excel 导入</span>
@@ -293,15 +303,15 @@ export default function UsersPage() {
           { key: "name", title: "用户", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },
           { key: "org", title: "组织", render: (r) => r.org_name },
           { key: "roles", title: "角色", render: (r) => <span className="text-xs">{(r.roles || []).map((x) => roleName(meta, x.role || x)).join("、")}</span> },
-          { key: "st", title: "状态", render: (r) => r.is_active === false
-            ? <span className="badge badge-error badge-outline badge-sm">已停用</span>
+          { key: "st", title: "状态", className: "min-w-[6.5rem] whitespace-nowrap", render: (r) => r.is_active === false
+            ? <span className="badge badge-error badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap">已停用</span>
             : r.locked_until
-              ? <span className="badge badge-warning badge-outline badge-sm" title={`锁定至 ${fmtDateTime(r.locked_until)}`}>登录锁定</span>
-              : <span className="badge badge-success badge-outline badge-sm">正常</span> },
+              ? <span className="badge badge-warning badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap" title={`锁定至 ${fmtDateTime(r.locked_until)}`}>登录锁定</span>
+              : <span className="badge badge-success badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap">正常</span> },
           { key: "login", title: "最近登录", render: (r) => <span className="text-xs">{fmtDateTime(r.last_login_at)}</span> },
           { key: "op", title: "", render: (r) => (
             <>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setFormError(""); setFieldErrors({}); setEdit({ ...r, role: (r.roles || []).map((x) => x.role).join(","), is_active: r.is_active !== false, original_is_active: r.is_active !== false }) }}>编辑</button>
+              <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setFormError(""); setFieldErrors({}); const grants = (r.roles || []).map((x) => ({ role: x.role, org_id: x.org_id ?? r.org_id })); setEdit({ ...r, grants, original_grants: grants, is_active: r.is_active !== false, original_is_active: r.is_active !== false }) }}>编辑</button>
               <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>
             </>
           ) },
@@ -371,15 +381,13 @@ export default function UsersPage() {
             <label className="form-control gap-1"><span className="label-text text-xs">姓名</span><input className={`input input-bordered input-sm ${fieldErrors.real_name ? "input-error" : ""}`} placeholder="请输入姓名" value={edit.real_name || ""} onChange={(e) => { setEdit({ ...edit, real_name: e.target.value }); setFormError(""); setFieldErrors((errors) => ({ ...errors, real_name: "" })) }} maxLength={100} autoComplete="name" aria-invalid={!!fieldErrors.real_name} aria-describedby={fieldErrors.real_name ? "user-name-error" : undefined} />{fieldErrors.real_name && <span id="user-name-error" className="text-xs text-error" role="alert">{fieldErrors.real_name}</span>}</label>
             <label className="form-control gap-1"><span className="label-text text-xs">所属组织</span><select className={`select select-bordered select-sm ${fieldErrors.org_id ? "select-error" : ""}`} value={edit.org_id || ""} onChange={(e) => { setEdit({ ...edit, org_id: e.target.value }); setFormError(""); setFieldErrors((errors) => ({ ...errors, org_id: "" })) }} disabled={orgs.loading || !!orgs.error} aria-invalid={!!fieldErrors.org_id} aria-describedby={fieldErrors.org_id ? "user-org-error" : undefined}>
               <option value="">请选择组织</option>
-              {(orgs.data || []).map((org) => (
+              {manageableOrgs(orgs.data || [], activeRole).map((org) => (
                 <option key={org.id} value={org.id}>
                   {org.name}（{ORG_TYPE_NAMES[org.org_type] || org.org_type}）
                 </option>
               ))}
             </select>{fieldErrors.org_id && <span id="user-org-error" className="text-xs text-error" role="alert">{fieldErrors.org_id}</span>}{orgs.loading && <span className="text-xs text-base-content/50">正在加载组织列表…</span>}{orgs.error && <span className="flex items-center gap-2 text-xs text-error">组织列表加载失败<button type="button" className="btn btn-ghost btn-xs" onClick={() => orgs.reload().catch(() => {})}>重试</button></span>}</label>
-            <label className="form-control gap-1"><span className="label-text text-xs">角色</span><select className={`select select-bordered select-sm ${fieldErrors.role ? "select-error" : ""}`} value={(edit.role || "").split(",")[0]} onChange={(e) => { setEdit({ ...edit, role: e.target.value }); setFormError(""); setFieldErrors((errors) => ({ ...errors, role: "" })) }} aria-invalid={!!fieldErrors.role} aria-describedby={fieldErrors.role ? "user-role-error" : undefined}>
-              {ROLES.map((r) => <option key={r} value={r}>{roleName(meta, r)}</option>)}
-            </select>{fieldErrors.role && <span id="user-role-error" className="text-xs text-error" role="alert">{fieldErrors.role}</span>}</label>
+            <RoleGrantsEditor value={edit.grants} onChange={(grants) => { setEdit({ ...edit, grants }); setFormError("") }} orgs={orgs.data || []} actor={activeRole} disabled={saving || orgs.loading || !!orgs.error} />
             {edit.id && <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="toggle toggle-sm" checked={edit.is_active !== false} onChange={(e) => setEdit({ ...edit, is_active: e.target.checked })} />启用</label>}
             {formError && <div className="alert alert-error py-2 text-xs" role="alert">{formError}</div>}
           </div>
