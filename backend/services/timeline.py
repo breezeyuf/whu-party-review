@@ -250,9 +250,12 @@ def _strict_date(value, label: str) -> Optional[date]:
     if not isinstance(value, str) or len(value) != 10:
         raise unprocessable(f"{label}须为 YYYY-MM-DD")
     try:
-        return date.fromisoformat(value)
+        parsed = date.fromisoformat(value)
     except ValueError:
         raise unprocessable(f"{label}不是有效日期")
+    if parsed.isoformat() != value:
+        raise unprocessable(f"{label}须为 YYYY-MM-DD")
+    return parsed
 
 
 def correct_node(db: Session, archive: Archive, node_code: str, body: dict, actor) -> ArchiveTimeNode:
@@ -266,7 +269,9 @@ def correct_node(db: Session, archive: Archive, node_code: str, body: dict, acto
     reason = (body.get("reason") or "").strip()
     if not reason:
         raise unprocessable("必须填写校正原因")
-    clear = bool(body.get("clear"))
+    clear = body.get("clear", False)
+    if type(clear) is not bool:
+        raise unprocessable("clear 必须为布尔值")
     # 先完整校验再落库：非法日期、空日期或结束早于开始都不能改到原值
     value = end = hours = None
     if not clear:
