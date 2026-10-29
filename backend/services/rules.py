@@ -177,6 +177,84 @@ def _required_columns(model) -> list[str]:
     ]
 
 
+# 每类规则的字段口径：枚举与 JSON 结构。导入预检、正式导入、单条新增/更新共用，
+# 避免“预检通过、正式导入 500”或把字符串写进 JSONB 列。
+_ENUM_FIELDS = {
+    "terms": {"term_type": ("VARIANT", "SEQUENCE"), "severity": ("BLOCK", "WARN", "INFO")},
+    "sensitive-phrases": {
+        "match_type": ("KEYWORD", "REGEX"),
+        "category": ("IDEOLOGY", "MOTIVATION", "OTHER"),
+        "risk_level": ("HIGH", "MEDIUM", "LOW"),
+    },
+    "check-rules": {
+        "category": ("FORMAT", "CONTENT"), "engine": ("RULE", "LLM", "RULE_LLM"),
+        "severity": ("BLOCK", "WARN", "INFO"),
+    },
+    "time-rules": {
+        "rule_type": ("AGE", "INTERVAL", "ORDER", "SEQ_GAP", "SEQ_COUNT", "DURATION",
+                      "DERIVED", "CONSISTENCY", "VALID_DATE", "REQUIRED_NODES", "IN_RANGE", "COMPOSITE"),
+        "severity": ("BLOCK", "WARN", "INFO", "CALC"),
+    },
+    "time-nodes": {"value_kind": ("DATE", "DATE_RANGE", "DATE_SEQ", "DERIVED")},
+    "checklists": {"quantity_mode": ("FIXED", "PER_PERIOD")},
+}
+_LIST_FIELDS = {
+    "terms": ("wrong_variants", "sequence_items"),
+    "check-rules": ("applies_to",),
+    "time-rules": ("applies_stages",),
+    "time-nodes": ("source_material_codes", "extract_keywords"),
+    "material-types": ("stage_codes", "title_keywords", "exclude_keywords", "element_template"),
+}
+_DICT_FIELDS = {
+    "time-rules": ("params",),
+    "check-rules": ("params",),
+    "material-types": ("format_requirements", "date_node_map"),
+    "prompt-templates": ("output_schema",),
+}
+
+
+def validate_record(kind: str, rec: dict) -> list[str]:
+    """按规则类别校验枚举与 JSON 结构，返回错误说明（空列表表示通过）。"""
+    errors: list[str] = []
+    for field, allowed in _ENUM_FIELDS.get(kind, {}).items():
+        value = rec.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, str) or value not in allowed:
+            errors.append(f"{field} 取值无效：{value}（可选 {'/'.join(allowed)}）")
+    for field in _LIST_FIELDS.get(kind, ()):
+        value = rec.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, list):
+            errors.append(f"{field} 须为数组，不能是 {type(value).__name__}")
+            continue
+        if field in ("wrong_variants", "sequence_items", "applies_to", "applies_stages") and any(
+            not isinstance(item, str) for item in value
+        ):
+            errors.append(f"{field} 数组元素须为字符串")
+    for field in _DICT_FIELDS.get(kind, ()):
+        value = rec.get(field)
+        if value in (None, ""):
+            continue
+        if not isinstance(value, dict):
+            errors.append(f"{field} 须为对象，不能是 {type(value).__name__}")
+    return errors
+
+
+def key_fields(kind: str, model) -> tuple[str, ...]:
+    """各表实际业务唯一键：敏感短语是 (phrase, category)，不是 phrase。"""
+    if kind == "sensitive-phrases":
+        return ("phrase", "category")
+    if kind == "checklists":
+        return ("stage_code", "material_type_id")
+    if hasattr(model, "code"):
+        return ("code",)
+    if hasattr(model, "standard_text"):
+        return ("standard_text",)
+    return ("phrase",)
+
+
 def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> dict:
     model = KIND_MAP.get(kind, (None, None))[0]
     if model is None:
@@ -189,7 +267,6 @@ def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> di
     created = updated = skipped = 0
     errors = []
     total = 0
-    unique_field = "code" if hasattr(model, "code") else ("standard_text" if hasattr(model, "standard_text") else "phrase")
     required = _required_columns(model)
     seen_keys: set = set()
     if not dry_run:
@@ -201,15 +278,21 @@ def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> di
         total += 1
         rec = dict(zip(headers, row))
         rec = {k: _parse_cell(v) for k, v in rec.items() if k}
-        key = rec.get(unique_field)
-        if not key:
-            errors.append({"row": i, "message": f"缺少 {unique_field}"})
+        key_names = key_fields(kind, model)
+        key = tuple(rec.get(name) for name in key_names)
+        missing_key = [name for name, value in zip(key_names, key) if value in (None, "")]
+        if missing_key:
+            errors.append({"row": i, "message": "缺少 " + "、".join(missing_key)})
             continue
         if key in seen_keys:
-            errors.append({"row": i, "message": f"同一文件重复 {unique_field}：{key}"})
+            label = "、".join(str(part) for part in key)
+            errors.append({"row": i, "message": f"同一文件重复 {'+'.join(key_names)}：{label}"})
             continue
         seen_keys.add(key)
-        existing = db.query(model).filter(getattr(model, unique_field) == key).first() if mode != "replace" and hasattr(model, unique_field) else None
+        existing = (
+            db.query(model).filter(*[getattr(model, name) == value for name, value in zip(key_names, key)]).first()
+            if mode != "replace" else None
+        )
         if existing and mode == "append":
             skipped += 1
             continue
@@ -219,6 +302,10 @@ def import_kind(db, actor, kind, data: bytes, mode="upsert", dry_run=True) -> di
         ]
         if missing:
             errors.append({"row": i, "message": "缺少必填字段：" + "、".join(missing)})
+            continue
+        shape_errors = validate_record(kind, rec)
+        if shape_errors:
+            errors.append({"row": i, "message": "；".join(shape_errors)})
             continue
         if kind == "time-rules":
             try:
