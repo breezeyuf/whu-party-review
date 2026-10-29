@@ -237,9 +237,9 @@ def update_archive(aid: int, body: dict, request: Request, db: Session = Depends
             a.batch_id = new_batch
             # 提交包必须和档案同批次：否则旧批次互查员能看提交包、看不到材料，
             # 新批次互查员能看档案、看不到提交包。已归档提交包保留历史归属。
-            db.query(Submission).filter(Submission.archive_id == a.id, Submission.status != "FILED").update(
-                {"batch_id": new_batch}, synchronize_session=False
-            )
+        db.query(Submission).filter(Submission.archive_id == a.id, Submission.status != "FILED").update(
+            {"batch_id": a.batch_id}, synchronize_session="fetch"
+        )
     a.updated_at = now()
     # Basic profile data is input to identity and cross-material checks.
     a.timeline_updated_at = now()

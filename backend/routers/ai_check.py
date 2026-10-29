@@ -149,21 +149,17 @@ def completeness(sid: int, live: bool = False, request: Request = None, db: Sess
 def completion_notices(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     if actor.role not in ("BRANCH_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN"):
         raise forbidden()
-    created, skipped = [], []
-    for sid in body.get("submission_ids") or []:
-        s = ensure_submission_access(db, actor, sid)
-        from ai.checks.completeness import run_completeness as rc
-        from utils import as_date
-        mats = db.query(Material).filter(Material.submission_id == sid, Material.status == "ACTIVE").all()
-        nm = node_map_for_archive(db, s.archive_id)
-        nodes = {c: type("N", (), {"date": as_date(n.get("date")), "end": as_date(n.get("end")), "hours": n.get("hours"), "seq": n.get("seq") or [], "missing": not n.get("date")})() for c, n in nm.items()}
-        comp, _, _ = rc(db, s, mats, nodes)
-        notice = create_completion_notice(db, s, actor, comp, body.get("deadline"), body.get("send", True), body.get("note"))
-        if notice:
-            created.append({"notice_id": notice.id, "submission_id": sid, "student_name": s.archive.real_name, "missing_total": comp.get("missing_total")})
-        else:
-            skipped.append({"submission_id": sid, "reason": "材料已齐全"})
-    return ok({"created": created, "skipped": skipped})
+    from services.completion_batch import generate_batch, validate_batch
+    ids = validate_batch(body)
+    if body.get('background', False):
+        for sid in ids:
+            ensure_submission_access(db, actor, sid)
+        params = {k: body[k] for k in ('deadline', 'send', 'note') if k in body}
+        params.update(submission_ids=ids, actor_role=actor.role, actor_org_id=actor.org_id)
+        job = enqueue_job(db, 'NOTICE_BATCH', actor.id, 'notices', None, params, total=len(ids))
+        log(db, actor, 'NOTICE_BATCH', 'job', job.id, {'total': len(ids)})
+        return ok({'job_id': job.id, 'total': len(ids)})
+    return ok(generate_batch(db, actor, body))
 
 
 @router.get("/reports/{rid}/handover")

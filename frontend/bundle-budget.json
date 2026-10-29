@@ -32,8 +32,8 @@
     "src/pages/notice/NoticesPage.jsx": 141.07,
     "src/pages/review/CrossReviewConfigPage.jsx": 124.74,
     "src/pages/review/JobsPage.jsx": 139.38,
-    "src/pages/review/ReviewTasksPage.jsx": 143.01,
-    "src/pages/review/ReviewWorkspacePage.jsx": 156.39,
+    "src/pages/review/ReviewTasksPage.jsx": 143.08,
+    "src/pages/review/ReviewWorkspacePage.jsx": 157.05,
     "src/pages/rules/CheckRulesPage.jsx": 138.79,
     "src/pages/rules/ChecklistsPage.jsx": 137.24,
     "src/pages/rules/MaterialTypesPage.jsx": 140.74,
@@ -48,6 +48,6 @@
     "src/pages/student/MyMaterialsPage.jsx": 146.75,
     "src/pages/student/MyProgressPage.jsx": 141.28,
     "src/pages/student/RectificationPage.jsx": 147.23,
-    "src/pages/student/SelfCheckPage.jsx": 147.59
+    "src/pages/student/SelfCheckPage.jsx": 147.93
   }
 }

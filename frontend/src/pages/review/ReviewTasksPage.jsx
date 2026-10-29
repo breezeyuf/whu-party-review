@@ -97,7 +97,14 @@ export default function ReviewTasksPage() {
         if (summary.failures.length) toast.info("部分提交包未通过，未通过的已保留勾选，请查看原因")
         else toast.success(`已通过 ${summary.passed} 份`)
       } else if (action === "completion") {
-        const res = await completionNotices({ submission_ids: ids, send: true })
+        const res = await completionNotices({ submission_ids: ids, send: true, background: true })
+        if (res.job_id) {
+          setJobId(res.job_id)
+          setResult({ message: `已排队 ${res.total ?? ids.length} 份补全提示`, items: [] })
+          toast.info("补全提示已交由后台处理，可在任务列表查看结果")
+          setSelected([])
+          return true
+        }
         setResult({ message: `已发送 ${res.created?.length || 0} 条补全提示，跳过 ${res.skipped?.length || 0} 份`, items: res.skipped || [] })
         toast.success(`已发送 ${res.created?.length || 0} 条补全提示`)
         setSelected([])
