@@ -22,63 +22,38 @@ function failure(config, status, message = "失败") {
 beforeEach(() => {
   storage.clear()
   redirects.length = 0
-  tokenStore.setTokens("old", "refresh")
+  tokenStore.setRole("STUDENT@2")
 })
 
-test("concurrent expired requests share one refresh and replay with the new token", async () => {
-  let refreshCount = 0
+test("cookie requests send no readable credentials and clear legacy tokens", async () => {
+  storage.set("prw_access", "legacy-access")
+  storage.set("prw_refresh", "legacy-refresh")
   api.defaults.adapter = async (config) => {
-    if (config.url === "/auth/refresh") {
-      refreshCount += 1
-      await delay(10)
-      return success(config, { access_token: "new", refresh_token: "new-refresh" })
-    }
-    if (config.headers.Authorization === "Bearer old") return failure(config, 401)
-    return success(config, config.url)
+    assert.equal(config.withCredentials, true)
+    assert.equal(config.headers.Authorization, undefined)
+    assert.equal(config.headers["X-Requested-With"], "party-review")
+    assert.equal(config.headers["X-Active-Role"], "STUDENT@2")
+    return success(config, { ok: true })
   }
-  assert.deepEqual(await Promise.all([api.get("/one"), api.get("/two")]), ["/one", "/two"])
-  assert.equal(refreshCount, 1)
-  assert.equal(tokenStore.access, "new")
+  assert.deepEqual(await api.post("/materials", {}), { ok: true })
+  assert.equal(storage.has("prw_access"), false)
+  assert.equal(storage.has("prw_refresh"), false)
 })
 
-test("a business failure after a successful refresh keeps the valid session", async () => {
-  api.defaults.adapter = async (config) => {
-    if (config.url === "/auth/refresh") return success(config, { access_token: "new", refresh_token: "new-refresh" })
-    return failure(config, config._retry ? 500 : 401)
-  }
-  await assert.rejects(api.get("/server-failure"), { status: 500 })
-  assert.equal(tokenStore.access, "new")
-  assert.equal(redirects.length, 0)
-})
-
-test("late responses from the old token reuse the refreshed session", async () => {
-  let refreshCount = 0
-  api.defaults.adapter = async (config) => {
-    if (config.url === "/auth/refresh") {
-      refreshCount += 1
-      return success(config, { access_token: "new", refresh_token: "new-refresh" })
-    }
-    if (config.headers.Authorization === "Bearer old") {
-      await delay(config.url === "/late" ? 30 : 0)
-      return failure(config, 401)
-    }
-    return success(config, config.url)
-  }
-  assert.deepEqual(await Promise.all([api.get("/early"), api.get("/late")]), ["/early", "/late"])
-  assert.equal(refreshCount, 1)
-})
-
-test("a failed refresh releases all waiting requests", async () => {
-  let refreshCount = 0
-  api.defaults.adapter = async (config) => {
-    if (config.url === "/auth/refresh") { refreshCount += 1; await delay(10) }
-    return failure(config, 401)
-  }
-  const result = await Promise.allSettled([api.get("/one"), api.get("/two")])
-  assert.ok(result.every((item) => item.status === "rejected"))
-  assert.equal(refreshCount, 1)
-  assert.equal(tokenStore.access, "")
+test("expired cookie requests redirect once without refresh or replay", async () => {
+  const urls = []
+  api.defaults.adapter = async (config) => { urls.push(config.url); return failure(config, 401) }
+  const results = await Promise.allSettled([api.get("/one"), api.get("/two")])
+  assert.ok(results.every((item) => item.status === "rejected"))
+  assert.deepEqual(urls, ["/one", "/two"])
   assert.deepEqual(redirects, ["/login"])
+  assert.equal(tokenStore.role, "")
+})
+
+test("anonymous session bootstrap does not force navigation", async () => {
+  api.defaults.adapter = async (config) => failure(config, 401)
+  await assert.rejects(api.get("/auth/me"), { status: 401 })
+  assert.equal(redirects.length, 0)
 })
 
 test("invalid login does not trigger refresh", async () => {

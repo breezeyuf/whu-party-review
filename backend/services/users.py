@@ -25,6 +25,8 @@ def can_manage_user(actor, org: Org) -> bool:
 
 
 def create_user(db: Session, actor, body: dict) -> tuple[User, str]:
+    from services.sessions import mode
+    sso = mode(db) == 'sso'
     org = db.query(Org).filter(Org.id == body["org_id"]).first()
     if not org:
         raise unprocessable("组织不存在")
@@ -32,12 +34,14 @@ def create_user(db: Session, actor, body: dict) -> tuple[User, str]:
         raise forbidden()
     if db.query(User).filter(User.username == body["username"]).first():
         raise conflict("用户名已存在")
-    pwd = body.get("password") or random_password()
+    if sso and body.get('password'):
+        raise unprocessable('统一认证用户不设置本地密码')
+    pwd = None if sso else (body.get("password") or random_password())
     user = User(
-        username=body["username"], password_hash=hash_password(pwd), real_name=body["real_name"],
+        username=body["username"], password_hash='!SSO_ONLY' if sso else hash_password(pwd), real_name=body["real_name"],
         gender=body.get("gender"), org_id=org.id, email=body.get("email"),
         phone_enc=encrypt_field(body.get("phone")), phone_masked=mask_phone(body.get("phone")),
-        is_active=True, must_change_password=True, created_at=now(), updated_at=now(),
+        is_active=True, must_change_password=not sso, created_at=now(), updated_at=now(),
     )
     db.add(user)
     db.flush()
@@ -99,6 +103,8 @@ def update_user(db: Session, actor, user: User, body: dict) -> User:
 
 
 def reset_user_password(db: Session, user: User) -> str:
+    from services.sessions import require_demo
+    require_demo(db)
     pwd = random_password()
     user.password_hash = hash_password(pwd)
     user.must_change_password = True

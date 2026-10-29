@@ -109,7 +109,6 @@ async function mount(element, { path = "/", pattern = path.split("?")[0], roleCo
   role = { role: roleCode, org_id: roleCode === "BRANCH_REVIEWER" ? 2 : 1 }
   requests = []
   fixture = handler
-  tokenStore.setTokens("isolated-test-token", "isolated-test-refresh")
   tokenStore.setRole(`${role.role}@${role.org_id}`)
   api.defaults.adapter = async (config) => {
     requests.push({ ...config, data: config.data })

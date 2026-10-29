@@ -11,11 +11,22 @@ request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 logger = logging.getLogger("party_review")
 
 
+class _NoCasTicketLog(logging.Filter):
+    def filter(self, record):
+        message = record.getMessage().lower()
+        return '/auth/sso/callback' not in message and 'ticket=' not in message
+
+
 def configure_logging() -> None:
     # Respect the desktop's existing file handler and the host's logging setup.
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
     logger.setLevel(logging.INFO)
+    logging.getLogger('uvicorn.access').addFilter(_NoCasTicketLog())
+    # HTTP client INFO lines otherwise include the CAS ticket in the query URL.
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('httpx').addFilter(_NoCasTicketLog())
+    logging.getLogger('httpcore').setLevel(logging.WARNING)
 
 
 def event(name: str, *, level=logging.INFO, **context) -> None:

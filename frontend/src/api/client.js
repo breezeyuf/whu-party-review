@@ -5,13 +5,7 @@ const REFRESH = "prw_refresh"
 const ROLE = "prw_role"
 
 export const tokenStore = {
-  get access() { return localStorage.getItem(ACCESS) || "" },
-  get refresh() { return localStorage.getItem(REFRESH) || "" },
   get role() { return localStorage.getItem(ROLE) || "" },
-  setTokens(access, refresh) {
-    if (access) localStorage.setItem(ACCESS, access)
-    if (refresh) localStorage.setItem(REFRESH, refresh)
-  },
   setRole(value) {
     if (value) localStorage.setItem(ROLE, value)
     else localStorage.removeItem(ROLE)
@@ -23,17 +17,19 @@ export const tokenStore = {
   },
 }
 
-export const api = axios.create({ baseURL: "/api", timeout: 60000 })
+export const api = axios.create({ baseURL: "/api", timeout: 60000, withCredentials: true })
 
 api.interceptors.request.use((config) => {
-  const token = tokenStore.access
-  if (token) config.headers.Authorization = `Bearer ${token}`
+  // Upgrade cleanup: never read or send tokens from older versions.
+  localStorage.removeItem(ACCESS)
+  localStorage.removeItem(REFRESH)
+  config.headers["X-Requested-With"] = "party-review"
   const role = tokenStore.role
   if (role) config.headers["X-Active-Role"] = role
   return config
 })
 
-let refreshing = null
+let redirecting = false
 
 function toError(payload, status) {
   const err = new Error(payload?.message || "请求失败")
@@ -46,6 +42,7 @@ function toError(payload, status) {
 api.interceptors.response.use(
   (res) => {
     if (res.config.responseType === "blob" || res.config.raw) return res
+    redirecting = false
     const body = res.data
     if (body && typeof body === "object" && "code" in body) {
       if (body.code === 0) return body.data
@@ -58,36 +55,13 @@ api.interceptors.response.use(
     const original = error.config || {}
     const payload = res?.data
     const reqUrl = String(original.url || "")
-    const noRefresh = reqUrl.includes("/auth/login") || reqUrl.includes("/auth/refresh")
-    if (res?.status === 401 && !original._retry && !noRefresh) {
-      original._retry = true
-      const current = tokenStore.access
-      if (current && original.headers?.Authorization !== `Bearer ${current}`) {
-        original.headers.Authorization = `Bearer ${current}`
-        return api(original)
+    if (res?.status === 401) {
+      tokenStore.clear()
+      if (!reqUrl.startsWith("/auth/") && !location.pathname.startsWith("/login") && !redirecting) {
+        redirecting = true
+        location.assign("/login")
       }
-      const refresh = tokenStore.refresh
-      if (!refresh) {
-        tokenStore.clear()
-        if (!location.pathname.startsWith("/login")) location.assign("/login")
-        return Promise.reject(toError(payload, 401))
-      }
-      if (!refreshing) {
-        refreshing = api.post("/auth/refresh", { refresh_token: refresh }, { _retry: true })
-          .then((data) => {
-            tokenStore.setTokens(data.access_token, data.refresh_token)
-            return data.access_token
-          })
-          .catch((e) => {
-            tokenStore.clear()
-            if (!location.pathname.startsWith("/login")) location.assign("/login")
-            throw e
-          })
-          .finally(() => { refreshing = null })
-      }
-      const token = await refreshing
-      original.headers.Authorization = `Bearer ${token}`
-      return api(original)
+      return Promise.reject(toError(payload, 401))
     }
     if (res?.status === 403 && payload?.code === 40301 && !location.pathname.startsWith("/change-password")) {
       location.assign("/change-password")

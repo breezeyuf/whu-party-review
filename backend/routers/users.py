@@ -86,6 +86,8 @@ async def import_users(response: Response, file: UploadFile = File(...), dry_run
 
 @router.get("/import-passwords/{file_id}/download")
 def download_import_passwords(file_id: int, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    from services.sessions import require_demo
+    require_demo(db)
     if actor.role not in ("SYS_ADMIN", "ORG_ADMIN", "COLLEGE_REVIEWER"):
         raise forbidden()
     from services.import_passwords import consume_password_file
