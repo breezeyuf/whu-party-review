@@ -24,3 +24,19 @@ test("vision settings support fractional confidence and constrain request budget
   assert.throws(() => settingsPatch("ocr_vision", { max_regions: 21 }))
   assert.throws(() => settingsPatch("ocr_vision", { timeout_s: 121 }))
 })
+
+
+test("虚构OCR样例区分识别纠错、整段漏字与数字误改风险", async () => {
+  const { compareOcrText } = await import("../src/utils/ocrReview.js")
+  const typo = compareOcrText("抗5战胜利80周年", "抗战胜利80周年")
+  assert.equal(typo.removed, "5")
+  assert.equal(typo.added, "")
+  assert.ok(typo.warnings.some((w) => w.includes("数字")))
+  const full = "虚构学生甲提交测试材料。第一段必须完整保留，第二段也不能被模型省略。"
+  assert.ok(compareOcrText(full, "虚构学生甲提交测试材料。").warnings.some((w) => w.includes("漏字")))
+  assert.ok(compareOcrText("申请日期2026年9月15日", "申请日期2025年9月15日").warnings.length)
+  assert.deepEqual(compareOcrText(full, full).warnings, [])
+  const name = compareOcrText("姓名：测试甲", "姓名：测试乙")
+  assert.equal(name.removed, "甲")
+  assert.equal(name.added, "乙")
+})
