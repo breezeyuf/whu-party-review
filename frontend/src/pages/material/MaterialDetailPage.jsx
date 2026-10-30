@@ -171,7 +171,13 @@ export default function MaterialDetailPage() {
       {m.type?.name || "类型未确认"} · {m.type_status} · 置信度 {m.type_confidence ?? "—"} · 第 {selectedVersion?.version_no || "—"} 版 · {fmtSize(selectedVersion?.file_size)} · {selectedVersion?.page_count || 0} 页
     </PageHeader>
     {historical && <div className="alert alert-info mb-3 py-2 text-xs">当前查看历史版本，仅供阅读与对比。<button type="button" className="btn btn-ghost btn-xs" onClick={() => selectVersion(m.current_version)}>返回当前版本</button></div>}
-    <div className="mb-4"><TypeConfirmSelect value={m.type?.id} disabled={historical || (!canUpload && !canCorrect)} onConfirm={async (typeId) => { const updated = await setType(id, typeId); mat.setData(updated); toast.success("类型已确认") }} /></div>
+    <div className="mb-4"><TypeConfirmSelect value={m.type?.id} disabled={historical || (!canUpload && !canCorrect)} onConfirm={async (typeId) => {
+      const updated = await setType(id, typeId)
+      mat.setData(updated)
+      if (updated.parse_job_id) setTaskId(updated.parse_job_id)
+      await refresh()
+      toast.success(updated.parse_job_id ? "类型已确认，正在按新类型更新日期" : "类型已确认")
+    }} /></div>
     {submission.error && <p role="alert" className="mb-2 text-xs text-error">材料操作权限加载失败：{submission.error.message} <button type="button" className="link" onClick={() => submission.reload().catch(() => {})}>重试</button></p>}
     {PARSE_PENDING.has(m.current_version?.parse_status) && <p role="status" className="mb-3 text-xs text-info">当前版本正在解析，完成后会自动刷新预览和解析文本。</p>}
     {selectedVersion?.parse_status === "FAILED" && <div role="alert" className="alert alert-error mb-3 py-2 text-xs">材料解析失败：{selectedVersion.parse_error || "请检查文件是否完整，并重新上传。"}</div>}

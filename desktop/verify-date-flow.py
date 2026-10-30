@@ -78,23 +78,23 @@ try:
         'org_id': branch['id'], 'roles': [{'role': 'BRANCH_REVIEWER', 'org_id': branch['id']}]})
     login(reviewer, 'package_date_reviewer', grant['initial_password'])
     types = request(organization, 'GET', '/rules/material-types')
-    material_type = next(row['id'] for row in types if row['code'] == 'TRAINING_CERT')
+    type_ids = {row['code']: row['id'] for row in types}
 
-    def parsed_case(index, text):
+    def parsed_case(index, text, *, type_code='TRAINING_CERT', node_code='T10', stage=3):
         arch = request(organization, 'POST', '/archives', json={'branch_id': branch['id'], 'batch_id': batch['id'],
-            'current_stage': 3, 'student': {'student_no': f'PACKAGE_DATE_{index}', 'real_name': f'虚构日期学生{index}'}})['archive']
+            'current_stage': stage, 'student': {'student_no': f'PACKAGE_DATE_{index}', 'real_name': f'虚构日期学生{index}'}})['archive']
         doc = Document()
         for line in text.splitlines():
             doc.add_paragraph(line)
         content = io.BytesIO()
         doc.save(content)
         uploaded = request(reviewer, 'POST', f"/archives/{arch['id']}/materials",
-            data={'stage_code': '3', 'material_type_id': str(material_type)},
+            data={'stage_code': str(stage), 'material_type_id': str(type_ids[type_code])},
             files={'file': ('training.docx', content.getvalue(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')})
         wait_job(uploaded['parse_job_id'])
         mid = uploaded['material']['id']
         parsed = request(reviewer, 'GET', f'/materials/{mid}/parsed')
-        rows = [row for row in parsed['extractions'] if row['node_code'] == 'T10']
+        rows = [row for row in parsed['extractions'] if row['node_code'] == node_code]
         return arch, mid, parsed, rows
 
     def wait_job(job_id):
@@ -108,9 +108,10 @@ try:
             time.sleep(.5)
         raise RuntimeError('Real packaged parse job timed out')
 
-    _, _, _, good = parsed_case(1, '集中培训结业证书\n出生日期：2000年1月1日\n培训时间：2026年9月15日至2026年9月18日，共24学时\n落款：2026年9月20日')
+    _, _, good_parsed, good = parsed_case(1, '集中培训结业证书\n出生日期：2000年1月1日\n培训时间：2026年9月15日至2026年9月18日，共24学时\n落款：2026年9月20日')
     check('真实 DOCX 上传和后台解析排除出生、落款日期', bool(good) and good[0]['date'] == '2026-09-15' and good[0]['end_date'] == '2026-09-18' and good[0]['usable'])
     check('培训起止和学时映射只生成一条记录', len(good) == 1 and good[0]['hours'] == 24)
+    check('培训材料不能提供出生日期节点', all(row['node_code'] != 'T01' for row in good_parsed['extractions']))
     arch, mid, parsed, uncertain = parsed_case(2, '集中培训结业证书\n第一期培训：2026年9月1日至2026年9月3日\n第二期培训：2026年9月20日至2026年9月22日')
     check('多期培训保留独立候选并要求人工确认', len(uncertain) == 2 and all(not row['usable'] for row in uncertain))
     timeline = request(reviewer, 'GET', f"/archives/{arch['id']}/timeline")
@@ -131,6 +132,23 @@ try:
     check('真实后台重新解析保留人工确认及删除决定', len(after) == 1 and after[0]['method'] == 'MANUAL' and after[0]['date'] == chosen['date'])
     _, _, _, reverse = parsed_case(3, '集中培训结业证书\n培训时间：2026年9月18日至2026年9月15日')
     check('写反区间保留原顺序且不用于计算', bool(reverse) and reverse[0]['date'] == '2026-09-18' and reverse[0]['end_date'] == '2026-09-15' and not reverse[0]['usable'])
+    _, talk_id, talk_parsed, talk = parsed_case(4, '谈话记录\n谈话日期：2026年9月15日',
+        type_code='PARTY_TALK_RECORD', node_code='T03', stage=1)
+    check('早期谈话不会生成后期党委谈话日期', len(talk) == 1 and talk[0]['usable']
+          and all(row['node_code'] != 'T15' for row in talk_parsed['extractions']))
+    retag = request(reviewer, 'PUT', f'/materials/{talk_id}/type', json={'material_type_id': type_ids['COMMITTEE_TALK_RECORD']})
+    wait_job(retag['parse_job_id'])
+    retagged = request(reviewer, 'GET', f'/materials/{talk_id}/parsed')['extractions']
+    check('更正材料类型自动触发真实解析并更新日期归属', any(row['node_code'] == 'T15' and row['usable'] for row in retagged)
+          and all(row['node_code'] != 'T03' for row in retagged))
+    _, _, publicity_parsed, publicity = parsed_case(5, '公示时间：2026年9月15日至2026年9月22日',
+        type_code='CANDIDATE_PUBLICITY', node_code='T11')
+    check('发展对象公示不会生成转正公示日期', len(publicity) == 1 and publicity[0]['usable']
+          and all(row['node_code'] != 'T19' for row in publicity_parsed['extractions']))
+    _, _, _, birth = parsed_case(6, '自传\n出生日期：２００３年５月１２日',
+        type_code='AUTOBIOGRAPHY', node_code='T01', stage=1)
+    check('全角出生日期保留原文并正常生效', bool(birth) and birth[0]['date'] == '2003-05-12'
+          and birth[0]['raw_text'] == '２００３年５月１２日' and birth[0]['usable'])
     admin.close()
     organization.close()
     reviewer.close()

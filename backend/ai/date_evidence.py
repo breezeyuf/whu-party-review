@@ -2,10 +2,10 @@
 from math import isfinite
 
 from sqlalchemy import and_
-from models import ParseResult, TimeNodeExtraction, Material, Submission, ArchiveTimeNode
+from models import ParseResult, TimeNodeExtraction, Material, Submission, ArchiveTimeNode, TimeNodeDef, MaterialType
 
 MIN_CONFIDENCE = .7
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 REVIEW_CODE = 'DATE-REVIEW'
 REVIEW_PREFIX = '待人工确认日期：'
 
@@ -113,13 +113,29 @@ def bound_extractions(rows, pages):
     return rows
 
 
-def states_for(db, rows):
+def states_for(db, rows, *, node_defs=None, material_types=None):
     ids = {_get(row, 'material_version_id') for row in rows} - {None}
     parsed = {row.version_id: row for row in db.query(ParseResult).filter(ParseResult.version_id.in_(ids)).all()} if ids else {}
+    automatic = [row for row in rows if _get(row, 'method') in ('RULE', 'LLM') and _get(row, 'material_id') is not None]
+    material_ids = {row.material_id for row in automatic}
+    materials = {m.id: m for m in db.query(Material).filter(Material.id.in_(material_ids)).all()} if material_ids else {}
+    definitions, types = {}, {}
+    if materials:
+        definitions = {d.code: d for d in (node_defs if node_defs is not None else db.query(TimeNodeDef).all())}
+        type_ids = {_get(m, 'type_id') for m in materials.values()} - {None}
+        types = material_types if material_types is not None else (
+            {t.id: t for t in db.query(MaterialType).filter(MaterialType.id.in_(type_ids)).all()} if type_ids else {})
     states, pending_ids = {}, []
     for row in rows:
         version = _get(row, 'material_version_id')
         state = evidence_state(row, parsed[version].pages if version in parsed else None)
+        if _get(row, 'method') in ('RULE', 'LLM') and _get(row, 'material_id') in materials:
+            from ai.node_sources import source_verdict
+            material = materials[row.material_id]
+            verdict = source_verdict(definitions.get(row.node_code), types.get(_get(material, 'type_id')))
+            if verdict is not True:
+                reason = '材料类型未明确，须确认日期所属节点' if verdict is None else '材料类型不在该节点的允许来源中，须核对归属'
+                state = (False, reason, state[2])
         states[row.id] = state
         if not state[0] and _get(row, 'material_id') is not None:
             pending_ids.append(row.id)

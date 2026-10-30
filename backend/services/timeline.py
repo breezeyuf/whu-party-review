@@ -21,14 +21,14 @@ from utils import now, stage_name, TZ8
 from ai.date_evidence import states_for
 
 
-def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None) -> None:
+def merge_archive_nodes(db: Session, archive_id: int, *, node_defs=None, material_types=None) -> None:
     defs = node_defs if node_defs is not None else db.query(TimeNodeDef).filter(TimeNodeDef.is_active.is_(True)).all()
     exs = (
         db.query(TimeNodeExtraction)
         .filter(TimeNodeExtraction.archive_id == archive_id, TimeNodeExtraction.is_current.is_(True))
         .all()
     )
-    states = states_for(db, exs)
+    states = states_for(db, exs, node_defs=defs, material_types=material_types)
     by_code: dict[str, list[TimeNodeExtraction]] = {}
     for e in exs:
         by_code.setdefault(e.node_code, []).append(e)
@@ -82,7 +82,7 @@ def effective_node(n: ArchiveTimeNode) -> dict:
     return {"date": date_v.isoformat() if date_v else None, "end_date": end_v.isoformat() if end_v else None, "hours": hours_v}
 
 
-def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dict:
+def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None, material_types=None) -> dict:
     defs = {d.code: d for d in (node_defs if node_defs is not None else db.query(TimeNodeDef).all())}
     nodes = db.query(ArchiveTimeNode).filter(ArchiveTimeNode.archive_id == archive_id).all()
     seqs = db.query(TimeNodeExtraction).filter(
@@ -90,7 +90,7 @@ def node_map_for_archive(db: Session, archive_id: int, *, node_defs=None) -> dic
     ).all()
     version_ids = {getattr(e, "material_version_id", None) for e in seqs} - {None}
     versions = {v.id: v for v in db.query(MaterialVersion).filter(MaterialVersion.id.in_(version_ids)).all()} if version_ids else {}
-    states = states_for(db, seqs)
+    states = states_for(db, seqs, node_defs=defs.values(), material_types=material_types)
     rows_by_code = {}
     for row in seqs:
         rows_by_code.setdefault(row.node_code, []).append(row)

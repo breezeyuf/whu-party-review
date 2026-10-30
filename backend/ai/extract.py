@@ -3,14 +3,15 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from ai.dates import find_dates, parse_date
+from ai.dates import find_dates, parse_date, FULLWIDTH
+from ai.node_sources import eligible_nodes, bound_sources
 
 
 FIELD_PATTERNS = [
     ("name", r"(?:姓名|申请人)[:：\s]*([^\s，。；]{2,10})"),
     ("gender", r"(?:性别)[:：\s]*(男|女)"),
     ("ethnicity", r"(?:民族)[:：\s]*([^\s，。]{1,10})"),
-    ("birth_date", r"(?:出生日期|出生年月|生于)[:：\s]*([0-9〇零一二三四五六七八九年月日.\-/]{4,16})"),
+    ("birth_date", r"(?:出生日期|出生年月|生于)[:：\s]*([0-9〇零○Ｏ一二三四五六七八九十年月日.\-/ \t]{4,24})"),
     ("native_place", r"(?:籍贯)[:：\s]*([^\s，。]{2,20})"),
     ("student_no", r"(?:学号)[:：\s]*([A-Za-z0-9]{4,20})"),
     ("branch", r"(?:党支部|所在支部)[:：\s]*([^\n]{2,30})"),
@@ -42,12 +43,13 @@ def extract_fields(text: str) -> dict[str, Any]:
         last = dates[-1]
         if last.get("date"):
             fields["signature_date"] = last["date"].isoformat()
-            fields["signature_date_raw"] = last.get("raw")
+            fields["signature_date_raw"] = text[last['start']:last['end']].strip()
     for key, pat in FIELD_PATTERNS:
-        m = re.search(pat, text)
+        m = re.search(pat, text.translate(FULLWIDTH) if key == 'birth_date' else text)
         if m:
-            fields[key] = m.group(1).strip()
+            fields[key] = text[m.start(1):m.end(1)].strip()
     if "birth_date" in fields:
+        fields['birth_date_raw'] = fields['birth_date']
         d, raw, err = parse_date(fields["birth_date"])
         if d:
             fields["birth_date"] = d.isoformat()
@@ -64,6 +66,7 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
     date_map = {}
     if type_row and type_row.date_node_map:
         date_map = type_row.date_node_map or {}
+    node_defs = eligible_nodes(node_defs, type_row)
     fields = extract_fields(text)
     dates = find_dates(text)
     range_defs = {nd.code: nd for nd in node_defs if nd.value_kind == 'DATE_RANGE'}
@@ -75,16 +78,18 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
             raw = fields.get("signature_date_raw") or fields.get("signature_date")
         elif field_key.startswith("field:"):
             name = field_key.split(":", 1)[1]
-            raw = fields.get({"出生日期": "birth_date"}.get(name, name))
+            field_name = {"出生日期": "birth_date"}.get(name, name)
+            raw = fields.get(field_name + '_raw') or fields.get(field_name)
         d, raw_s, err = parse_date(str(raw)) if raw else (None, None, "未抽取到")
-        loc = _locate(pages, raw_s or (raw or ""))
+        evidence_raw = raw or raw_s
+        loc = _locate(pages, evidence_raw or '')
         results.append({
             "node_code": node_code,
             "seq_index": 0,
             "value_date": d,
             "value_end_date": None,
             "hours": _find_hours(text) if node_code == "T10" else None,
-            "raw_text": raw_s or raw,
+            "raw_text": evidence_raw,
             "invalid_reason": err if not d else None,
             "page_no": loc[0],
             "bbox": loc[1],
@@ -120,14 +125,15 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
         # in the document (for example, a birth date in an autobiography).
         # False positives contaminate the archive timeline and can affect rules.
         for i, h in enumerate(hits):
-            loc = _locate(pages, h.get("raw") or "")
+            original_raw = text[h['start']:h['end']].strip()
+            loc = _locate(pages, original_raw)
             results.append({
                 "node_code": nd.code,
                 "seq_index": i if nd.value_kind == "DATE_SEQ" else 0,
                 "value_date": h.get("date"),
                 "value_end_date": None,
                 "hours": _find_hours(text) if nd.code == "T10" else None,
-                "raw_text": h.get("raw"),
+                "raw_text": original_raw,
                 "invalid_reason": h.get("invalid_reason"),
                 "page_no": loc[0],
                 "bbox": loc[1],
@@ -135,7 +141,7 @@ def extract_nodes(text: str, pages: list, type_row, node_defs: list) -> list[dic
                 "method": "RULE",
             })
     from ai.date_evidence import bound_extractions
-    return bound_extractions(results, pages)
+    return bound_extractions(bound_sources(results, node_defs, type_row), pages)
 
 
 def _find_hours(text: str) -> Optional[float]:

@@ -437,16 +437,33 @@ def set_type(mid: int, body: dict, request: Request, db: Session = Depends(get_d
         raise not_found()
     ensure_material_access(db, actor, m, request)
     sub = _editable_submission(db, actor, m, reviewer=True)
+    db.refresh(m)
     mt = db.query(MaterialType).filter(MaterialType.id == body.get("material_type_id")).first()
     if not mt:
         raise unprocessable("材料类型不存在")
+    # Classification controls which time nodes a document can supply. Retagging
+    # must refresh that evidence, using the same submission -> version lock order
+    # as parsing; a queued parse will read the newly confirmed classification.
+    changed = m.type_id != mt.id
+    version = db.query(MaterialVersion).filter(MaterialVersion.id == m.current_version_id).with_for_update().first() if changed else None
     m.type_id = mt.id
     m.type_source = "MANUAL"
     m.type_status = "CONFIRMED"
     m.type_confidence = 1.0
     m.updated_at = now()
-    log(db, actor, "MATERIAL_TYPE_CONFIRM", "material", mid, {"type_id": mt.id})
-    return ok(_material_dict(db, m))
+    job = None
+    if version:
+        job = db.query(Job).filter(Job.job_type == 'PARSE', Job.target_id == version.id,
+                                  Job.status.in_(['QUEUED', 'RUNNING'])).first()
+        if not job:
+            job = enqueue_job(db, 'PARSE', actor.id, 'material_version', version.id, {'version_id': version.id})
+            version.parse_status, version.parse_error = 'PENDING', None
+        merge_archive_nodes(db, m.archive_id)
+    log(db, actor, "MATERIAL_TYPE_CONFIRM", "material", mid, {"type_id": mt.id, "parse_job_id": job.id if job else None})
+    data = _material_dict(db, m)
+    if job:
+        data['parse_job_id'] = job.id
+    return ok(data)
 
 
 @router.get("/materials/{mid}/diff")

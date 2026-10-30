@@ -120,6 +120,8 @@ def test_low_confidence_model_date_also_waits_for_confirmation(case, confidence)
 def test_confident_native_text_and_manual_date_remain_usable(case):
     for code, method in [('T02', 'RULE'), ('T03', 'MANUAL')]:
         m, v = parsed_material(case)
+        from models import MaterialType
+        m.type_id = case.db.query(MaterialType).filter_by(code='APPLICATION_LETTER').one().id
         case.add(TimeNodeExtraction, archive_id=case.arch.id, material_id=m.id, material_version_id=v.id,
             node_code=code, value_date=date(2026, 9, 15), confidence=.9 if method == 'RULE' else 1,
             method=method, is_current=True, created_at=now())

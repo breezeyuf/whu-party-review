@@ -170,6 +170,23 @@ export async function runUiScenarios() {
     assert.equal(button("重新解析（使用当前模型配置）").disabled, false)
     assert.equal(requests.filter(c => c.url === "/materials/12/retry-parse").length, 1)
   })
+  await test("材料改类会跟踪重新解析任务并刷新日期结果", async () => {
+    let saved = false
+    await mount(<MaterialDetailPage />, { path: "/materials/12", pattern: "/materials/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+      if (c.url === "/submissions/101") return { ...baseSubmission, can: { review: true } }
+      if (c.url === "/materials/12/type") {
+        saved = true
+        return { ...baseMaterial, parse_job_id: 901, current_version: { ...currentVersion, parse_status: "PENDING" } }
+      }
+      if (c.url === "/jobs/901") return { id: 901, job_type: "PARSE", status: "SUCCEEDED" }
+      if (c.url === "/materials/12/parsed" && saved) return { version_id: 402, full_text: "新类型解析结果", extractions: [] }
+    } })
+    await click(button("确认类型"))
+    await flush()
+    assert.ok(requests.some(c => c.url === "/jobs/901"))
+    assert.ok(requests.filter(c => c.url === "/materials/12/parsed").length > 1)
+    assert.match(text(), /类型已确认，正在按新类型更新日期/)
+  })
   await test("投递检查只检查配置并明确不发送", async () => {
     await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : c.url === "/settings/delivery/test" ? { message: "未发送任何消息", email_ready: false, sms_ready: false, sent: false } : undefined })
     await click(button("检查投递配置（不发送）"))
