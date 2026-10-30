@@ -51,7 +51,9 @@ def recover(sessions, timeout=300):
 
 def test_periodic_recovery_handles_orphan_not_yet_stale_at_restart(sessions, monkeypatch):
     current = now()
-    jid = add_job(sessions, status="RUNNING", attempts=1, started_at=current, heartbeat_at=current)
+    from ai import pipeline
+    monkeypatch.setattr(pipeline, "parse_version", lambda *_args: None)
+    jid = add_job(sessions, job_type="PARSE", target_id=1, status="RUNNING", attempts=1, started_at=current, heartbeat_at=current)
     monkeypatch.setattr(worker, "now", lambda: current)
     monkeypatch.setattr(worker, "get_setting", lambda *_args: {"heartbeat_timeout_s": 300})
     observed = []

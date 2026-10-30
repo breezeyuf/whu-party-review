@@ -14,13 +14,15 @@ from ai.llm import chat_json, validate_credential_options
 
 
 ORG_KEYS = {"upload", "retention", "notification", "calendar"}
-ADMIN_ONLY = {"ai", "ocr", "ocr_vision", "security", "worker", "delivery"}
+ADMIN_ONLY = {"ai", "ocr", "ocr_vision", "security", "worker", "delivery", "auth"}
 
 
 def public_settings(db: Session) -> dict:
     out = {}
-    for key in ("upload", "retention", "notification", "ai", "ocr", "ocr_vision", "security", "worker", "calendar", "delivery"):
+    for key in ("upload", "retention", "notification", "ai", "ocr", "ocr_vision", "security", "worker", "calendar", "delivery", "auth"):
         val = deepcopy(get_setting(db, key, {}))
+        if key == 'auth':
+            val = {'mode': 'demo', **val}
         if key == 'delivery':
             from services.delivery import public_config
             val=public_config(val)
@@ -52,6 +54,19 @@ def update_settings(db: Session, actor, body: dict) -> dict:
         if not isinstance(patch, dict):
             raise unprocessable("配置组必须是对象")
         patch = dict(patch)
+        if key == 'security':
+            for name, upper in [('max_failed_login', 50), ('lock_minutes', 1440), ('access_token_minutes', 1440)]:
+                if name in patch and (type(patch[name]) is not int or not 1 <= patch[name] <= upper):
+                    raise unprocessable(f'{name} 须为 1 至 {upper} 的整数')
+        if key == 'auth':
+            from services.sessions import validate_auth_config
+            from models import AuthSession, CasLoginState
+            if set(patch) - {'mode', 'login_url', 'validate_url'}:
+                raise unprocessable('认证配置包含未知字段')
+            validate_auth_config({'mode': 'demo', **cur, **patch})
+            if any(cur.get(name) != value for name, value in patch.items()):
+                db.query(AuthSession).delete(synchronize_session=False)
+                db.query(CasLoginState).delete(synchronize_session=False)
         if key == 'ai':
             for name in ('llm_enabled', 'desensitize'):
                 if name in patch and type(patch[name]) is not bool:
@@ -88,6 +103,9 @@ def update_settings(db: Session, actor, body: dict) -> dict:
             previous_base = previous_raw.strip().rstrip("/") if isinstance(previous_raw, str) else ""
             next_base = (patch.get("base_url") if patch.get("base_url") is not None else previous_base)
             next_base = next_base.strip().rstrip("/")
+            if next_base:
+                from services.model_network import destination
+                destination(next_base)
             if cur.get("api_key_enc") and next_base != previous_base and patch.get("api_key") is None:
                 raise unprocessable("更换模型接口地址时，请重新填写密钥；无认证接口请显式清空密钥")
             patch.pop("api_key_enc", None)

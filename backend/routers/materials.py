@@ -309,6 +309,8 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
         raise not_found("材料版本不存在")
     pr = db.query(ParseResult).filter(ParseResult.version_id == vid).first() if vid else None
     exs = db.query(TimeNodeExtraction).filter(TimeNodeExtraction.material_version_id == vid, TimeNodeExtraction.is_current.is_(True)).order_by(TimeNodeExtraction.id).all() if vid else []
+    from ai.date_evidence import states_for
+    states = states_for(db, exs)
     return ok({
         "material_id": mid, "version_id": vid, "version_no": ver.version_no if ver else None,
         "parser": pr.parser if pr else None, "ocr_engine": pr.ocr_engine if pr else None,
@@ -321,7 +323,8 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
             "date": e.value_date.isoformat() if e.value_date else None,
             "end_date": e.value_end_date.isoformat() if e.value_end_date else None,
             "hours": e.hours, "raw_text": e.raw_text, "page_no": e.page_no, "bbox": e.bbox,
-            "method": e.method, "confidence": e.confidence, "invalid_reason": e.invalid_reason,
+            "method": e.method, "confidence": states[e.id][2], "invalid_reason": e.invalid_reason,
+            "usable": states[e.id][0], "review_reason": states[e.id][1],
         } for e in exs],
         "warnings": pr.warnings if pr else [],
     })
@@ -434,16 +437,33 @@ def set_type(mid: int, body: dict, request: Request, db: Session = Depends(get_d
         raise not_found()
     ensure_material_access(db, actor, m, request)
     sub = _editable_submission(db, actor, m, reviewer=True)
+    db.refresh(m)
     mt = db.query(MaterialType).filter(MaterialType.id == body.get("material_type_id")).first()
     if not mt:
         raise unprocessable("材料类型不存在")
+    # Classification controls which time nodes a document can supply. Retagging
+    # must refresh that evidence, using the same submission -> version lock order
+    # as parsing; a queued parse will read the newly confirmed classification.
+    changed = m.type_id != mt.id
+    version = db.query(MaterialVersion).filter(MaterialVersion.id == m.current_version_id).with_for_update().first() if changed else None
     m.type_id = mt.id
     m.type_source = "MANUAL"
     m.type_status = "CONFIRMED"
     m.type_confidence = 1.0
     m.updated_at = now()
-    log(db, actor, "MATERIAL_TYPE_CONFIRM", "material", mid, {"type_id": mt.id})
-    return ok(_material_dict(db, m))
+    job = None
+    if version:
+        job = db.query(Job).filter(Job.job_type == 'PARSE', Job.target_id == version.id,
+                                  Job.status.in_(['QUEUED', 'RUNNING'])).first()
+        if not job:
+            job = enqueue_job(db, 'PARSE', actor.id, 'material_version', version.id, {'version_id': version.id})
+            version.parse_status, version.parse_error = 'PENDING', None
+        merge_archive_nodes(db, m.archive_id)
+    log(db, actor, "MATERIAL_TYPE_CONFIRM", "material", mid, {"type_id": mt.id, "parse_job_id": job.id if job else None})
+    data = _material_dict(db, m)
+    if job:
+        data['parse_job_id'] = job.id
+    return ok(data)
 
 
 @router.get("/materials/{mid}/diff")

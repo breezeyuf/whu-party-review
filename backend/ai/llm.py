@@ -179,12 +179,19 @@ def _chat_json(
 
 
 def _post_chat(base, payload, headers, timeout, max_attempts):
+    from services.model_network import destination, PrivateModelTransport
+    from errors import AppError
+    try:
+        destination(base)
+    except AppError:
+        return None, "模型接口地址不在允许的校内私网范围"
     last_err = "大模型调用失败"
     for attempt in range(max_attempts):
         try:
-            with httpx.Client(timeout=timeout) as client:
+            with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False,
+                              transport=PrivateModelTransport()) as client:
                 resp = client.post(f"{base}/chat/completions", json=payload, headers=headers)
-            if resp.status_code < 400:
+            if 200 <= resp.status_code < 300:
                 return resp, None
             last_err = f"大模型接口 HTTP {resp.status_code}"
             if resp.status_code < 500:
@@ -193,6 +200,8 @@ def _post_chat(base, payload, headers, timeout, max_attempts):
             last_err = "大模型请求超时"
         except httpx.RequestError:
             last_err = "大模型连接失败"
+        except AppError:
+            return None, "模型接口地址不在允许的校内私网范围"
         if attempt + 1 < max_attempts:
             time.sleep(0.5 * (2 ** attempt))
     return None, last_err

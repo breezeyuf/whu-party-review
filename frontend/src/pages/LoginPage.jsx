@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { demoAccounts } from "../api/auth"
+import { demoAccounts, authConfig } from "../api/auth"
 import { useAuth } from "../context/AuthContext"
 import { loginDestination, roleLabel } from "../utils/identity"
 import { whenIdle } from "../utils/lazyLoad"
@@ -63,13 +63,17 @@ export default function LoginPage() {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [accounts, setAccounts] = useState([])
+  const [mode, setMode] = useState(null)
 
   useEffect(() => {
     if (ready && user) navigate(loginDestination(user, needsIdentitySelection), { replace: true })
   }, [user, ready, needsIdentitySelection, navigate])
 
   useEffect(() => {
-    demoAccounts().then((list) => setAccounts(Array.isArray(list) ? list : [])).catch(() => {})
+    authConfig().then((cfg) => {
+      setMode(cfg.mode)
+      if (cfg.mode === "demo") demoAccounts().then((list) => setAccounts(Array.isArray(list) ? list : [])).catch(() => {})
+    }).catch(() => setError("无法获取登录配置，请刷新重试"))
   }, [])
 
   // 空闲时预取登录后的外壳，登录成功进入工作台时不再等待下载
@@ -135,7 +139,12 @@ export default function LoginPage() {
             <div className="text-xs tracking-[0.2em] text-base-content/40">欢迎回来</div>
             <h2 className="mt-2 text-2xl font-semibold tracking-tight">登录工作台</h2>
           </div>
-          <form className="surface-card space-y-4 p-6" onSubmit={submit}>
+          {mode === "sso" && <div className="surface-card space-y-4 p-6">
+            <p className="text-sm">请使用学校统一身份认证登录。账号及身份由组织开通。</p>
+            <a className="btn btn-primary w-full" href="/api/auth/sso/start" onClick={() => localStorage.removeItem("prw_role")}>学校统一身份认证</a>
+          </div>}
+          {!mode && <p role="status">{error || "正在加载登录方式…"}</p>}
+          {mode === "demo" && <form className="surface-card space-y-4 p-6" onSubmit={submit}>
             <label className="form-control">
               <span className="label-text mb-1 text-xs">工号 / 学号</span>
               <input className="input input-bordered" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required />
@@ -151,7 +160,7 @@ export default function LoginPage() {
             </button>
             <p className="text-center text-xs text-base-content/60">登录后按账号身份进入学生、审核或管理工作台。</p>
             <p className="text-center text-xs text-base-content/45">账号由组织开通，不开放自助注册。连续输错 5 次将锁定 15 分钟。</p>
-          </form>
+          </form>}
           {accounts.length > 0 && (
             <details className="mt-4 surface-card p-4">
               <summary className="cursor-pointer text-xs font-medium text-base-content/60">查看演示账号</summary>

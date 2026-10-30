@@ -29,7 +29,7 @@ def transport(monkeypatch):
         if reply.get('timeout'):
             raise httpx.ReadTimeout('private response', request=req)
         return httpx.Response(reply['status'], json={'choices': [{'message': {'content': json.dumps(reply['content'])}}]})
-    monkeypatch.setattr(httpx, 'Client', lambda **kw: client(transport=httpx.MockTransport(respond), **kw))
+    monkeypatch.setattr(httpx, 'Client', lambda **kw: client(transport=httpx.MockTransport(respond), **{k:v for k,v in kw.items() if k != "transport"}))
     monkeypatch.setattr(review, 'decrypt_field', lambda value: 'synthetic-secret')
     return requests, reply
 
@@ -189,3 +189,9 @@ def test_no_text_model_settings_are_read(monkeypatch, config, transport, documen
     monkeypatch.setattr(review, 'get_setting', read)
     review.review_result(None, document)
     read.assert_called_once_with(None, 'ocr_vision', {})
+
+
+@pytest.fixture(autouse=True)
+def synthetic_private_dns(monkeypatch):
+    from services import model_network
+    monkeypatch.setattr(model_network, "_resolve", lambda *args: ["10.2.3.4"])

@@ -1,5 +1,5 @@
 export function extractionDraft(ex, key) {
-  return { key: key ?? `existing-${ex.id}`, extraction_id: ex.id, node_code: ex.node_code || "", date: ex.date || "", end_date: ex.end_date || "", hours: ex.hours ?? "", seq_index: ex.seq_index ?? 0, deleted: false }
+  return { key: key ?? `existing-${ex.id}`, extraction_id: ex.id, node_code: ex.node_code || "", date: ex.date || "", end_date: ex.end_date || "", hours: ex.hours ?? "", seq_index: ex.seq_index ?? 0, deleted: false, confirmed: false }
 }
 
 function validDate(value) {
@@ -23,7 +23,7 @@ export function extractionChanges(original, drafts, definitions) {
       hours: draft.hours === "" ? null : Number(draft.hours),
       seq_index: Number(draft.seq_index),
     }
-    if (before && Object.entries(normalized).every(([key, value]) => (before[key] ?? (key === "seq_index" ? 0 : null)) === value)) continue
+    if (before && !draft.confirmed && Object.entries(normalized).every(([key, value]) => (before[key] ?? (key === "seq_index" ? 0 : null)) === value)) continue
     const def = definitions.find((item) => item.code === draft.node_code)
     if (!def || def.value_kind === "DERIVED" || (!before && def.is_active === false)) throw new Error("请选择有效的时间节点")
     if (!validDate(draft.date)) throw new Error(`${draft.node_code}：请填写有效日期`)

@@ -26,7 +26,8 @@ const formatImportError = (error) => {
 export default function UsersPage() {
   const meta = useMeta()
   const toast = useToast()
-  const { activeRole } = useAuth()
+  const { activeRole, user } = useAuth()
+  const isSso = user?.auth_mode === "sso"
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listUsers(query), [JSON.stringify(query)])
   const batches = useRequest(() => listBatches({ page_size: 200 }), [])
@@ -312,7 +313,7 @@ export default function UsersPage() {
           { key: "op", title: "", render: (r) => (
             <>
               <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setFormError(""); setFieldErrors({}); const grants = (r.roles || []).map((x) => ({ role: x.role, org_id: x.org_id ?? r.org_id })); setEdit({ ...r, grants, original_grants: grants, is_active: r.is_active !== false, original_is_active: r.is_active !== false }) }}>编辑</button>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>
+              {!isSso && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>}
             </>
           ) },
         ]} />
@@ -336,7 +337,7 @@ export default function UsersPage() {
         {pendingImportFile && <div className="grid gap-3">
           <div className="text-sm">文件：<span className="font-medium break-all">{pendingImportFile.name}</span></div>
           <div className="text-sm">学生档案建档批次：<span className="font-medium">{batchId ? (batches.data?.items || []).find((batch) => String(batch.id) === String(batchId))?.name || `批次 ${batchId}` : "未指定，可使用文件中的批次名称"}</span></div>
-          <div className="alert alert-warning text-sm" role="alert">正式导入会创建文件中的用户/档案。新用户的初始密码通过加密 Excel 交付，文件只能下载一次，打开口令仅本次显示。建议先对同一文件执行预校验。</div>
+          <div className="alert alert-warning text-sm" role="alert">{isSso ? "正式导入会创建用户/档案，用户通过学校统一认证登录，不生成本地密码。建议先预校验。" : "正式导入会创建文件中的用户/档案。新用户的初始密码通过加密 Excel 交付，文件只能下载一次，打开口令仅本次显示。建议先对同一文件执行预校验。"}</div>
         </div>}
       </Modal>
       <Modal open={!!resetTarget} title="确认重置密码" onClose={() => { if (!resetting) setResetTarget(null) }} footer={(

@@ -15,6 +15,8 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 @router.post("/seed-demo")
 def seed(body: dict | None = None, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    from services.sessions import require_demo
+    require_demo(db)
     if actor.role not in ("SYS_ADMIN", "ORG_ADMIN"):
         raise forbidden()
     body = body or {}
