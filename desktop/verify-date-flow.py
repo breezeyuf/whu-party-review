@@ -98,9 +98,19 @@ try:
         return arch, mid, parsed, rows
 
     def wait_job(job_id):
+        started = time.monotonic()
         until = time.monotonic() + 120
         while time.monotonic() < until:
-            result = request(reviewer, 'GET', f'/jobs/{job_id}')
+            response = reviewer.get(f'/jobs/{job_id}')
+            # The HTTP body can arrive just before the request dependency commits
+            # its new job. Match the UI's polling behavior, with a short bound;
+            # persistent missing/unauthorized jobs must still fail this check.
+            if response.status_code == 404 and time.monotonic() - started < 3:
+                time.sleep(.1)
+                continue
+            if response.status_code >= 400:
+                raise RuntimeError(f'GET /jobs/{job_id}: HTTP {response.status_code}')
+            result = response.json()['data']
             if result['status'] == 'SUCCEEDED':
                 return
             if result['status'] in ('FAILED', 'CANCELLED'):
