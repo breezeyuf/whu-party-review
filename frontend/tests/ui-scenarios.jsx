@@ -130,6 +130,88 @@ export async function runUiScenarios() {
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
 
+  await test("任务默认按人折叠，展开精确筛选且组内分页独立", async () => {
+    await mount(<JobsPage />, { path: "/tasks/jobs", roleCode: "SYS_ADMIN", handler: (c) => {
+      if (c.url === "/jobs/creators") return { items: [{ created_by: 17, name: "测试发起人", username: "same-name-a", total: 25, running: 1, failed: 2 }], total: 1, page: 1, page_size: 10 }
+      if (c.url === "/jobs") return { items: [{id: 70, job_type: "NOTICE_BATCH", status: "SUCCEEDED", total:1}], total:25, page:c.params.page, page_size:c.params.page_size }
+    } })
+    assert.equal(requests.filter((c) => c.url === "/jobs").length, 0)
+    await click([...document.querySelectorAll("button")].find((b) => b.textContent.includes("测试发起人")))
+    assert.match(text(), /批量补全通知/)
+    let last = requests.filter((c) => c.url === "/jobs").at(-1)
+    assert.equal(last.params.created_by, 17)
+    assert.equal(last.params.page_size, 20)
+    await click([...document.querySelectorAll("button")].find((b) => b.textContent === "下一页" && !b.disabled))
+    last = requests.filter((c) => c.url === "/jobs").at(-1)
+    assert.equal(last.params.page, 2)
+    assert.equal(requests.filter((c) => c.url === "/jobs/creators").length, 1)
+    await input(document.querySelector('input[placeholder="姓名或账号"]'), "someone")
+    assert.equal([...document.querySelectorAll("button")].find((b) => b.textContent.includes("测试发起人")).getAttribute("aria-expanded"), "false")
+  })
+
+  await test("日志搜索选择操作人使用精确ID，清除后保留时间列表", async () => {
+    await mount(<AuditLogsPage />, { path: "/admin/audit-logs", roleCode: "SYS_ADMIN", handler: (c) => {
+      if (c.url === "/audit-logs/actors") return { items: [{key:"17",user_id:17,username:"actor-a",name:"同名操作人"},{key:"18",user_id:18,username:"actor-b",name:"同名操作人"}], total:2 }
+      if (c.url === "/audit-logs") return { items:[],total:0 }
+    } })
+    await click(button("选择操作人"))
+    await input(document.querySelector('[aria-label="搜索操作人姓名或账号"]'), "同名")
+    await click([...document.querySelectorAll("button")].find((b) => b.textContent.includes("actor-b")))
+    assert.equal(requests.filter((c) => c.url === "/audit-logs").at(-1).params.user_id, "18")
+    await click(button("清除操作人"))
+    assert.equal(requests.filter((c) => c.url === "/audit-logs").at(-1).params.user_id, undefined)
+  })
+
+  await test("消息悬停仅展示，全部已读成功刷新红点且Esc可关闭", async () => {
+    let unread = 3
+    await mount(<AppLayout><p>测试首页</p></AppLayout>, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/messages/unread-count") return {count:unread}
+      if(c.url === "/messages/read-all") {unread=0;return {updated:3}}
+    }})
+    const messageButton=document.querySelector('[aria-label="消息，3 条未读"]')
+    await act(async () => {messageButton.dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));await wait()})
+    assert.ok(button("全部标为已读"))
+    assert.equal(requests.filter((c) => c.url === "/messages/read-all").length,0)
+    await click(button("全部标为已读"))
+    assert.ok(document.querySelector('[aria-label="消息"]'))
+    assert.equal(button("全部标为已读").disabled,true)
+    await act(async()=>{document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));await wait()})
+    assert.equal(button("全部标为已读"),undefined)
+    await click(document.querySelector('[aria-label="展开消息快捷操作"]'))
+    assert.ok(button("查看消息"))
+  })
+
+  await test("消息标记期间重复点击只发送一次请求", async () => {
+    let finish
+    await mount(<AppLayout><p>测试首页</p></AppLayout>, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/messages/unread-count") return {count:2}
+      if(c.url === "/messages/read-all") return new Promise((resolve)=>{finish=resolve})
+    }})
+    await click(document.querySelector('[aria-label="展开消息快捷操作"]'))
+    await click(button("全部标为已读"))
+    assert.equal(button("正在标记…").disabled,true)
+    await click(button("正在标记…"))
+    assert.equal(requests.filter((c)=>c.url === "/messages/read-all").length,1)
+    await act(async()=>{finish({updated:2});await wait()})
+  })
+
+  await test("消息已读失败保留红点并可重试，聚焦和点击外部可操作", async () => {
+    let fail = true
+    await mount(<AppLayout><p>测试首页</p></AppLayout>, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/messages/unread-count") return {count:2}
+      if(c.url === "/messages/read-all") {if(fail) throw new Error("标记暂时失败");return {updated:2}}
+    }})
+    await act(async()=>{document.querySelector('[aria-label="消息，2 条未读"]').focus();await wait()})
+    await click(button("全部标为已读"))
+    assert.match(text(),/标记暂时失败/)
+    assert.ok(document.querySelector('[aria-label="消息，2 条未读"]'))
+    fail=false
+    await click(button("全部标为已读"))
+    assert.equal(requests.filter((c)=>c.url === "/messages/read-all").length,2)
+    await act(async()=>{document.body.dispatchEvent(new Event("pointerdown",{bubbles:true}));await wait()})
+    assert.equal(button("全部标为已读"),undefined)
+  })
+
   await test("历史报告预览旧版本并定位旧问题，时间轴不混入当前日期", async () => {
     const oldIssue = { id: 8001, title: "旧问题", category: "TIME", severity: "WARN", material_id: 12, material_version_id: 401, location: { page_no: 2, node_code: "T02" } }
     await mount(<ReviewWorkspacePage />, { path: "/review/submissions/101?report=111", pattern: "/review/submissions/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
@@ -236,6 +318,8 @@ export async function runUiScenarios() {
     await mount(<ParsedTextPanel parsed={parsed} editable onSave={(body) => { saved = body }} />, { roleCode: "BRANCH_REVIEWER" })
     assert.equal(document.querySelector("textarea").value, parsed.full_text)
     assert.equal(saved, undefined)
+    assert.equal(button("核对后填入校正文本").disabled, true)
+    await click([...document.querySelectorAll("label")].find((label) => label.textContent.includes("我已对照原图核对上述变化")).querySelector("input"))
     await click(button("核对后填入校正文本"))
     assert.equal(document.querySelector("textarea").value, "申请日期2026年10月24日")
     assert.equal(saved, undefined)
@@ -630,6 +714,30 @@ export async function runUiScenarios() {
     await click(button("重新提交"))
     assert.equal(requests.filter((request) => request.url === "/submissions/101/submit").length, 1)
     assert.match(text(), /正在复核整改/)
+  })
+
+  await test("材料列表直接删除有确认，取消不请求，审核中隐藏删除", async () => {
+    let removed = false
+    const handler = (config) => {
+      if (config.url === "/archives/1/materials") return [{ stage_code: 1, checklist: [{ checklist_item_id: 1, material_type: { id: 1, name: "测试材料" }, materials: removed ? [] : [{ id: 12, title: "虚构材料.pdf", current_version: { parse_status: "DONE" } }] }] }]
+      if (config.url === "/materials/12" && config.method === "delete") { removed = true; return {} }
+    }
+    await mount(<MyMaterialsPage />, { path: "/my/materials", roleCode: "STUDENT", handler })
+    assert.ok(document.querySelector('a[href="/materials/12"]'))
+    await click(button("删除"))
+    assert.match(text(), /删除这份材料/)
+    await click(button("取消"))
+    assert.equal(removed, false)
+    await click(button("删除"))
+    await click(button("确认删除"))
+    assert.equal(removed, true)
+    assert.equal(button("删除"), undefined)
+    removed = false
+    await mount(<MyMaterialsPage />, { path: "/my/materials", roleCode: "STUDENT", handler: (config) => {
+      if (config.url === "/my/archive") return { ...baseArchive, current_submission: { id: 101, status: "BRANCH_REVIEW" } }
+      return handler(config)
+    } })
+    assert.equal(button("删除"), undefined)
   })
 
   await test("材料接口失败显示错误而非空清单", async () => {
@@ -1047,7 +1155,7 @@ export async function runUiScenarios() {
 
   await test("任务明细加载失败在明细区提示，重试后显示任务进度", async () => {
     let attempts = 0
-    await mount(<JobsPage />, { path: "/tasks/jobs", roleCode: "BRANCH_REVIEWER", handler: (config) => {
+    await mount(<JobsPage />, { path: "/tasks/jobs?view=all", roleCode: "BRANCH_REVIEWER", handler: (config) => {
       if (config.url === "/jobs") return { items: [{ id: 7, job_type: "BATCH_UPLOAD", status: "SUCCEEDED", total: 2, done_count: 2 }], total: 1, page: 1, page_size: 20 }
       if (config.url === "/jobs/7") {
         if (++attempts === 1) throw new Error("任务服务暂不可用")

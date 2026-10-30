@@ -93,7 +93,7 @@ export default function MyMaterialsPage() {
       {pending > 0 && <div className="alert alert-info mb-3 text-sm">{pending} 份材料正在解析，结果会自动刷新。解析完成后再发起自查。</div>}
       {jobs.map((jobId) => <div key={jobId} className="mb-3"><StudentTaskProgress jobId={jobId} onDone={() => refreshStudentRequests(mats, archiveReq)} /></div>)}
       {mats.loading && !mats.data ? <Loading /> : mats.error ? <ErrorState error={mats.error} onRetry={() => mats.reload().catch(() => {})} /> : (
-        <ChecklistPanel groups={groups} canUpload={editable} onUpload={onUpload} onPreview={setPreview} />
+        <ChecklistPanel groups={groups} canUpload={editable} onUpload={onUpload} onPreview={setPreview} onDelete={setPendingDelete} uploadDisabled={deleting} />
       )}
       <Modal open={!!preview} title={preview?.title || "预览"} onClose={() => setPreview(null)} wide footer={
         preview && (

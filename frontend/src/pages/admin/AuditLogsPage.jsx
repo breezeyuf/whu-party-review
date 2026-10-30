@@ -1,3 +1,4 @@
+import ActorPicker from "../../components/common/ActorPicker"
 import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
@@ -64,12 +65,13 @@ const OBJECT_NAME = {
 export default function AuditLogsPage() {
   const meta = useMeta()
   const { query, setQuery, setPage } = usePagination()
-  const req = useRequest(() => listAuditLogs(query), [JSON.stringify(query)])
+  const { actor_label, ...requestQuery } = query
+  const req = useRequest(() => listAuditLogs(requestQuery), [JSON.stringify(query)])
   return (
     <div>
       <PageHeader title="操作日志">登录、上传、审核、退回、备案、规则修改和导出都会留痕，日志不可删除。</PageHeader>
-      <FilterBar values={query} onChange={setQuery} onReset={() => setQuery({ username: "", action: "", object_type: "", date_from: "", date_to: "" })} fields={[
-        { key: "username", label: "账号" },
+      <ActorPicker label={query.actor_label || (query.user_id ? `账号 #${query.user_id}` : query.legacy_username)} onChange={(person) => setQuery({ user_id: person?.user_id ?? "", legacy_username: person?.legacy_username ?? "", username: "", actor_label: person ? `${person.name} · ${person.username}` : "" })}/>
+      <FilterBar values={query} onChange={setQuery} onReset={() => setQuery({ user_id: "", legacy_username: "", actor_label: "", username: "", action: "", object_type: "", date_from: "", date_to: "" })} fields={[
         { key: "action", label: "动作（编码）" },
         { key: "object_type", label: "对象类型" },
         { key: "date_from", label: "开始", placeholder: "YYYY-MM-DD" },
