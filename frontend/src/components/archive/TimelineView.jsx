@@ -35,7 +35,7 @@ export default function TimelineView({ timeline, onCorrect, onLocate, hidePerson
         <span>共 {nodes.length + derived.length} 个时间节点</span>
         {conflictCount > 0
           ? <span className="badge badge-error badge-sm">{conflictCount} 项需关注</span>
-          : <span className="badge badge-success badge-sm">暂未发现阻断异常</span>}
+          : <span className="badge badge-success badge-sm">暂未发现关键问题异常</span>}
       </div>}
       <ol className={compact ? "space-y-2" : "relative space-y-3 border-l-2 border-base-300/80 pl-4 sm:pl-5"}>
       {nodes.map((node) => {

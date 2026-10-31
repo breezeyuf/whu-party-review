@@ -1,3 +1,4 @@
+import { reviewMessage } from "../utils/reviewTerms.js"
 import axios from "axios"
 
 const ACCESS = "prw_access"
@@ -36,7 +37,7 @@ api.interceptors.request.use((config) => {
 let refreshing = null
 
 function toError(payload, status) {
-  const err = new Error(payload?.message || "请求失败")
+  const err = new Error(reviewMessage(payload?.message) || "请求失败")
   err.code = payload?.code
   err.status = status
   err.data = payload?.data

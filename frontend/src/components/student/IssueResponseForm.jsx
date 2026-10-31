@@ -5,8 +5,8 @@ import { respondIssue } from "../../api/issues"
 import StudentTaskProgress from "../../utils/student/StudentTaskProgress"
 import { issueMaterialId } from "../../utils/studentWorkflow"
 
-export default function IssueResponseForm({ issue, onDone, onBusyChange, compact = false }) {
-  const [text, setText] = useState(issue.response_text || "")
+export default function IssueResponseForm({ issue, onDone, onBusyChange, compact = false, drafts, draftKey = issue.id }) {
+  const [text, setText] = useState(() => drafts?.get(draftKey) ?? issue.response_text ?? "")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [jobId, setJobId] = useState(null)
@@ -27,6 +27,7 @@ export default function IssueResponseForm({ issue, onDone, onBusyChange, compact
 
   const saveVersionReply = async (version) => {
     await respondIssue(issue.id, { response_type: "MODIFIED", response_text: text.trim() || "已重新上传", version_id: version.id })
+    drafts?.delete(draftKey)
     setSaved(true)
     onDone?.()
   }
@@ -39,6 +40,7 @@ export default function IssueResponseForm({ issue, onDone, onBusyChange, compact
     setError("")
     try {
       await respondIssue(issue.id, { response_type: "EXPLAINED", response_text: text.trim() })
+      drafts?.delete(draftKey)
       setSaved(true)
       onDone?.()
     } catch (e) {
@@ -90,7 +92,7 @@ export default function IssueResponseForm({ issue, onDone, onBusyChange, compact
       <summary hidden={!compact}>{issue.response_type ? "查看或修改整改回复" : "填写整改回复"}{working ? "（处理中）" : ""}</summary>
       <div className="space-y-3 rounded bg-base-200 p-3">
       {(saved || issue.response_type) && <p className="text-xs text-success">已保存整改回复，等待复核确认。{uploadedVersion && `关联材料版本 v${uploadedVersion.version_no}`}</p>}
-      <textarea className="textarea textarea-bordered textarea-xs w-full" rows={2} aria-label="整改说明" placeholder="整改说明；情况说明不少于 10 字" value={text} disabled={working} onChange={(e) => { setText(e.target.value); setSaved(false) }} />
+      <textarea className="textarea textarea-bordered textarea-xs w-full" rows={2} aria-label="整改说明" placeholder="整改说明；情况说明不少于 10 字" value={text} disabled={working} onChange={(e) => { setText(e.target.value); drafts?.set(draftKey, e.target.value); setSaved(false) }} />
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="btn btn-ghost btn-xs" disabled={working} onClick={explain}>保存情况说明</button>
         {uploadedVersion && !saved && <button type="button" className="btn btn-outline btn-xs" disabled={working} onClick={retryReply}>保存已上传版本的整改说明</button>}

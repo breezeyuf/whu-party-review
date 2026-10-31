@@ -47,7 +47,9 @@ def list_users(q: str | None = None, org_id: int | None = None, role: str | None
     if is_active is not None:
         query = query.filter(User.is_active.is_(is_active))
     if role:
-        query = query.join(UserRole).filter(UserRole.role == role)
+        query = query.filter(User.id.in_(
+            db.query(UserRole.user_id).filter(UserRole.role == role),
+        ))
     page, page_size = page_params(page, page_size)
     total = query.count()
     rows = query.order_by(User.id).offset((page - 1) * page_size).limit(page_size).all()

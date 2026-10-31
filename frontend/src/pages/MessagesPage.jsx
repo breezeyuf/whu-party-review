@@ -12,7 +12,7 @@ import { useAuth } from "../context/AuthContext"
 import { useToast } from "../context/ToastContext"
 
 export default function MessagesPage() {
-  const { query, setPage } = usePagination()
+  const { query, setPage, setQuery } = usePagination()
   const nav = useNavigate()
   const { activeRole } = useAuth()
   const toast = useToast()
@@ -76,29 +76,30 @@ export default function MessagesPage() {
       />
       <div className="mb-3 flex gap-2">
         {[["", "全部"], ["false", "未读"], ["true", "已读"]].map(([v, label]) => (
-          <button key={label} type="button" className={`btn btn-xs ${filter === v ? "btn-primary" : "btn-ghost"}`} onClick={() => setFilter(v)}>{label}</button>
+          <button key={label} type="button" className={`btn btn-xs ${filter === v ? "btn-primary" : "btn-ghost"}`} onClick={() => { setFilter(v); setPage(1) }}>{label}</button>
         ))}
       </div>
       {loading && !data ? <Loading label="消息" /> : (
         <div className="surface-card p-2">
           <DataTable
+            loading={loading}
             error={error}
             onRetry={reload}
             columns={[
-              { key: "title", title: "标题", render: (r) => (
-                <button type="button" className={`flex items-center gap-2 text-left ${r.is_read ? "text-base-content/60" : "font-medium"}`} onClick={() => open(r)}>
-                  {r.is_read ? <MailOpen size={15} strokeWidth={1.8} aria-label="已读" /> : <Mail size={15} strokeWidth={1.8} aria-label="未读" />}
-                  <span>{r.title}</span>
-                  {!r.is_read && <span className="badge badge-primary badge-xs">未读</span>}
+              { key: "read", title: <span className="sr-only">阅读状态</span>, className: "w-10 align-top", render: r => r.is_read ? <MailOpen className="mt-1" size={16} strokeWidth={1.8} aria-label="已读" /> : <Mail className="mt-1" size={16} strokeWidth={1.8} aria-label="未读" /> },
+              { key: "title", title: "标题", className: "min-w-64 align-top", render: (r) => (
+                <button type="button" className={`grid w-full grid-cols-[minmax(0,1fr)_2.5rem] items-start gap-2 text-left ${r.is_read ? "text-base-content/60" : "font-medium"}`} onClick={() => open(r)}>
+                  <span data-message-title className="min-w-0 whitespace-normal break-words leading-relaxed">{String(r.title || "").trim()}</span>
+                  {!r.is_read && <span className="badge badge-soft badge-primary badge-xs mt-1 whitespace-nowrap">未读</span>}
                 </button>
               ) },
-              { key: "content", title: "内容", render: (r) => <span className="line-clamp-2 text-xs text-base-content/70">{r.content}</span> },
-              { key: "time", title: "时间", render: (r) => <span className="mono text-xs">{fmtDateTime(r.created_at)}</span> },
+              { key: "content", title: "内容", className: "min-w-48 align-top", render: (r) => <span className="line-clamp-2 text-xs text-base-content/70">{r.content}</span> },
+              { key: "time", title: "时间", className: "whitespace-nowrap align-top", render: (r) => <span className="mono text-xs">{fmtDateTime(r.created_at)}</span> },
             ]}
             rows={data?.items || []}
             empty={filter === "false" ? "没有未读消息" : filter === "true" ? "没有已读消息" : "没有消息"}
           />
-          {!error && <div className="px-2 pb-2"><Pager page={data?.page} pageSize={data?.page_size} total={data?.total} onPage={setPage} /></div>}
+          {!error && <div className="px-2 pb-2"><Pager page={data?.page ?? query.page} pageSize={data?.page_size ?? query.page_size} total={data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>}
         </div>
       )}
     </div>

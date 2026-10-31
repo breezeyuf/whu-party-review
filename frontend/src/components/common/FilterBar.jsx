@@ -1,7 +1,7 @@
 import { useMeta } from "../../context/MetaContext"
 import { countActiveFilters } from "../../utils/workbench"
 
-export default function FilterBar({ fields, advancedFields = [], values, onChange, onReset }) {
+export default function FilterBar({ fields, advancedFields = [], values, onChange, onReset, children }) {
   const meta = useMeta()
   const advancedCount = countActiveFilters(values, advancedFields.map((field) => field.key))
   const renderField = (field) => {
@@ -15,6 +15,7 @@ export default function FilterBar({ fields, advancedFields = [], values, onChang
     </label>
   }
   return <div className="service-filter-panel">
+    {children}
     <div className="service-filter-fields">{fields.map(renderField)}{onReset && <button type="button" className="btn btn-ghost btn-sm" onClick={onReset}>重置</button>}</div>
     {advancedFields.length > 0 && <details className="service-inline-details" open={advancedCount > 0 ? true : undefined}><summary>更多筛选{advancedCount > 0 ? `（已启用 ${advancedCount} 项）` : ""}</summary><div className="details-content service-filter-fields">{advancedFields.map(renderField)}</div></details>}
   </div>
