@@ -7,7 +7,7 @@ const ORDER = { BLOCK: 0, WARN: 1, INFO: 2 }
 const CATS = ["COMPLETENESS", "TIME", "FORMAT", "CONTENT"]
 const priority = (issue) => (issue.review_status === "REJECTED" || issue.resolution === "RESOLVED" ? 10 : 0) + (ORDER[issue.severity] ?? 9)
 
-export default function IssueList({ issues = [], activeId, onSelect, renderActions, renderFooter, readonlyNote }) {
+export default function IssueList({ issues = [], activeId, onSelect, renderActions, renderFooter, readonlyNote, filtersDisabled = false }) {
   const meta = useMeta()
   const [cat, setCat] = useState("")
   const [sev, setSev] = useState("")
@@ -28,18 +28,18 @@ export default function IssueList({ issues = [], activeId, onSelect, renderActio
   return (
     <div>
       <div className="issue-filters mb-3 flex flex-wrap gap-2">
-        <select className="select select-bordered select-xs" value={cat} onChange={(e) => setCat(e.target.value)} aria-label="问题类别">
+        <select disabled={filtersDisabled} className="select select-bordered select-xs" value={cat} onChange={(e) => setCat(e.target.value)} aria-label="问题类别">
           <option value="">全部类别</option>
           {(meta.issue_categories || []).map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
         </select>
-        <select className="select select-bordered select-xs" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="人工确认状态">
+        <select disabled={filtersDisabled} className="select select-bordered select-xs" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="人工确认状态">
           <option value="">全部确认状态</option>
           <option value="PENDING">待确认</option>
           <option value="CONFIRMED">已确认</option>
           <option value="MODIFIED">已修改确认</option>
           <option value="REJECTED">已驳回</option>
         </select>
-        <select className="select select-bordered select-xs" value={sev} onChange={(e) => setSev(e.target.value)} aria-label="问题级别">
+        <select disabled={filtersDisabled} className="select select-bordered select-xs" value={sev} onChange={(e) => setSev(e.target.value)} aria-label="问题级别">
           <option value="">全部级别</option>
           {(meta.severities || []).map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
         </select>

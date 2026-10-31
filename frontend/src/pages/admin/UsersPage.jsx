@@ -40,6 +40,7 @@ export default function UsersPage() {
   const [formError, setFormError] = useState("")
   const [fieldErrors, setFieldErrors] = useState({})
   const [secret, setSecret] = useState("")
+  const [importOpen, setImportOpen] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importing, setImporting] = useState(false)
   const [downloadingPasswords, setDownloadingPasswords] = useState(false)
@@ -233,6 +234,7 @@ export default function UsersPage() {
     <div>
       <PageHeader title="用户管理" extra={
         <>
+          <button type="button" className="btn btn-outline btn-sm" disabled={importing || downloadingPasswords} aria-expanded={importOpen} aria-controls="user-import-panel" onClick={() => setImportOpen(value => !value)}>批量导入</button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={downloadTemplate} disabled={downloadingTemplate}>
             {downloadingTemplate && <span className="loading loading-spinner loading-xs" />}
             {downloadingTemplate ? "模板准备中…" : "下载导入模板"}
@@ -257,7 +259,8 @@ export default function UsersPage() {
           </button>
         </div>
       )}
-      <div className="surface-card mb-4 p-3 text-sm">
+      {!importOpen && importResult && <p className="mb-3 text-sm" role="status">导入结果已保留。<button type="button" className="link ml-2" onClick={() => setImportOpen(true)}>查看导入结果</button></p>}
+      <section id="user-import-panel" hidden={!importOpen} aria-label="用户批量导入" className="surface-card mb-4 p-3 text-sm">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-base-content/60">Excel 导入</span>
           <select className="select select-bordered select-xs" value={batchId} onChange={(e) => setBatchId(e.target.value)} disabled={importing}>
@@ -298,7 +301,7 @@ export default function UsersPage() {
             )}
           </div>
         )}
-      </div>
+      </section>
       <div className="surface-card p-2">
         <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty={query.q || query.role || query.org_id || query.is_active ? "没有符合条件的用户" : "暂无用户"} columns={[
           { key: "name", title: "用户", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },

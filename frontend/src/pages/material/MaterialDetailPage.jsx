@@ -1,5 +1,7 @@
+import ContentTabs from "../../components/common/ContentTabs"
 import { Suspense, useEffect, useRef, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
+import { studentMaterialReturn } from "../../utils/studentFlowGuide"
 import PageHeader from "../../components/layout/PageHeader"
 import MaterialViewer from "../../components/material/MaterialViewer"
 import { lazyWithRetry } from "../../utils/lazyLoad"
@@ -31,6 +33,8 @@ export default function MaterialDetailPage() {
   const mat = useRequest(() => getMaterial(id), [id])
   const versions = useRequest(() => listVersions(id), [id])
   const [tab, setTab] = useState("preview")
+  const visitedTabs = useRef(new Set())
+  visitedTabs.current.add(tab)
   const [versionId, setVersionId] = useState(null)
   const [page, setPage] = useState(1)
   const [activeIssueId, setActiveIssueId] = useState(null)
@@ -55,6 +59,7 @@ export default function MaterialDetailPage() {
   const submission = useRequest(() => getSubmission(subId), [subId, activeRole?.role, activeRole?.org_id], { immediate: !!subId })
   const reviewer = isReviewer(activeRole)
   const student = isStudent(activeRole)
+  const returnLink = studentMaterialReturn(subId, searchParams)
   const allVersions = versions.data || []
   const selectedVersion = allVersions.find((version) => String(version.id) === String(vid)) || (String(m?.current_version?.id) === String(vid) ? m?.current_version : null)
   const historical = !!vid && String(vid) !== String(m?.current_version?.id)
@@ -170,6 +175,11 @@ export default function MaterialDetailPage() {
     <PageHeader title={m.title || m.type?.name || "材料"} crumbs={[{ label: student ? "我的材料" : "档案", to: student ? "/my/materials" : `/archives/${m.archive_id}` }, { label: "材料" }]}>
       {m.type?.name || "类型未确认"} · {m.type_status} · 置信度 {m.type_confidence ?? "—"} · 第 {selectedVersion?.version_no || "—"} 版 · {fmtSize(selectedVersion?.file_size)} · {selectedVersion?.page_count || 0} 页
     </PageHeader>
+    {student && <div className="surface-card mb-3 flex flex-wrap items-center justify-between gap-3 p-3">
+      <p className="text-xs text-base-content/65">{historical ? "正在核对问题对应的历史版本；如需替换材料，请切换到当前版本后上传。" : canUpload ? "先对照原件查看问题。原件有误可上传新版本；仅识别文字有误，请在问题回复中说明，由审核人员核对校正。" : "材料已进入审核，当前仅可查看；处理进度可在发展进度中查询。"}</p>
+      <Link className="btn btn-outline btn-sm" to={returnLink.to}>{returnLink.label}</Link>
+      {canUpload && !historical && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTab("versions")}>上传修改后的版本</button>}
+    </div>}
     {historical && <div className="alert alert-info mb-3 py-2 text-xs">当前查看历史版本，仅供阅读与对比。<button type="button" className="btn btn-ghost btn-xs" onClick={() => selectVersion(m.current_version)}>返回当前版本</button></div>}
     <div className="mb-4"><TypeConfirmSelect value={m.type?.id} disabled={historical || (!canUpload && !canCorrect)} onConfirm={async (typeId) => {
       const updated = await setType(id, typeId)
@@ -195,14 +205,12 @@ export default function MaterialDetailPage() {
     {jobError && <p role="alert" className="mb-2 text-xs text-error">任务状态获取失败，正在重试：{jobError.message}</p>}
     {refreshError && <p role="alert" className="mb-2 text-xs text-error">{refreshError} <button type="button" className="link" onClick={refresh}>刷新</button></p>}
     {versions.error && <p role="alert" className="mb-2 text-xs text-error">版本列表加载失败，来源定位可能不完整。<button type="button" className="link" onClick={() => versions.reload().catch(() => {})}>重试</button></p>}
-    <div role="tablist" className="tabs tabs-bordered mb-3">
-      {[["preview", "预览"], ["text", "解析文本"], ["versions", "版本"], ["issues", "问题"]].map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={tab === key} className={`tab ${tab === key ? "tab-active" : ""}`} onClick={() => setTab(key)}>{label}</button>)}
-    </div>
-    {tab === "preview" && <>
+    <ContentTabs items={[["preview", "预览"], ["text", "解析文本"], ["versions", "版本"], ["issues", "问题"]]} value={tab} onChange={setTab} label="材料内容" idPrefix="material-tabs" />
+    <div role="tabpanel" id="material-tabs-panel-preview" aria-labelledby="material-tabs-preview" hidden={tab !== "preview"}>{visitedTabs.current.has("preview") && <><>
       {activeIssue && <div className="surface-card mb-3 p-3 text-xs"><p className="font-medium">问题定位：{activeIssue.title}</p><p className="mt-1">{activeIssue.description}</p>{!activeIssue.location?.bbox && <p className="mt-1 text-base-content/60">该问题未提供框选坐标，请结合问题描述核查页面。</p>}</div>}
       <MaterialViewer materialId={m.id} versionId={vid} page={page} onPage={setPage} pageCount={selectedVersion?.page_count} highlights={highlights} activeId={activeIssueId || (sourceBox ? "source" : null)} refreshKey={refreshKey} />
-    </>}
-    {tab === "text" && <div className="surface-card p-4">
+    </></>}</div>
+    <div role="tabpanel" id="material-tabs-panel-text" aria-labelledby="material-tabs-text" hidden={tab !== "text"}>{visitedTabs.current.has("text") && <><div className="surface-card p-4">
       {parsed.loading || (parsed.data && String(parsed.data.version_id) !== String(vid)) ? <Loading label="解析文本" /> : parsed.error ? <ErrorState error={parsed.error} onRetry={parsed.reload} /> :
         <Suspense fallback={<Loading label="解析文本" />}><ParsedTextPanel parsed={parsed.data} editable={canCorrect && !historical && selectedVersion?.parse_status === "DONE"} onSave={async (body) => {
           const result = await putParsed(id, body)
@@ -210,8 +218,8 @@ export default function MaterialDetailPage() {
           if (result.job_id) setTaskId(result.job_id)
           await parsed.reload()
         }} /></Suspense>}
-    </div>}
-    {tab === "versions" && <div className="grid gap-4 lg:grid-cols-2">
+    </div></>}</div>
+    <div role="tabpanel" id="material-tabs-panel-versions" aria-labelledby="material-tabs-versions" hidden={tab !== "versions"}>{visitedTabs.current.has("versions") && <><div className="grid gap-4 lg:grid-cols-2">
       <div>
         {versions.error ? <ErrorState error={versions.error} onRetry={versions.reload} /> : <VersionList versions={allVersions} currentId={vid} onSelect={selectVersion}
           reportHref={subId ? (rid) => `${student ? `/my/self-check/${subId}` : `/review/submissions/${subId}`}?report=${rid}` : undefined} />}
@@ -235,8 +243,8 @@ export default function MaterialDetailPage() {
         </div> : <p className="mt-3 text-xs text-base-content/55">至少上传两个版本后可对比差异。</p>}
       </div>
       <div>{diffError && <p role="alert" className="mb-2 text-xs text-error">{diffError}</p>}<VersionDiff diff={diff} /></div>
-    </div>}
-    {tab === "issues" && (issues.loading ? <Loading label="材料问题" /> : issues.error ? <ErrorState error={issues.error} onRetry={issues.reload} /> : <IssueList issues={issues.data?.items || []} activeId={activeIssueId} onSelect={selectIssue} />)}
-    {m.submission_id && reviewer && <Link className="btn btn-ghost btn-sm mt-4" to={`/review/submissions/${m.submission_id}`}>打开审核工作区</Link>}
+    </div></>}</div>
+    <div role="tabpanel" id="material-tabs-panel-issues" aria-labelledby="material-tabs-issues" hidden={tab !== "issues"}>{visitedTabs.current.has("issues") && <>{(issues.loading ? <Loading label="材料问题" /> : issues.error ? <ErrorState error={issues.error} onRetry={issues.reload} /> : <IssueList issues={issues.data?.items || []} activeId={activeIssueId} onSelect={selectIssue} />)}
+    {m.submission_id && reviewer && <Link className="btn btn-ghost btn-sm mt-4" to={`/review/submissions/${m.submission_id}`}>打开审核工作区</Link>}</>}</div>
   </div>
 }

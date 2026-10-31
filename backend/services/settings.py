@@ -144,5 +144,22 @@ def test_ai(db: Session, target: str, override: dict | None = None) -> dict:
             raise unprocessable('OCR 测试配置须为对象')
         from ai.ocr import probe
         return probe({**get_setting(db,'ocr',{}),**(override or {})})
+    if target == "ocr_proofread_demo":
+        # Fixed synthetic input only. No material ID, uploaded text, or image is
+        # accepted by this settings test endpoint.
+        sample = "今年是2025年，也是抗5战胜利80周年。"
+        from time import monotonic
+        start = monotonic()
+        result, err, _ = chat_json(db, "OCR_PROOFREAD_DEMO", {"text": sample}, override)
+        if err:
+            return {"ok": False, "latency_ms": int((monotonic() - start) * 1000),
+                    "sample": sample, "corrections": [], "message": err}
+        corrections = result.get("corrections", [])
+        if any(item["original"] not in sample for item in corrections):
+            return {"ok": False, "latency_ms": int((monotonic() - start) * 1000),
+                    "sample": sample, "corrections": [], "message": "模型建议未能对应虚构 OCR 原文"}
+        return {"ok": True, "latency_ms": int((monotonic() - start) * 1000),
+                "model": get_setting(db, "ai", {}).get("model"), "sample": sample,
+                "corrections": corrections, "message": "虚构文本校对完成；结果仅为建议，未修改任何材料"}
     parsed, err, ms = chat_json(db, "CONNECTION_TEST", {"text": "Return a JSON object: {\"ok\":true}"}, override)
     return {"ok": err is None, "latency_ms": int(ms), "model": (override or {}).get("model") or get_setting(db, "ai", {}).get("model"), "message": err or "ok"}

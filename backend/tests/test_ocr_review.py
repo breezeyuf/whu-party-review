@@ -121,7 +121,7 @@ def test_failure_preserves_ocr_and_stops_further_calls(monkeypatch, config, tran
     requests, reply = transport
     if failure == 'timeout': reply['timeout'] = True
     if failure == 'http': reply['status'] = 500
-    if failure == 'schema': reply['content'] = {'text': 'invented'}
+    if failure == 'schema': reply['content'] = {'text': {'invalid': 'nested text'}}
     document['pages'][0]['blocks'] *= 3
     original = document['full_text']
     monkeypatch.setattr(review, 'get_setting', lambda *args: config)
@@ -195,3 +195,39 @@ def test_no_text_model_settings_are_read(monkeypatch, config, transport, documen
 def synthetic_private_dns(monkeypatch):
     from services import model_network
     monkeypatch.setattr(model_network, "_resolve", lambda *args: ["10.2.3.4"])
+
+
+def test_text_only_provider_response_is_uncertain_and_preserves_evidence(monkeypatch, config, transport, document):
+    requests, reply = transport
+    reply['content'] = {'text': 'synthetic transcription'}
+    original = deepcopy(document)
+    monkeypatch.setattr(review, 'get_setting', lambda *args: config)
+    review.review_result(None, document)
+    item = document['pages'][0]['vision_reviews'][0]
+    assert len(requests) == 1
+    assert item['status'] == 'pending'
+    assert item['candidate_text'] == 'synthetic transcription'
+    assert item['confidence'] == 0 and item['uncertain'] is True
+    assert document['full_text'] == original['full_text']
+    assert document['pages'][0]['text'] == original['pages'][0]['text']
+
+
+def test_text_only_connection_is_not_rejected_for_missing_confidence(monkeypatch, config, transport):
+    transport[1]['content'] = {'text': '虚构学生 2026'}
+    monkeypatch.setattr(review, 'get_setting', lambda *args: config)
+    assert review.test_connection(None)['ok'] is True
+
+
+def test_wrong_synthetic_transcription_does_not_pass_connection(monkeypatch, config, transport):
+    transport[1]['content'] = {'text': 'unrelated response'}
+    monkeypatch.setattr(review, 'get_setting', lambda *args: config)
+    assert review.test_connection(None)['ok'] is False
+
+
+def test_truncated_provider_output_never_becomes_a_suggestion(monkeypatch, config):
+    monkeypatch.setattr(review, 'decrypt_field', lambda _: 'synthetic-key')
+    response = Mock()
+    response.json.return_value = {'choices': [{'finish_reason': 'length', 'message': {'content': '{"text":"partial"}'}}]}
+    monkeypatch.setattr(review, '_post_chat', lambda *args: (response, None))
+    answer, error = review.review_image(config, b'png', 'synthetic original')
+    assert answer is None and '长度上限' in error

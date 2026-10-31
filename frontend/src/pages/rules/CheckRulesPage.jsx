@@ -97,7 +97,7 @@ export default function CheckRulesPage() {
               <option value="RULE">规则</option><option value="LLM">大模型</option><option value="RULE_LLM">混合</option>
             </select>
             <select className="select select-bordered select-sm" value={edit.severity || "WARN"} onChange={(e) => setEdit({ ...edit, severity: e.target.value })}>
-              <option value="BLOCK">阻断</option><option value="WARN">警告</option><option value="INFO">提示</option>
+              <option value="BLOCK">关键问题</option><option value="WARN">警告</option><option value="INFO">提示</option>
             </select>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="checkbox checkbox-xs" checked={!!edit.needs_human_judgement} onChange={(e) => setEdit({ ...edit, needs_human_judgement: e.target.checked })} />需人工研判</label>
             <textarea className="textarea textarea-bordered text-xs sm:col-span-2" rows={2} placeholder="规则依据" value={edit.basis || ""} onChange={(e) => setEdit({ ...edit, basis: e.target.value })} />
