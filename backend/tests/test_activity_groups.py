@@ -1,4 +1,6 @@
-from models import Job, AuditLog
+import pytest
+
+from models import Job, AuditLog, Org, UserRole
 from tests.test_review_regressions import case, test_engine, as_client
 from utils import now
 
@@ -68,3 +70,71 @@ def test_mark_all_read_changes_current_account_only(case, as_client):
     c.db.refresh(theirs)
     assert theirs.is_read is False
     assert client.put('/api/messages/read-all').json()['data']['updated']==0
+
+
+@pytest.mark.parametrize('role', ['STUDENT', 'BRANCH_REVIEWER', 'CROSS_REVIEWER'])
+def test_users_role_filter_paginates_unique_users(case, as_client, role):
+    c = case
+    first = c.actor('role-filter-first', role, c.branches[0])
+    c.add(UserRole, user_id=first.id, role=role, org_id=c.branches[1].id, created_at=now())
+    second = c.actor('role-filter-second', role, c.branches[0])
+    third = c.actor('role-filter-third', role, c.branches[1])
+    c.actor('role-filter-unrelated', 'ORG_ADMIN', c.school)
+    client = as_client(c.org)
+
+    pages = []
+    for page in (1, 2, 3):
+        response = client.get('/api/users', params={
+            'q': 'role-filter-', 'role': role, 'page': page, 'page_size': 2,
+        })
+        assert response.status_code == 200
+        data = response.json()['data']
+        assert data['total'] == 3
+        assert data['page'] == page and data['page_size'] == 2
+        pages.append(data['items'])
+
+    assert [[row['id'] for row in rows] for rows in pages] == [
+        [first.id, second.id], [third.id], [],
+    ]
+    ids = [row['id'] for rows in pages for row in rows]
+    assert len(ids) == len(set(ids)) == 3
+    assert {(grant['role'], grant['org_id']) for grant in pages[0][0]['roles']} == {
+        (role, c.branches[0].id), (role, c.branches[1].id),
+    }
+
+
+@pytest.mark.parametrize('role', ['BRANCH_REVIEWER', 'CROSS_REVIEWER'])
+def test_users_role_filter_preserves_college_scope(case, as_client, role):
+    c = case
+    other_college = c.add(Org, name='Other college', org_type='COLLEGE', parent_id=c.school.id,
+                          created_at=now(), updated_at=now())
+    other_branch = c.add(Org, name='Other branch', org_type='BRANCH', parent_id=other_college.id,
+                         created_at=now(), updated_at=now())
+    local = c.actor('scope-local', role, c.branches[0])
+    c.add(UserRole, user_id=local.id, role=role, org_id=c.branches[1].id, created_at=now())
+    external_default = c.actor('scope-external-default', role, other_branch)
+    c.add(UserRole, user_id=external_default.id, role=role, org_id=c.branches[0].id,
+          created_at=now())
+    foreign_grant_only = c.actor('scope-foreign-grant-only', role, other_branch)
+    foreign_grant_only.user.org_id = c.branches[0].id
+    c.actor('scope-outsider', role, other_branch)
+    c.actor('scope-wrong-role', 'STUDENT', c.branches[0])
+    c.db.flush()
+    client = as_client(c.col)
+
+    # Cross-review selectors follow grant scope; other roles follow default organization.
+    expected = [local.id, external_default.id if role == 'CROSS_REVIEWER' else foreign_grant_only.id]
+    ids = []
+    for page in (1, 2, 3):
+        response = client.get('/api/users', params={
+            'q': 'scope-', 'role': role, 'page': page, 'page_size': 1,
+        })
+        assert response.status_code == 200
+        data = response.json()['data']
+        assert data['total'] == len(expected)
+        assert data['page'] == page and data['page_size'] == 1
+        assert [row['id'] for row in data['items']] == expected[page - 1:page]
+        ids.extend(row['id'] for row in data['items'])
+
+    assert ids == expected
+    assert len(ids) == len(set(ids))

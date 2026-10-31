@@ -56,8 +56,7 @@ export default function JobsPage() {
   const job = detail.data
   return (
     <div>
-      <PageHeader title="后台任务进度" extra={<button className="btn btn-outline btn-sm" onClick={() => { setRefresh((v) => v+1); req.reload().catch(() => {}) }}>刷新任务</button>}>展开一位发起人查看任务，或切换到全部任务按时间查询。</PageHeader>
-      <div className="mb-3 flex gap-2" aria-label="任务查看方式"><button className={`btn btn-sm ${grouped ? "btn-primary" : "btn-ghost"}`} onClick={() => setQuery({ view: "", page_size: 10 })}>按发起人</button><button className={`btn btn-sm ${!grouped ? "btn-primary" : "btn-ghost"}`} onClick={() => setQuery({ view: "all", page_size: 20 })}>全部任务</button></div>
+      <PageHeader title="后台任务进度" extra={<button className="btn btn-outline btn-sm" onClick={() => { setRefresh((v) => v+1); req.reload().catch(() => {}); if (detail.id) open(detail.id) }}>刷新任务</button>}>展开一位发起人查看任务，或切换到全部任务按时间查询。</PageHeader>
       <FilterBar
         values={query}
         onChange={setQuery}
@@ -80,7 +79,7 @@ export default function JobsPage() {
             { code: "FAILED", name: "失败" },
           ] },
         ]}
-      />
+      ><div className="mb-3 flex flex-wrap gap-2" aria-label="任务查看方式"><button type="button" className={`btn btn-sm ${grouped ? "btn-primary" : "btn-ghost"}`} aria-pressed={grouped} onClick={() => setQuery({ view: "", page_size: 10 })}>按发起人</button><button type="button" className={`btn btn-sm ${!grouped ? "btn-primary" : "btn-ghost"}`} aria-pressed={!grouped} onClick={() => setQuery({ view: "all", page_size: 20 })}>全部任务</button></div></FilterBar>
       <div className={`grid gap-4 ${detail.id ? "lg:grid-cols-5" : ""}`}>
         <div className={`surface-card p-2 ${detail.id ? "lg:col-span-3" : ""}`}>
           {grouped ? <>

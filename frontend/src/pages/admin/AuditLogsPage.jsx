@@ -70,13 +70,14 @@ export default function AuditLogsPage() {
   return (
     <div>
       <PageHeader title="操作日志">登录、上传、审核、退回、备案、规则修改和导出都会留痕，日志不可删除。</PageHeader>
-      <ActorPicker label={query.actor_label || (query.user_id ? `账号 #${query.user_id}` : query.legacy_username)} onChange={(person) => setQuery({ user_id: person?.user_id ?? "", legacy_username: person?.legacy_username ?? "", username: "", actor_label: person ? `${person.name} · ${person.username}` : "" })}/>
       <FilterBar values={query} onChange={setQuery} onReset={() => setQuery({ user_id: "", legacy_username: "", actor_label: "", username: "", action: "", object_type: "", date_from: "", date_to: "" })} fields={[
         { key: "action", label: "动作（编码）" },
         { key: "object_type", label: "对象类型" },
         { key: "date_from", label: "开始", placeholder: "YYYY-MM-DD" },
         { key: "date_to", label: "结束", placeholder: "YYYY-MM-DD" },
-      ]} />
+      ]}>
+      <ActorPicker label={query.actor_label || (query.user_id ? `账号 #${query.user_id}` : query.legacy_username)} onChange={(person) => setQuery({ user_id: person?.user_id ?? "", legacy_username: person?.legacy_username ?? "", username: "", actor_label: person ? `${person.name} · ${person.username}` : "" })}/>
+      </FilterBar>
       <div className="surface-card p-2">
         <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="没有符合条件的操作记录" emptyHint="可以调整账号、动作或日期范围后再查询。" columns={[
           { key: "time", title: "时间", render: (r) => <span className="mono text-xs">{fmtDateTime(r.created_at)}</span> },

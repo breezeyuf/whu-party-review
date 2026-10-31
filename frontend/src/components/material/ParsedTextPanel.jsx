@@ -76,10 +76,13 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
         <span className="label-text text-xs">解析文本</span>
         <textarea className="textarea textarea-bordered font-mono text-xs" rows={10} value={text} readOnly={!editable || busy} onChange={(e) => setText(e.target.value)} />
       </label>
-      <label className="form-control">
+      <details className="service-inline-details" open={editable ? true : undefined}>
+      <summary>{editable ? "抽取字段校正" : "识别详情"}</summary>
+      <label className="form-control mt-2">
         <span className="label-text text-xs">抽取字段（JSON）</span>
         <textarea className="textarea textarea-bordered font-mono text-xs" rows={6} value={fields} readOnly={!editable || busy} onChange={(e) => setFields(e.target.value)} />
       </label>
+      </details>
       <div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">时间节点抽取</h3>
           {editable && <button type="button" className="btn btn-outline btn-xs" disabled={busy || !definitions.some((def) => def.is_active !== false && def.value_kind !== "DERIVED")} onClick={() => setDrafts((rows) => [...rows, extractionDraft({}, `new-${++nextKey.current}`)])}>新增节点记录</button>}
