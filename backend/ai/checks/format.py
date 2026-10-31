@@ -134,6 +134,12 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
             q = p.get("quality") or {}
             if p.get('source') not in ('scan','image','ocr'):
                 continue
+            from ai.ocr_status import needs_review
+            if needs_review(p) or (p.get('ocr_status') == 'MANUALLY_REVIEWED' and not (p.get('text') or '').strip()):
+                # Blank/photos need human review; blank pixels are not proof of
+                # an unreadable text scan. The independent OCR check covers it.
+                unknown = True
+                continue
             blur_th = _measurement(q.get('blur_threshold', params.get('blur_threshold',60)), allow_zero=True)
             min_dpi = _measurement(q.get('min_dpi',params.get('min_dpi',150)))
             if blur_th is None or min_dpi is None:
@@ -148,11 +154,6 @@ def _check_one(rule: CheckRule, m, ver, pr: ParseResult | None, t) -> list[Issue
                 return [_draft(rule, m, ver, f"第 {p.get('page_no')} 页原始扫描分辨率不足", f'{source_dpi:.0f} DPI', f"≥ {min_dpi} DPI")]
             if q.get("is_blurry") or (score is not None and score < blur_th):
                 return [_draft(rule, m, ver, f"第 {p.get('page_no')} 页清晰度不足", str(q.get("blur_score")), f"拉普拉斯方差 ≥ {blur_th}")]
-            if p.get("source") in ("scan", "image") and not (p.get("text") or "").strip():
-                d = _draft(rule, m, ver, "扫描件文本缺失，需人工核对", "空", "可识别文本")
-                d.needs_human_judgement = True
-                d.confidence = 0.5
-                return [d]
         return [] if measured and not unknown else None
     if code == 'R-F08':
         from ai.layout import check_layout

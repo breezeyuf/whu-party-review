@@ -1,5 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
+import ContentTabs from "../../components/common/ContentTabs"
+import ActionPopover from "../../components/common/ActionPopover"
 import PageHeader from "../../components/layout/PageHeader"
 import MaterialViewer from "../../components/material/MaterialViewer"
 import IssueList from "../../components/review/IssueList"
@@ -10,7 +12,7 @@ import ReviewDecisionPanel from "../../components/review/ReviewDecisionPanel"
 import ReviewTrail from "../../components/review/ReviewTrail"
 import TimelineView from "../../components/archive/TimelineView"
 import RecheckSummary from "../../components/review/RecheckSummary"
-import { DemoBadge, StatusBadge } from "../../components/common/Badges"
+import { DemoBadge } from "../../components/common/Badges"
 import { Loading, ErrorState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
 import { getSubmission, reviewRecords, reviewSubmission, fileSubmission } from "../../api/submissions"
@@ -20,9 +22,12 @@ import { correctNode, getTimeline } from "../../api/archives"
 import { listVersions } from "../../api/materials"
 import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
-import { issueHighlights, issueLocation, loadAllReviewIssues, reportBlockReason, sameId } from "../../utils/review"
+import { statusName } from "../../utils/format"
+import { useMeta } from "../../context/MetaContext"
+import { issueHighlights, issueLocation, loadAllReviewIssues, reportBlockReason, passBlockReason, sameId } from "../../utils/review"
 import { ModalLoading } from "../../components/common/Modal"
 import { lazyWithRetry, whenIdle } from "../../utils/lazyLoad"
+import { reportMaterials, reportTimeline } from "../../utils/reportSnapshot"
 
 // 只在打开时才用到的弹窗不进页面首屏；有权使用时在页面空闲时提前下载，打开时不再等待
 const AddIssueModal = lazyWithRetry(() => import("../../components/review/AddIssueModal"))
@@ -32,15 +37,16 @@ const ReviewJobStatus = lazyWithRetry(() => import("../../components/review/Revi
 
 const TABS = [
   ["issues", "问题清单"],
-  ["timeline", "时间轴"],
-  ["complete", "完整性"],
-  ["report", "AI 报告"],
+  ["complete", "材料完整性"],
+  ["timeline", "时间节点"],
+  ["report", "自查报告"],
   ["trail", "审核记录"],
 ]
 
 export default function ReviewWorkspacePage() {
   const { id } = useParams()
   const toast = useToast()
+  const meta = useMeta()
   const { activeRole } = useAuth()
   const roleKey = `${activeRole?.role}:${activeRole?.org_id}`
   const [searchParams, setSearchParams] = useSearchParams()
@@ -83,30 +89,31 @@ export default function ReviewWorkspacePage() {
     setJobId(null); setNoticeId(null); setLocationNote(""); setTimelineHighlight(null)
     setAdding(false); setNewIssueLocation(null); setCorrecting(null); setTab("issues")
     return () => { locateSequence.current += 1 }
-  }, [id, roleKey])
+  }, [id, roleKey, reportId])
 
   const canAddIssue = !!sub?.can?.add_issue
   const canEditTimeline = !!sub?.can?.edit_timeline
   useEffect(() => (canAddIssue ? whenIdle(() => AddIssueModal.preload().catch(() => {}), 0) : undefined), [canAddIssue])
   useEffect(() => (canEditTimeline ? whenIdle(() => NodeCorrectionModal.preload().catch(() => {}), 0) : undefined), [canEditTimeline])
 
-  const materials = sub?.materials || []
   const issues = issueReq.data?.items || []
   // 历史报告模式用报告自带快照：问题、完整性、材料版本都按当时那一刻展示，不混入当前状态
-  const historyReport = viewingHistoryReport ? reportReq.data : null
+  const historyReport = viewingHistoryReport && sameId(reportReq.data?.id, reportId) ? reportReq.data : null
   const historyIssues = Object.values(historyReport?.issues_by_category || {}).flat()
-  const snapshotMode = !!historyReport
+  const snapshotMode = viewingHistoryReport
+  const materials = snapshotMode ? reportMaterials(historyReport, sub?.materials) : sub?.materials || []
+  const shownTimeline = snapshotMode ? reportTimeline(historyReport) : timeReq.data
   const shownIssues = snapshotMode ? historyIssues : issues
   const shownCompleteness = snapshotMode ? historyReport?.completeness : compReq.data
   // 报告必须属于当前提交包，否则会把别的问题挂在这条提交包下
   const reportMismatch = !!historyReport && !sameId(historyReport.submission_id, id)
-  const activeIssue = issues.find((issue) => sameId(issue.id, activeIssueId))
+  const activeIssue = shownIssues.find((issue) => sameId(issue.id, activeIssueId))
   const currentMat = materialSelection ? materials.find((m) => sameId(m.id, materialSelection.materialId)) : materials[0]
   const currentVersion = materialSelection?.versionId || currentMat?.current_version_id
   const highlights = useMemo(() => [
-    ...issueHighlights(issueReq.data?.items || [], currentMat, currentVersion),
+    ...issueHighlights(shownIssues, currentMat, currentVersion),
     ...(timelineHighlight && sameId(timelineHighlight.materialId, currentMat?.id) && sameId(timelineHighlight.versionId, currentVersion) ? [timelineHighlight] : []),
-  ], [issueReq.data, currentMat, currentVersion, timelineHighlight])
+  ], [shownIssues, currentMat, currentVersion, timelineHighlight])
   const trackedJobId = jobId || (["QUEUED", "RUNNING", "FAILED"].includes(sub?.ai_status) ? sub?.ai_job_id : null)
 
   const selectIssue = (issue) => {
@@ -161,6 +168,7 @@ export default function ReviewWorkspacePage() {
   if (subReq.loading && !sub) return <Loading />
   if (subReq.error) return <ErrorState error={subReq.error} onRetry={() => subReq.reload().catch(() => {})} />
   if (!sub) return null
+  if (snapshotMode && !historyReport) return <div><button type="button" className="btn btn-ghost" onClick={backToLatestReport}>返回最新报告</button>{reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <Loading label="历史报告" />}</div>
   if (reportMismatch) return (
     <div className="review-workspace">
       <PageHeader title="报告与提交包不匹配" extra={<Link className="btn btn-outline btn-sm" to={`/review/submissions/${historyReport.submission_id}?report=${historyReport.id}`}>打开所属提交包</Link>} />
@@ -176,21 +184,23 @@ export default function ReviewWorkspacePage() {
         title={`${sub.archive?.real_name || ""} · ${sub.stage_name || ""}`}
         extra={(
           <>
-            <StatusBadge code={sub.status} />
             <DemoBadge show={sub.archive?.is_demo || sub.is_demo} />
-            <details className="service-more-actions"><summary>更多操作</summary><div>
+            <ActionPopover>
             {!snapshotMode && sub.can?.ai_check && !needsAiCheck && (
               <button type="button" className="btn btn-outline btn-sm" disabled={aiBusy || ["QUEUED", "RUNNING"].includes(sub.ai_status)} onClick={startAiCheck}>{aiBusy ? "发起中…" : ["QUEUED", "RUNNING"].includes(sub.ai_status) ? "AI 检查中…" : sub.ai_status === "FAILED" ? "重新 AI 审核" : "AI 审核"}</button>
             )}
             {!snapshotMode && sub.can?.add_issue && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setNewIssueLocation(null); setAdding(true) }}>新增问题</button>}
             <Link className="btn btn-ghost btn-sm" to={`/archives/${sub.archive?.id}`}>查看档案</Link>
             <button type="button" className="btn btn-ghost btn-sm" disabled={subReq.loading} onClick={refreshAll}>刷新</button>
-            </div></details>
+            </ActionPopover>
           </>
         )}
       >
-        {sub.archive?.student_no} · {sub.archive?.branch_name} · 第 {sub.round_no} 轮
+        {sub.archive?.student_no} · {sub.archive?.branch_name} · 第 {sub.round_no} 轮<span className="mt-1 block">当前环节：{statusName(meta, sub.status)}</span>
       </PageHeader>
+      {activeRole?.role === "ORG_ADMIN" && !snapshotMode && <div className="surface-card mb-3 flex flex-wrap items-center justify-between gap-3 p-3 text-sm" role="status">
+        <div><p className="mb-1 text-xs text-base-content/60">关键问题须核实处理，未处理时不能通过或备案；确认问题不代表必须退回。</p><p>{passBlockReason(sub, issueReq.data?.items || [], !!issueReq.data && !issueReq.loading && !issueReq.error && !subReq.loading) || "报告与问题处置已满足前端备案条件，请核对原文后填写结论。"}</p></div><a className="btn btn-outline btn-sm shrink-0" href="#review-decision">填写备案结论</a>
+      </div>}
       {trackedJobId && <div className="mb-3"><Suspense fallback={<p className="text-xs text-base-content/60" role="status">正在加载任务状态…</p>}><ReviewJobStatus jobId={trackedJobId} onDone={refreshAll} onRetry={refreshAll} /></Suspense></div>}
       {viewingHistoryReport && <div className="surface-card mb-3 flex flex-wrap items-center gap-3 p-3 text-sm" role="status">
         <span className="badge badge-warning badge-sm">历史报告</span>
@@ -199,7 +209,6 @@ export default function ReviewWorkspacePage() {
       </div>}
       {!snapshotMode && reportBlockReason(sub) && <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-warning" role="status"><p>{reportBlockReason(sub)}</p>{needsAiCheck && <button type="button" className="btn btn-outline btn-sm" disabled={aiBusy} onClick={startAiCheck}>{aiBusy ? "发起中…" : "开始自动核对"}</button>}</div>}
       {noticeId && <div className="surface-card mb-3 p-3 text-sm">已生成并发送整改通知。<Link className="link ml-2" to={`/notices?notice=${noticeId}`}>查看整改通知</Link></div>}
-      <nav className="review-stage-links" aria-label="审核步骤"><a href="#review-materials"><span>1</span>核对材料</a><a href="#review-issues"><span>2</span>处理问题</a><a href="#review-decision"><span>3</span>填写结论</a></nav>
       <div className="review-grid">
         <section id="review-materials" className="surface-card p-4 review-preview">
           <h2 className="mb-3 text-base font-semibold">材料原文</h2>
@@ -208,9 +217,9 @@ export default function ReviewWorkspacePage() {
           </select>}
           {locationNote && <p className="mb-2 text-xs text-warning" role="status">{locationNote}</p>}
           {currentMat && <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
-            <span>{sameId(currentVersion, currentMat.current_version_id) ? `当前版本 v${currentMat.version_no || "—"}` : `问题原文版本 #${currentVersion}（历史版本）`}</span>
+            <span>{snapshotMode ? `报告原文版本 #${currentVersion}` : sameId(currentVersion, currentMat.current_version_id) ? `当前版本 v${currentMat.version_no || "—"}` : `问题原文版本 #${currentVersion}（历史版本）`}</span>
             {!sameId(currentVersion, currentMat.current_version_id) && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setMaterialSelection({ materialId: currentMat.id, versionId: currentMat.current_version_id }); setActiveIssueId(null); setTimelineHighlight(null); setPage(1) }}>查看当前版本</button>}
-            <Link className="link" to={`/materials/${currentMat.id}?version_id=${currentVersion || ""}&page=${page}${activeIssue ? `&issue_id=${activeIssue.id}` : ""}`}>材料详情</Link>
+            <Link className="btn btn-ghost btn-xs" to={`/materials/${currentMat.id}?version_id=${currentVersion || ""}&page=${page}${activeIssue ? `&issue_id=${activeIssue.id}` : ""}`}>材料详情</Link>
           </div>}
           <div className="preview-scroll">
           {currentMat ? (
@@ -228,43 +237,50 @@ export default function ReviewWorkspacePage() {
         </div></section>
         <div>
         <section id="review-issues">
-          <div className="review-reference-toolbar">
-            <div className="review-switch" aria-label="工作区内容"><button type="button" aria-pressed={tab === "issues"} onClick={() => setTab("issues")}>待核对问题</button><button type="button" aria-pressed={tab !== "issues"} onClick={() => setTab("report")}>参考资料</button></div>
-            {tab !== "issues" && <select aria-label="查看参考资料" className="select select-bordered select-sm" value={tab} onChange={(event) => setTab(event.target.value)}>{TABS.filter(([key]) => key !== "issues").map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}
-          </div>
+          <ContentTabs items={TABS} value={tab} onChange={setTab} label="工作区内容" idPrefix="review-tabs" />
           <div className="review-issues-pane">
-          {tab === "issues" && issueReq.error && !snapshotMode && <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} />}
-          {tab === "issues" && issueReq.loading && !issueReq.data && !snapshotMode && <Loading label="完整问题清单" />}
-          {tab === "issues" && (snapshotMode || issueReq.data) && (
+          <div role="tabpanel" id="review-tabs-panel-issues" aria-labelledby="review-tabs-issues" hidden={tab !== "issues"}>
+          {issueReq.error && !snapshotMode && <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} />}
+          {issueReq.loading && !issueReq.data && !snapshotMode && <Loading label="完整问题清单" />}
+          {(snapshotMode || issueReq.data) && (
             <IssueList
               issues={shownIssues}
               activeId={activeIssue?.id}
-              onSelect={snapshotMode ? undefined : selectIssue}
+              onSelect={selectIssue}
               renderActions={(issue) => !snapshotMode && sub.can?.add_issue ? <IssueActions issue={issue} disabled={issueReq.loading || subReq.loading} onChanged={refreshAll} /> : null}
             />
           )}
-          {tab === "timeline" && timeReq.error && <ErrorState error={timeReq.error} onRetry={() => timeReq.reload().catch(() => {})} />}
-          {tab === "timeline" && timeReq.loading && <Loading label="时间轴" />}
-          {tab === "timeline" && !timeReq.loading && !timeReq.error && (
+          </div>
+          <div role="tabpanel" id="review-tabs-panel-timeline" aria-labelledby="review-tabs-timeline" hidden={tab !== "timeline"}>
+          {!snapshotMode && timeReq.error && <ErrorState error={timeReq.error} onRetry={() => timeReq.reload().catch(() => {})} />}
+          {!snapshotMode && timeReq.loading && <Loading label="时间轴" />}
+          {(snapshotMode || (!timeReq.loading && !timeReq.error)) && (
             <TimelineView
               allowLockedCorrection={activeRole?.role === "ORG_ADMIN"}
-              timeline={timeReq.data}
+              timeline={shownTimeline}
               onCorrect={!snapshotMode && sub.can?.edit_timeline ? setCorrecting : undefined}
               onLocate={locateTimeline}
             />
           )}
-          {tab === "complete" && (snapshotMode
+          </div>
+          <div role="tabpanel" id="review-tabs-panel-complete" aria-labelledby="review-tabs-complete" hidden={tab !== "complete"}>
+          {(snapshotMode
             ? <div className="surface-card p-3"><CompletenessTable data={shownCompleteness} /></div>
             : compReq.error ? <ErrorState error={compReq.error} onRetry={() => compReq.reload().catch(() => {})} /> : compReq.loading ? <Loading label="材料完整性" /> : <div className="surface-card p-3"><CompletenessTable data={compReq.data} /></div>)}
-          {tab === "report" && (
+          </div>
+          <div role="tabpanel" id="review-tabs-panel-report" aria-labelledby="review-tabs-report" hidden={tab !== "report"}>
+          {(
             <div className="space-y-3">
               {reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : reportReq.loading ? <Loading label="审核报告" /> : <div className="surface-card p-3"><ReportSummary report={reportReq.data} /></div>}
               <RecheckSummary summary={reportReq.data?.recheck_summary} />
             </div>
           )}
-          {tab === "trail" && (trailReq.error ? <ErrorState error={trailReq.error} onRetry={() => trailReq.reload().catch(() => {})} /> : trailReq.loading ? <Loading label="审核记录" /> : <ReviewTrail records={trailReq.data || []} />)}
+          </div>
+          <div role="tabpanel" id="review-tabs-panel-trail" aria-labelledby="review-tabs-trail" hidden={tab !== "trail"}>
+          {(trailReq.error ? <ErrorState error={trailReq.error} onRetry={() => trailReq.reload().catch(() => {})} /> : trailReq.loading ? <Loading label="审核记录" /> : <ReviewTrail records={trailReq.data || []} />)}
+          </div>
         </div></section>
-      <section id="review-decision" className="review-decision">
+      <section id="review-decision" aria-label="审核结论" className="review-decision">
         {snapshotMode ? <div className="surface-card p-4 text-sm" role="status">
           <p className="mb-2 font-medium">历史报告模式：审核决定只针对最新报告。</p>
           <button type="button" className="btn btn-outline btn-sm mt-3" onClick={backToLatestReport}>返回最新报告</button>

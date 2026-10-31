@@ -1,6 +1,6 @@
 import { useRef, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
-import { ArrowRight, FileText, ListChecks, RefreshCw, Send } from "lucide-react"
+import StudentFlowGuide from "../../components/student/StudentFlowGuide"
 import PageHeader from "../../components/layout/PageHeader"
 import ReportSummary from "../../components/review/ReportSummary"
 import CompletenessTable from "../../components/review/CompletenessTable"
@@ -38,19 +38,19 @@ export default function SelfCheckPage() {
   const [finishedJobId, setFinishedJobId] = useState(null)
   const [busy, setBusy] = useState(false)
   const [starting, setStarting] = useState(false)
-  const [confirmSubmit, setConfirmSubmit] = useState(false)
   const [tab, setTab] = useState("overview")
   const [error, setError] = useState("")
   const [replyWork, setReplyWork] = useState({})
+  const replyDrafts = useRef(new Map())
   const actionLock = useRef(false)
   const sub = subReq.data
   const jobId = (isAiPending(sub) ? sub.ai_job_id : null) || (startedTask && startedTask.submissionId === submissionId ? startedTask.id : null)
   const taskPending = !!jobId && String(jobId) !== String(finishedJobId)
   const issues = issueReq.data?.items || []
   // 历史报告只读：问题与完整性取报告快照，并校验报告属于当前提交包
-  const historyReport = viewingHistoryReport ? reportReq.data : null
+  const historyReport = viewingHistoryReport && String(reportReq.data?.id) === String(reportId) ? reportReq.data : null
   const historyIssues = Object.values(historyReport?.issues_by_category || {}).flat()
-  const snapshotMode = !!historyReport
+  const snapshotMode = viewingHistoryReport
   const shownIssues = snapshotMode ? historyIssues : issues
   const shownCompleteness = snapshotMode ? historyReport?.completeness : compReq.data
   const reportMismatch = !!historyReport && String(historyReport.submission_id) !== String(submissionId)
@@ -106,6 +106,7 @@ export default function SelfCheckPage() {
 
   if (subReq.loading && !sub) return <Loading />
   if (subReq.error) return <ErrorState error={subReq.error} onRetry={() => subReq.reload().catch(() => {})} />
+  if (snapshotMode && !historyReport) return <div><button type="button" className="btn btn-ghost" onClick={backToLatestReport}>返回最新报告</button>{reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <Loading label="历史报告" />}</div>
   if (reportMismatch) return (
     <div>
       <PageHeader title="自查与提交" crumbs={[{ label: "我的材料", to: "/my/materials" }, { label: "自查与提交" }]} />
@@ -116,15 +117,18 @@ export default function SelfCheckPage() {
     </div>
   )
 
+  const canEdit = ["DRAFT", "RETURNED"].includes(sub?.status)
+  const pageTitle = snapshotMode || !canEdit ? "自查报告" : "自查与提交"
   return (
     <div>
-      <PageHeader title="自查与提交" crumbs={[{ label: "我的材料", to: "/my/materials" }, { label: "自查与提交" }]}
-        extra={<>
+      <PageHeader title={pageTitle} crumbs={[{ label: "我的材料", to: "/my/materials" }, { label: pageTitle }]}
+        extra={canEdit && !snapshotMode ? <>
           <button type="button" className="btn btn-outline btn-sm" disabled={starting || busy || !canCheck || snapshotMode} onClick={start}>{starting ? "发起中…" : taskPending || isAiPending(sub) ? "自查进行中…" : "发起自查"}</button>
           <button type="button" className="btn btn-primary btn-sm" disabled={busy || starting || !!submitReason || snapshotMode} onClick={submit}>{busy ? "提交中…" : sub?.status === "RETURNED" ? "重新提交" : "提交审核"}</button>
-        </>}>
-        {sub?.stage_name} · AI 结论作为参考，提交前请处理待回复问题。
+        </> : null}>
+        {sub?.stage_name} · {canEdit && !snapshotMode ? "AI 结论作为参考，提交前请处理待回复问题。" : "查看本次自查结果；审核进度以发展进度和消息为准。"}
       </PageHeader>
+      {!snapshotMode && <StudentFlowGuide submission={sub} issues={issues} groups={materialsReq.data || []} ready={!!issueReq.data && !!materialsReq.data && !issueReq.error && !materialsReq.error && !subReq.loading} taskPending={taskPending || replyBusy} source="self-check" blockedReason={canEdit ? submitReason : ""}/>}
       {viewingHistoryReport && <div className="surface-card mb-3 flex flex-wrap items-center gap-3 p-3 text-sm" role="status">
         <span className="badge badge-warning badge-sm">历史报告</span>
         <span>正在查看报告 #{reportId} 的当时快照，仅供复核；提交状态与待回复问题仍以最新情况为准。</span>
@@ -133,28 +137,24 @@ export default function SelfCheckPage() {
       {jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
       {materialsReq.error && <ErrorState error={materialsReq.error} onRetry={() => materialsReq.reload().catch(() => {})} />}
-      {submitReason && <div className="alert alert-warning mb-3 text-sm">{submitReason}</div>}
-      {sub?.status === "RETURNED" && <p className="mb-3 text-sm">退回整改后可直接重提，由系统自动复核。<Link className="link" to="/my/rectification">前往整改中心</Link></p>}
-      <details className="service-details mb-5" open={!!compReq.error || !!reportReq.error || (compReq.data && !compReq.data.is_complete) ? true : undefined}>
-      <summary>查看自查报告与材料清单</summary>
-      <div className="grid gap-5 lg:grid-cols-2">
-        <section className="surface-card p-4">
-          <h2 className="mb-3 text-sm font-medium">报告摘要</h2>
-          {reportReq.loading && !reportReq.data ? <Loading /> : reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <ReportSummary report={viewingHistoryReport ? reportReq.data : (reportReq.data ? { ...reportReq.data, is_stale: sub?.latest_report?.is_stale || reportReq.data.is_stale } : sub?.latest_report)} />}
-          <Link className="btn btn-ghost btn-xs mt-3" to="/my/rectification">去整改中心</Link>
-        </section>
+      <section aria-label="自查报告与材料清单" className="mb-5">
+      <div className="grid gap-5 lg:grid-cols-2 student-report-grid">
         <section className="surface-card p-4">
           <h2 className="mb-3 text-sm font-medium">材料完整性</h2>
           {compReq.loading && !compReq.data && !snapshotMode ? <Loading /> : compReq.error && !snapshotMode ? <ErrorState error={compReq.error} onRetry={() => compReq.reload().catch(() => {})} /> : <CompletenessTable data={shownCompleteness} />}
         </section>
+        <section className="surface-card p-4">
+          <h2 className="mb-3 text-sm font-medium">报告摘要</h2>
+          {reportReq.loading && !reportReq.data ? <Loading /> : reportReq.error ? <ErrorState error={reportReq.error} onRetry={() => reportReq.reload().catch(() => {})} /> : <ReportSummary report={viewingHistoryReport ? reportReq.data : (reportReq.data ? { ...reportReq.data, is_stale: sub?.latest_report?.is_stale || reportReq.data.is_stale } : sub?.latest_report)} />}
+        </section>
       </div>
-      </details>
+      </section>
       <section className="mt-4">
         <h2 className="mb-2 text-sm font-medium">问题与修改建议</h2>
-        {issueReq.loading && !issueReq.data && !snapshotMode ? <Loading /> : issueReq.error && !snapshotMode ? <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} /> : <IssueList issues={shownIssues}
+        {issueReq.loading && !issueReq.data && !snapshotMode ? <Loading /> : issueReq.error && !snapshotMode ? <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} /> : <IssueList filtersDisabled={replyBusy} issues={shownIssues}
           readonlyNote={snapshotMode ? "这是报告生成当时的问题清单，只读；如需整改请返回最新报告。" : "逐条整改或填写情况说明；材料解析失败不代表检查通过。"}
-          renderActions={(issue) => issueMaterialId(issue) && <Link className="btn btn-ghost btn-xs" to={`/materials/${issueMaterialId(issue)}?issue_id=${issue.id}`}>查看问题材料</Link>}
-          renderFooter={(issue) => !snapshotMode && sub?.can?.submit && !taskPending && !isAiPending(sub) && <IssueResponseForm compact issue={issue} onDone={() => { refresh(); materialsReq.reload().catch(() => {}) }} onBusyChange={(value) => setReplyWork((previous) => previous[issue.id] === value ? previous : { ...previous, [issue.id]: value })} />}
+          renderActions={(issue) => issueMaterialId(issue) && <Link className="btn btn-ghost btn-xs" to={`/materials/${issueMaterialId(issue)}?issue_id=${issue.id}&from=self-check${snapshotMode ? `&report=${reportId}` : ""}${snapshotMode ? `&version_id=${issue.material_version_id || issue.location?.version_id || historyReport.material_versions?.find((v) => String(v.material_id) === String(issueMaterialId(issue)))?.version_id || ""}` : ""}`}>查看问题材料</Link>}
+          renderFooter={(issue) => !snapshotMode && issue.is_active !== false && issue.review_status !== "REJECTED" && sub?.can?.submit && !taskPending && !isAiPending(sub) && <IssueResponseForm compact issue={issue} drafts={replyDrafts.current} draftKey={`${submissionId}:${issue.id}`} onDone={() => { refresh(); materialsReq.reload().catch(() => {}) }} onBusyChange={(value) => setReplyWork((previous) => previous[issue.id] === value ? previous : { ...previous, [issue.id]: value })} />}
         />}
       </section>
     </div>

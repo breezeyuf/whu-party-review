@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react"
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom"
-import { Bell, ChevronDown, LogOut, Menu, UserRound, X } from "lucide-react"
+import { ChevronDown, LogOut, Menu, UserRound, X } from "lucide-react"
 import { menusFor } from "../../utils/permissions"
 import { isMenuActive } from "../../utils/workbench"
 import { activeOrganization, identityFor } from "../../utils/identity"
 import { roleName } from "../../utils/format"
+import { useToast } from "../../context/ToastContext"
 import { useAuth } from "../../context/AuthContext"
 import { useMeta } from "../../context/MetaContext"
 import { useUnreadCount } from "../../hooks/useUnreadCount"
+
+import MessageQuickActions from "./MessageQuickActions"
 
 function NavigationGroup({ group, pathname, onNavigate }) {
   const isActive = (item) => (item.activePaths || [item.to]).some((path) => isMenuActive(pathname, path))
@@ -27,6 +30,7 @@ function NavigationGroup({ group, pathname, onNavigate }) {
 
 export default function AppLayout({ children }) {
   const { user, activeRole, logout } = useAuth()
+  const toast = useToast()
   const meta = useMeta()
   const unread = useUnreadCount()
   const navigate = useNavigate()
@@ -52,8 +56,8 @@ export default function AppLayout({ children }) {
       <NavLink to={identity?.home || "/"} className="service-brand"><span className="service-brand-mark" aria-hidden="true">党</span><span>党员发展材料审核<span className="service-brand-subtitle">{identity?.name || "办事"}工作台</span></span></NavLink>
       <div className="service-header-actions">
         <span className="service-role-label">{roleName(meta, activeRole?.role)}</span>
-        <button type="button" className="btn btn-ghost btn-sm" aria-label={`消息${unread ? `，${unread} 条未读` : ""}`} onClick={() => navigate("/messages")}><Bell size={18} /><span className="hidden sm:inline">消息</span>{unread > 0 && <span className="badge badge-primary badge-xs">{unread > 99 ? "99+" : unread}</span>}</button>
-        <details className="service-account"><summary aria-label="个人菜单"><UserRound size={18} /><span className="hidden sm:inline">{user?.real_name || user?.username}</span><ChevronDown size={13} /></summary><div className="service-account-menu"><button type="button" onClick={() => navigate("/profile")}>个人资料</button><button type="button" onClick={async () => { await logout(); navigate("/login", { replace: true }) }}><LogOut size={15} />退出登录</button></div></details>
+        <MessageQuickActions key={`${user?.id}-${roleKey}`} unread={unread} />
+        <details className="service-account"><summary aria-label="个人菜单"><UserRound size={18} /><span className="hidden sm:inline">{user?.real_name || user?.username}</span><ChevronDown size={13} /></summary><div className="service-account-menu"><button type="button" onClick={() => navigate("/profile")}>个人资料</button><button type="button" onClick={async () => { try { await logout(); navigate("/login", { replace: true }) } catch (error) { toast.error(error.message || "退出失败，请重试") } }}><LogOut size={15} />退出登录</button></div></details>
       </div>
     </header>
     <div className="service-body">

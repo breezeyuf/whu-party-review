@@ -18,6 +18,7 @@ export default function AiQualityPage() {
   const [filters, setFilters] = useState({})
   const req = useRequest(() => aiQuality(filters), [JSON.stringify(filters)])
   const d = req.data || {}
+  const hasReviewed = Number(d.reviewed) > 0
   const byCat = Object.entries(d.by_category || {}).map(([code, n]) => ({ name: categoryName(meta, code), value: n }))
 
   return (
@@ -28,19 +29,20 @@ export default function AiQualityPage() {
       <StatsFilters value={filters} onChange={setFilters} />
       {req.loading && !req.data ? <Loading /> : req.error ? <ErrorState error={req.error} onRetry={req.reload} /> : (
         <>
+          {!hasReviewed && <div className="surface-card mb-4 p-4 text-sm" role="status">暂无人工核验样本，确认率与误报率暂不能评价。请先在审核工作区确认、修改或驳回问题。</div>}
           <div className="stats stats-vertical mb-4 w-full border border-base-300 bg-base-100 sm:stats-horizontal">
-            <div className="stat"><div className="stat-title text-xs">报告</div><div className="stat-value text-2xl">{d.reports ?? "—"}</div></div>
-            <div className="stat"><div className="stat-title text-xs">核验材料</div><div className="stat-value text-2xl">{d.materials_checked ?? "—"}</div></div>
-            <div className="stat"><div className="stat-title text-xs">AI 问题</div><div className="stat-value text-2xl">{d.ai_issues ?? "—"}</div></div>
-            <div className="stat"><div className="stat-title text-xs">确认率</div><div className="stat-value text-2xl">{pct(d.confirm_rate)}</div></div>
-            <div className="stat"><div className="stat-title text-xs">误报率</div><div className="stat-value text-2xl">{pct(d.false_positive_rate)}</div></div>
+            <div className="stat"><div className="stat-title text-xs">已核对问题</div><div className="stat-value text-2xl">{d.reviewed ?? 0}</div></div>
+
+
+            <div className="stat"><div className="stat-title text-xs">确认率</div><div className="stat-value text-2xl">{hasReviewed ? pct(d.confirm_rate) : "—"}</div></div>
+            <div className="stat"><div className="stat-title text-xs">误报率</div><div className="stat-value text-2xl">{hasReviewed ? pct(d.false_positive_rate) : "—"}</div></div>
             <div className="stat"><div className="stat-title text-xs">人工新增</div><div className="stat-value text-2xl">{d.manual_added ?? "—"}</div><div className="stat-desc">漏报线索</div></div>
-            <div className="stat"><div className="stat-title text-xs">一次通过率</div><div className="stat-value text-2xl">{pct(d.first_pass_rate)}</div></div>
+
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">按类别</h2>
-              <BarChart data={byCat} />
+              {byCat.length ? <BarChart data={byCat} /> : <p className="text-sm text-base-content/60">所选范围暂无问题类别数据。</p>}
             </section>
             <section className="surface-card p-4 text-sm">
               <h2 className="mb-2 font-medium">运行模式</h2>
@@ -50,6 +52,8 @@ export default function AiQualityPage() {
               <p className="text-xs text-base-content/55">已处置 {d.reviewed ?? "—"} · 确认 {d.confirmed ?? "—"} · 驳回 {d.rejected ?? "—"} · 修改 {d.modified ?? "—"}</p>
             </section>
           </div>
+          <details className="service-details mt-4"><summary>详细分类与规则分析</summary><div className="details-content">
+            <dl className="grid gap-3 text-sm sm:grid-cols-4">{[["报告", d.reports], ["核验材料", d.materials_checked], ["AI 问题", d.ai_issues], ["一次通过率", d.first_pass_rate == null ? "—" : pct(d.first_pass_rate)]].map(([label, value]) => <div key={label}><dt className="text-xs text-base-content/55">{label}</dt><dd>{value ?? "—"}</dd></div>)}</dl>
           <section className="surface-card mt-4 overflow-x-auto p-2"><h2 className="p-2 text-sm font-medium">按材料类型分析</h2><table className="table table-sm"><thead><tr><th>材料类型</th><th>问题总数</th><th>确认</th><th>驳回</th><th>修改</th><th>准确度</th></tr></thead><tbody>{(d.by_material_type || []).map((r) => <tr key={r.material_type_code}><td>{r.name || r.material_type_code}</td><td>{r.total}</td><td>{r.confirmed}</td><td>{r.rejected}</td><td>{r.modified}</td><td>{pct(r.precision)}</td></tr>)}</tbody></table>{!d.by_material_type?.length && <p className="p-2 text-xs">暂无已核对材料类型数据</p>}</section>
           <section className="surface-card mt-4 overflow-x-auto p-2">
             {!(d.by_rule || []).length ? <EmptyState title="所选范围内没有 AI 问题记录" /> : <table className="table table-sm">
@@ -68,6 +72,7 @@ export default function AiQualityPage() {
               </tbody>
             </table>}
           </section>
+          </div></details>
         </>
       )}
     </div>

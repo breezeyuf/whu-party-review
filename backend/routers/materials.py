@@ -309,6 +309,8 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
         raise not_found("材料版本不存在")
     pr = db.query(ParseResult).filter(ParseResult.version_id == vid).first() if vid else None
     exs = db.query(TimeNodeExtraction).filter(TimeNodeExtraction.material_version_id == vid, TimeNodeExtraction.is_current.is_(True)).order_by(TimeNodeExtraction.id).all() if vid else []
+    from ai.date_evidence import states_for
+    states = states_for(db, exs)
     return ok({
         "material_id": mid, "version_id": vid, "version_no": ver.version_no if ver else None,
         "parser": pr.parser if pr else None, "ocr_engine": pr.ocr_engine if pr else None,
@@ -321,7 +323,8 @@ def get_parsed(mid: int, version_id: int | None = None, request: Request = None,
             "date": e.value_date.isoformat() if e.value_date else None,
             "end_date": e.value_end_date.isoformat() if e.value_end_date else None,
             "hours": e.hours, "raw_text": e.raw_text, "page_no": e.page_no, "bbox": e.bbox,
-            "method": e.method, "confidence": e.confidence, "invalid_reason": e.invalid_reason,
+            "method": e.method, "confidence": states[e.id][2], "invalid_reason": e.invalid_reason,
+            "usable": states[e.id][0], "review_reason": states[e.id][1],
         } for e in exs],
         "warnings": pr.warnings if pr else [],
     })
@@ -353,6 +356,13 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         raise unprocessable('校正文本须为文字或 null')
     if 'corrected_fields' in body and body['corrected_fields'] is not None and not isinstance(body['corrected_fields'], dict):
         raise unprocessable('校正字段须为对象或 null')
+    from ai.ocr_status import pending_pages, refresh_warnings
+    pending_ocr = {page['page_no'] for page in pending_pages(pr)}
+    reviewed_pages = body.get('ocr_reviewed_pages', [])
+    if (not isinstance(reviewed_pages, list) or any(type(number) is not int for number in reviewed_pages)
+            or len(set(reviewed_pages)) != len(reviewed_pages)
+            or not set(reviewed_pages).issubset(pending_ocr)):
+        raise unprocessable('OCR 核对页号须为当前版本中待复核的有效页号，且不能重复')
     from ai.evidence import effective_fields
     previous_fields = effective_fields(pr)
     previous_text = pr.corrected_text if pr.corrected_text is not None else (pr.full_text or '')
@@ -382,11 +392,33 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
             pr.corrected_fields = None
     if "corrected_fields" in body and ("corrected_text" not in body or body['corrected_text'] is None):
         pr.corrected_fields = body.get("corrected_fields")
+    # Non-empty manual transcription can resolve a wholly empty single page.
+    # Mixed/multiple pages require explicit per-page confirmation, so merely
+    # resaving other recognized text cannot accidentally waive missing evidence.
+    transcribed = set()
+    if ('corrected_text' in body and (pr.corrected_text or '').strip()
+            and not (pr.full_text or '').strip() and len(pr.pages or []) == 1):
+        transcribed = pending_ocr - set(reviewed_pages)
+    pages = []
+    for page in pr.pages or []:
+        page = dict(page)
+        number = page.get('page_no')
+        if number in reviewed_pages or number in transcribed:
+            page['ocr_status'] = 'MANUALLY_REVIEWED'
+            page['ocr_review_method'] = 'confirmed' if number in reviewed_pages else 'corrected_text'
+        elif ('corrected_text' in body and not (pr.corrected_text or '').strip()
+                and page.get('ocr_review_method') == 'corrected_text'):
+            page['ocr_status'] = 'NEEDS_REVIEW'
+            page.pop('ocr_review_method', None)
+        pages.append(page)
+    pr.pages = pages
+    refresh_warnings(pr)
     pr.corrected_by = actor.id
     pr.corrected_at = now()
     pr.updated_at = now()
     merge_archive_nodes(db, m.archive_id)
-    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid, "extractions": corrections})
+    log(db, actor, "PARSE_CORRECT", "material", mid, {"reason": body.get("reason"), "version_id": vid,
+        "extractions": corrections, "ocr_reviewed_pages": reviewed_pages, "ocr_transcribed_pages": sorted(transcribed)})
     job_id = None
     if body.get("recheck"):
         job = enqueue_job(db, "AI_CHECK", actor.id, "submission", m.submission_id,
@@ -405,16 +437,33 @@ def set_type(mid: int, body: dict, request: Request, db: Session = Depends(get_d
         raise not_found()
     ensure_material_access(db, actor, m, request)
     sub = _editable_submission(db, actor, m, reviewer=True)
+    db.refresh(m)
     mt = db.query(MaterialType).filter(MaterialType.id == body.get("material_type_id")).first()
     if not mt:
         raise unprocessable("材料类型不存在")
+    # Classification controls which time nodes a document can supply. Retagging
+    # must refresh that evidence, using the same submission -> version lock order
+    # as parsing; a queued parse will read the newly confirmed classification.
+    changed = m.type_id != mt.id
+    version = db.query(MaterialVersion).filter(MaterialVersion.id == m.current_version_id).with_for_update().first() if changed else None
     m.type_id = mt.id
     m.type_source = "MANUAL"
     m.type_status = "CONFIRMED"
     m.type_confidence = 1.0
     m.updated_at = now()
-    log(db, actor, "MATERIAL_TYPE_CONFIRM", "material", mid, {"type_id": mt.id})
-    return ok(_material_dict(db, m))
+    job = None
+    if version:
+        job = db.query(Job).filter(Job.job_type == 'PARSE', Job.target_id == version.id,
+                                  Job.status.in_(['QUEUED', 'RUNNING'])).first()
+        if not job:
+            job = enqueue_job(db, 'PARSE', actor.id, 'material_version', version.id, {'version_id': version.id})
+            version.parse_status, version.parse_error = 'PENDING', None
+        merge_archive_nodes(db, m.archive_id)
+    log(db, actor, "MATERIAL_TYPE_CONFIRM", "material", mid, {"type_id": mt.id, "parse_job_id": job.id if job else None})
+    data = _material_dict(db, m)
+    if job:
+        data['parse_job_id'] = job.id
+    return ok(data)
 
 
 @router.get("/materials/{mid}/diff")

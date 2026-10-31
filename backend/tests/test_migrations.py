@@ -96,14 +96,14 @@ def trigger_ids(schema):
 
 def test_migration_files_are_contiguous_and_have_stable_checksums():
     records = load_migrations()
-    assert [record.version for record in records] == [1, 2, 3, 4]
+    assert [record.version for record in records] == [1, 2, 3, 4, 5, 6]
     assert all(len(record.checksum) == 64 for record in records)
     assert replace(records[0], sql=records[0].sql.replace("\n", "\r\n")).checksum == records[0].checksum
     assert replace(records[0], sql=records[0].sql + "\n-- edited history\n").checksum != records[0].checksum
 
 
 def test_empty_database_bootstraps_once_and_restarts_without_replaying_ddl(empty_schema):
-    assert apply_migrations(empty_schema.engine) == [1, 2, 3, 4]
+    assert apply_migrations(empty_schema.engine) == [1, 2, 3, 4, 5, 6]
     before = ledger(empty_schema.engine)
     triggers = trigger_ids(empty_schema)
     assert all(not row.adopted for row in before)
@@ -136,7 +136,7 @@ def test_adopts_existing_legacy_without_rewriting_business_rows_or_triggers(empt
     before = table_rows(empty_schema.engine, names)
     triggers = trigger_ids(empty_schema)
 
-    assert apply_migrations(empty_schema.engine) == [1, 2, 3, 4]
+    assert apply_migrations(empty_schema.engine) == [1, 2, 3, 4, 5, 6]
 
     assert ledger(empty_schema.engine)[0].adopted is True
     assert all(not row.adopted for row in ledger(empty_schema.engine)[1:])
@@ -211,7 +211,7 @@ def test_checksum_drift_is_rejected_before_any_pending_migration(empty_schema, m
     apply_migrations(empty_schema.engine)
     before = ledger(empty_schema.engine)
     edited = [replace(records[0], sql=records[0].sql + "\n-- changed\n")] + records[1:]
-    edited.append(Migration(5, "0005_must_not_run.sql", "CREATE TABLE must_not_run (id INTEGER)"))
+    edited.append(Migration(7, "0007_must_not_run.sql", "CREATE TABLE must_not_run (id INTEGER)"))
     monkeypatch.setattr(migrations, "load_migrations", lambda _: edited)
 
     with pytest.raises(MigrationError, match="checksum"):
@@ -229,7 +229,7 @@ def test_record_gaps_and_newer_database_versions_are_rejected(empty_schema, corr
     else:
         execute(empty_schema.engine, """
             INSERT INTO schema_migrations (version, name, checksum)
-                VALUES (5, '0005_future.sql', repeat('a', 64))
+                VALUES (7, '0007_future.sql', repeat('a', 64))
         """)
     before = ledger(empty_schema.engine)
 
@@ -247,12 +247,12 @@ def test_failed_batch_rolls_back_every_ddl_and_ledger_entry(empty_schema, monkey
     before = ledger(empty_schema.engine) if not initial else []
     before_tables = tables(empty_schema)
     records += [
-        Migration(5, "0005_pending.sql", "CREATE TABLE pending_table (id INTEGER)"),
-        Migration(6, "0006_failure.sql", "CREATE TABLE partial_table (id INTEGER); SELECT 1 / 0"),
+        Migration(7, "0007_pending.sql", "CREATE TABLE pending_table (id INTEGER)"),
+        Migration(8, "0008_failure.sql", "CREATE TABLE partial_table (id INTEGER); SELECT 1 / 0"),
     ]
     monkeypatch.setattr(migrations, "load_migrations", lambda _: records)
 
-    with pytest.raises(MigrationError, match="0006.*回滚"):
+    with pytest.raises(MigrationError, match="0008.*回滚"):
         apply_migrations(empty_schema.engine)
 
     assert tables(empty_schema) == before_tables
@@ -263,11 +263,11 @@ def test_failed_batch_rolls_back_every_ddl_and_ledger_entry(empty_schema, monkey
 def test_autocommit_engine_still_uses_one_atomic_migration_transaction(schema_factory, monkeypatch):
     schema = schema_factory(autocommit=True)
     records = load_migrations() + [
-        Migration(5, "0005_failure.sql", "CREATE TABLE partial_table (id INTEGER); SELECT 1 / 0"),
+        Migration(7, "0007_failure.sql", "CREATE TABLE partial_table (id INTEGER); SELECT 1 / 0"),
     ]
     monkeypatch.setattr(migrations, "load_migrations", lambda _: records)
 
-    with pytest.raises(MigrationError, match="0005.*回滚"):
+    with pytest.raises(MigrationError, match="0007.*回滚"):
         apply_migrations(schema.engine)
 
     assert tables(schema) == set()
@@ -284,7 +284,7 @@ def test_parallel_startups_are_serialized_and_apply_each_version_once(empty_sche
     if not initial:
         apply_migrations(empty_schema.engine)
     records.append(Migration(
-        5, "0005_parallel.sql", "SELECT pg_sleep(0.2); CREATE TABLE parallel_marker (id INTEGER)",
+        7, "0007_parallel.sql", "SELECT pg_sleep(0.2); CREATE TABLE parallel_marker (id INTEGER)",
     ))
     monkeypatch.setattr(migrations, "load_migrations", lambda _: records)
     start = Barrier(2)
@@ -297,8 +297,8 @@ def test_parallel_startups_are_serialized_and_apply_each_version_once(empty_sche
         futures = [pool.submit(run) for _ in range(2)]
         results = [future.result(timeout=30) for future in futures]
 
-    assert sorted(results, key=len) == [[], [1, 2, 3, 4, 5] if initial else [5]]
-    assert [row.version for row in ledger(empty_schema.engine)] == [1, 2, 3, 4, 5]
+    assert sorted(results, key=len) == [[], [1, 2, 3, 4, 5, 6, 7] if initial else [7]]
+    assert [row.version for row in ledger(empty_schema.engine)] == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_legacy_foreign_key_repair_ignores_same_named_constraints_in_other_schemas(schema_factory):

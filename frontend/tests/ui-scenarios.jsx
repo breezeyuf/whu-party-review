@@ -7,9 +7,11 @@ import { AuthProvider } from "../src/context/AuthContext"
 import { ToastProvider } from "../src/context/ToastContext"
 import ArchiveListPage from "../src/pages/archive/ArchiveListPage"
 import UsersPage from "../src/pages/admin/UsersPage"
+import OrgsPage from "../src/pages/admin/OrgsPage"
 import SettingsPage from "../src/pages/admin/SettingsPage"
 import BatchesPage from "../src/pages/admin/BatchesPage"
 import ExportPage from "../src/pages/stats/ExportPage"
+import MessagesPage from "../src/pages/MessagesPage"
 import NoticesPage from "../src/pages/notice/NoticesPage"
 import ArchiveDetailPage from "../src/pages/archive/ArchiveDetailPage"
 import SelfCheckPage from "../src/pages/student/SelfCheckPage"
@@ -27,7 +29,7 @@ import AddIssueModal from "../src/components/review/AddIssueModal"
 import ReviewWorkspacePage from "../src/pages/review/ReviewWorkspacePage"
 import IssueResponseForm from "../src/components/student/IssueResponseForm"
 import ReviewJobStatus from "../src/components/review/ReviewJobStatus"
-import { StudentDashboard, ReviewerDashboard } from "../src/pages/dashboard/Dashboards"
+import { StudentDashboard, ReviewerDashboard, AdminDashboard } from "../src/pages/dashboard/Dashboards"
 import AppLayout from "../src/components/layout/AppLayout"
 import RuleSectionLayout from "../src/components/rules/RuleSectionLayout"
 import FilterBar from "../src/components/common/FilterBar"
@@ -39,9 +41,16 @@ import RouteError from "../src/components/common/RouteError"
 import { lazyWithRetry } from "../src/utils/lazyLoad"
 import { pages as shellPages } from "../src/components/layout/shellModule"
 import { shellPageNames } from "../src/components/layout/lazyShell"
+import AiQualityPage from "../src/pages/stats/AiQualityPage"
+import ReportSummary from "../src/components/review/ReportSummary"
 import "../src/routes"
 import CompleteSettingsPage from "../src/pages/admin/CompleteSettingsPage"
 import RuleVersionsPage from "../src/pages/rules/RuleVersionsPage"
+import ContentTabs from "../src/components/common/ContentTabs"
+import ActionPopover from "../src/components/common/ActionPopover"
+import IssueCard from "../src/components/review/IssueCard"
+import NoticePreview from "../src/components/notice/NoticePreview"
+import ChecklistsPage from "../src/pages/rules/ChecklistsPage"
 import TimelineView from "../src/components/archive/TimelineView"
 
 const wait = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -109,7 +118,6 @@ async function mount(element, { path = "/", pattern = path.split("?")[0], roleCo
   role = { role: roleCode, org_id: roleCode === "BRANCH_REVIEWER" ? 2 : 1 }
   requests = []
   fixture = handler
-  tokenStore.setTokens("isolated-test-token", "isolated-test-refresh")
   tokenStore.setRole(`${role.role}@${role.org_id}`)
   api.defaults.adapter = async (config) => {
     requests.push({ ...config, data: config.data })
@@ -130,6 +138,329 @@ export async function runUiScenarios() {
     catch (error) { results.push({ name, passed: false, error: error.stack || error.message }) }
   }
 
+  await test("系统管理员首页四个入口真实可见，组织部首页优先备案且不越权", async () => {
+    await mount(<AdminDashboard data={{ role: "SYS_ADMIN" }} />, { roleCode: "SYS_ADMIN" })
+    for (const path of ["/admin/users", "/admin/orgs", "/admin/settings", "/admin/audit-logs"]) assert.ok(document.querySelector(`[aria-label="管理功能"] a[href="${path}"]`))
+    assert.equal(document.querySelector('a[href="/review/tasks"]'), null)
+    await mount(<AdminDashboard data={{ role: "ORG_ADMIN", todo: { to_review: 6 } }} />, { roleCode: "ORG_ADMIN" })
+    assert.match(document.querySelector(".next-action").textContent, /6 份材料等待备案/)
+    assert.equal(document.querySelector(".next-action .btn-primary").getAttribute("href"), "/review/tasks")
+    assert.ok(document.querySelector('a[href="/admin/batches"]'))
+  })
+
+  await test("配置分类切换与保存失败均保留草稿和密钥输入", async () => {
+    await mount(<CompleteSettingsPage />, { path: "/admin/settings", roleCode: "SYS_ADMIN", handler: c => {
+      if (c.url === "/settings" && c.method === "get") return { ai: { model: "old" }, upload: {}, ocr: {} }
+      if (c.url === "/settings" && c.method === "put") throw Error("保存失败测试")
+    } })
+    assert.equal(document.getElementById("settings-ai").hidden, false)
+    assert.equal(document.getElementById("settings-upload").hidden, true)
+    await input(document.querySelector('[aria-label="模型名"]'), "draft-model")
+    await input(document.querySelector('[aria-label="API 密钥"]'), "fictional-key")
+    await click(button("材料与业务"))
+    assert.equal(document.getElementById("settings-ai").hidden, true)
+    await click(button("模型与识别"))
+    assert.equal(document.querySelector('[aria-label="模型名"]').value, "draft-model")
+    assert.equal(document.querySelector('[aria-label="API 密钥"]').value, "fictional-key")
+    await click(button("保存大模型"))
+    assert.match(text(), /保存失败测试/)
+    assert.equal(document.querySelector('[aria-label="模型名"]').value, "draft-model")
+    assert.equal(requests.filter(c => c.url.includes("/test")).length, 0)
+  })
+
+  await test("组织部默认业务配置，技术配置只读，旧锚点仍可定位", async () => {
+    const handler = c => c.url === "/settings" ? { ai: { model: "model-name" }, worker: { concurrency: 2 }, upload: {} } : undefined
+    await mount(<CompleteSettingsPage />, { path: "/admin/settings", roleCode: "ORG_ADMIN", handler })
+    assert.equal(document.getElementById("settings-upload").hidden, false)
+    assert.equal(document.getElementById("settings-ai").hidden, true)
+    await click(button("技术配置（只读）"))
+    assert.equal(document.getElementById("settings-ai").hidden, false)
+    assert.equal(document.querySelector('[aria-label="模型名"]'), null)
+    assert.match(document.getElementById("settings-ai").textContent, /model-name/)
+    assert.equal(button("保存大模型"), undefined)
+    await mount(<CompleteSettingsPage />, { path: "/admin/settings#settings-worker", pattern: "/admin/settings", roleCode: "SYS_ADMIN", handler })
+    assert.equal(document.getElementById("settings-worker").hidden, false)
+    await click(button("模型与识别"))
+    assert.equal(router.state.location.hash, "")
+    assert.equal(document.getElementById("settings-worker").hidden, true)
+  })
+
+  await test("用户导入默认收起，可显式展开而不发起导入请求", async () => {
+    await mount(<UsersPage />, { roleCode: "SYS_ADMIN" })
+    assert.equal(document.getElementById("user-import-panel").hidden, true)
+    await click(button("批量导入"))
+    assert.equal(document.getElementById("user-import-panel").hidden, false)
+    await click(button("批量导入"))
+    assert.equal(document.getElementById("user-import-panel").hidden, true)
+    assert.equal(requests.some(c => c.method === "post"), false)
+  })
+
+  await test("学生识别JSON默认收起，审核人员字段校正仍直接可见", async () => {
+    const parsed = { full_text: "虚构材料", extracted_fields: { name: "样例" }, extractions: [] }
+    await mount(<ParsedTextPanel parsed={parsed} editable={false} />)
+    const detail = [...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "识别详情")
+    assert.equal(detail.open, false)
+    assert.equal(button("保存校正"), undefined)
+    await mount(<ParsedTextPanel parsed={parsed} editable onSave={() => {}} />, { roleCode: "BRANCH_REVIEWER" })
+    assert.equal([...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "抽取字段校正").open, true)
+  })
+
+  await test("报告技术信息收起，规则模式和过期风险保持可见", async () => {
+    await mount(<ReportSummary report={{ ...baseReport, report_no: 5, mode: "RULE_ONLY", is_stale: true }} />)
+    assert.match(text(), /仅规则（未使用大模型）/)
+    assert.match(text(), /报告已过期/)
+    const details = [...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "报告详情")
+    assert.equal(details.open, false)
+    assert.match(details.textContent, /报告 #5/)
+  })
+
+  await test("AI成效零样本不呈现准确率，核验数据出现后展示真实比例", async () => {
+    await mount(<AiQualityPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/stats/ai-quality" ? { reviewed: 0, confirm_rate: 0, false_positive_rate: 0 } : undefined })
+    assert.match(text(), /暂无人工核验样本/)
+    const metrics = document.querySelector(".stats")
+    assert.doesNotMatch(metrics.textContent, /0%/)
+    assert.equal([...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "详细分类与规则分析").open, false)
+    await mount(<AiQualityPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/stats/ai-quality" ? { reviewed: 10, confirm_rate: 0.8, false_positive_rate: 0.2 } : undefined })
+    assert.match(document.querySelector(".stats").textContent, /80%/)
+    assert.match(document.querySelector(".stats").textContent, /20%/)
+  })
+
+  await test("两类管理员首页去掉辅助工具和规则维护块，菜单功能仍保留", async () => {
+    for (const role of ["SYS_ADMIN", "ORG_ADMIN"]) {
+      await mount(<AdminDashboard data={{ role, todo: { to_review: 2 } }} />, { roleCode: role })
+      assert.equal(document.querySelector('[aria-label="辅助工具"]'), null)
+      assert.equal(document.querySelector('[aria-label="规则与维护"]'), null)
+      assert.ok(document.querySelector('[aria-label="管理功能"], [aria-label="日常办理"]'))
+    }
+  })
+
+  await test("删除最后一份自传后补充入口保留，重新上传携带原类型与阶段", async () => {
+    let removed = false, uploaded = false
+    await mount(<MyMaterialsPage />, { path: "/my/materials", handler: c => {
+      if (c.url === "/my/archive") return { ...baseArchive, current_stage: 3 }
+      if (c.url === "/meta") return { material_types: [{ id: 9, name: "自传", stage_codes: [3] }] }
+      if (c.url === "/materials/12" && c.method === "delete") { removed = true; return {} }
+      if (c.url === "/archives/1/materials" && c.method === "post") { uploaded = true; return { material: { id: 13 } } }
+      if (c.url === "/archives/1/materials") return [{ stage_code: 3, checklist: [], unclassified: [], extra: removed ? [] : [{ id: 12, title: "测试自传.jpg", current_version: { parse_status: "DONE" } }] }]
+    } })
+    await click(button("删除")); await click(button("确认删除"))
+    assert.equal(removed, true)
+    assert.ok(button("上传补充材料"))
+    await input(document.querySelector('[aria-label="补充材料类型"]'), "9")
+    const file = document.querySelector('[aria-label="补充材料上传"] input[type="file"]')
+    Object.defineProperty(file, "files", { configurable: true, value: [new File(["synthetic"], "重新上传自传.jpg", { type: "image/jpeg" })] })
+    await act(async () => { file.dispatchEvent(new Event("change", { bubbles: true })); await wait() })
+    await flush()
+    assert.equal(uploaded, true)
+    const request = requests.find(c => c.method === "post" && c.url === "/archives/1/materials")
+    assert.equal(request.data.get("material_type_id"), "9")
+    assert.equal(request.data.get("stage_code"), "3")
+    assert.equal(requests.some(c => c.method === "delete" && c.url !== "/materials/12"), false)
+  })
+
+  await test("消息分页可选每页条数，切换筛选回第一页且标题使用固定列对齐", async () => {
+    await mount(<MessagesPage />, { path: "/messages?page=3", pattern: "/messages", handler: c => {
+      if (c.url === "/messages") return { items: [{ id: 1, title: "需要换行的较长消息标题，用于检验文字与图标对齐", is_read: false, content: "测试内容" }, { id: 2, title: "已读标题", is_read: true }], total: 65, page: c.params.page, page_size: c.params.page_size }
+    } })
+    const pager = document.querySelector('[aria-label="每页显示条数"]')
+    assert.ok(pager)
+    assert.deepEqual([...pager.options].map(o => o.value), ["10", "20", "50", "100"])
+    await input(pager, "50")
+    assert.equal(requests.filter(c => c.url === "/messages").at(-1).params.page_size, 50)
+    assert.equal(requests.filter(c => c.url === "/messages").at(-1).params.page, 1)
+    await click(button("下一页")); await click(button("未读"))
+    const last = requests.filter(c => c.url === "/messages").at(-1)
+    assert.equal(last.params.page, 1); assert.equal(last.params.is_read, "false")
+    assert.ok([...document.querySelectorAll("td button")].every(b => b.className.includes("grid-cols-") && !b.querySelector("svg")))
+    assert.equal(document.querySelectorAll("[data-message-title]").length, 2)
+    assert.ok([...document.querySelectorAll("[data-message-title]")].every(n => n.closest("td").cellIndex === 1))
+  })
+
+  await test("各阶段清单共用六列宽度，只读时保留操作列但不提供编辑", async () => {
+    const handler=c=>c.url==="/rules/checklists"?[1,2].map(n=>({stage_code:n,items:[{id:n,material_type:{name:n===1?"申请书":"长名称的培养考察材料"},quantity_mode:"FIXED",fixed_count:1,is_required:true}]})):c.url==="/rules/material-types"?{items:[]}:undefined
+    await mount(<ChecklistsPage/>,{roleCode:"ORG_ADMIN",handler})
+    const tables=[...document.querySelectorAll("table")]
+    assert.equal(tables.length,2)
+    assert.deepEqual([...tables[0].querySelectorAll("col")].map(c=>c.style.width),["24%","14%","8%","7%","35%","12%"])
+    assert.deepEqual([...tables[1].querySelectorAll("col")].map(c=>c.style.width),[...tables[0].querySelectorAll("col")].map(c=>c.style.width))
+    await mount(<ChecklistsPage/>,{roleCode:"BRANCH_REVIEWER",handler})
+    assert.equal(button("编辑"),undefined)
+    assert.equal(document.querySelectorAll("thead th").length,12)
+    assert.match(text(),/只读/)
+  })
+
+  await test("备案内容直接切换五项，切换不丢驳回草稿", async () => {
+    await mount(<ReviewWorkspacePage/>,{path:"/review/submissions/101",pattern:"/review/submissions/:id",roleCode:"ORG_ADMIN",handler:c=>{
+      if(c.url==="/submissions/101")return {...baseSubmission,status:"ORG_FILING",level:"ORG",materials:[{id:12,current_version_id:402,title:"材料"}],can:{add_issue:true,file:true,review:true}}
+      if(c.url==="/submissions/101/issues")return {items:[{id:71,title:"需核实的关键问题",severity:"BLOCK",category:"FORMAT",review_status:"PENDING",material_id:12}]}
+    }})
+    const tabs=[...document.querySelectorAll('[aria-label="工作区内容"] [role="tab"]')]
+    assert.deepEqual(tabs.map(t=>t.textContent),["问题清单","材料完整性","时间节点","自查报告","审核记录"])
+    await click(button("驳回误报"));await input(document.querySelector('[aria-label="驳回理由"]'),"核对原图后的草稿理由")
+    await click(button("自查报告"));await click(button("问题清单"))
+    assert.equal(document.querySelector('[aria-label="驳回理由"]').value,"核对原图后的草稿理由")
+    assert.equal(document.querySelector('.service-more-actions'),null)
+    assert.equal(document.querySelector('.review-stage-links'),null)
+    assert.equal(requests.some(r=>r.method==="put"||r.method==="post"),false)
+  })
+
+  await test("更多操作支持Esc与外部关闭并返回触发按钮", async () => {
+    let selected=0
+    await mount(<ActionPopover><button onClick={()=>selected++}>示例操作</button></ActionPopover>)
+    await click(button("更多操作"));assert.ok(button("示例操作"))
+    await act(async()=>document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true})))
+    assert.equal(button("示例操作"),undefined);assert.equal(document.activeElement,button("更多操作"))
+    await click(button("更多操作"));await act(async()=>document.body.dispatchEvent(new MouseEvent("pointerdown",{bubbles:true})))
+    assert.equal(button("示例操作"),undefined)
+    await click(button("更多操作"));await click(button("示例操作"));assert.equal(selected,1)
+  })
+
+  await test("原文依据无三角文案，可展开且不会误选问题；旧通知等级兼容", async () => {
+    let chosen=0
+    await mount(<IssueCard issue={{id:1,title:"缺材料",severity:"BLOCK",rule_basis:"核实原件"}} onSelect={()=>chosen++}/>)
+    const summary=document.querySelector("summary")
+    assert.equal(summary.textContent,"查看依据");await click(summary)
+    assert.equal(document.querySelector("details").open,true);assert.equal(chosen,0)
+    assert.doesNotMatch(text(),/选中问题|阻断/)
+    await mount(<NoticePreview notice={{title:"历史通知",content:{items:[{no:1,severity:"阻断",problem:"历史正文保持"}]}}}/>)
+    assert.match(text(),/关键问题/);assert.match(text(),/历史正文保持/)
+  })
+
+  await test("共享标签支持方向键与Home/End键切换和焦点管理", async () => {
+    function Harness(){const [value,setValue]=React.useState("a");return <ContentTabs items={[["a","第一页"],["b","第二页"],["c","第三页"]]} value={value} onChange={setValue} label="内容切换" idPrefix="test-tabs"/>}
+    await mount(<Harness/>)
+    const first=button("第一页")
+    await act(async()=>first.dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowRight",bubbles:true})))
+    assert.equal(document.activeElement,button("第二页"));assert.equal(button("第二页").getAttribute("aria-selected"),"true")
+    await act(async()=>button("第二页").dispatchEvent(new KeyboardEvent("keydown",{key:"End",bubbles:true})))
+    assert.equal(document.activeElement,button("第三页"))
+    await act(async()=>button("第三页").dispatchEvent(new KeyboardEvent("keydown",{key:"Home",bubbles:true})))
+    assert.equal(document.activeElement,button("第一页"))
+  })
+
+  await test("审核员切换材料详情标签保留未保存的解析校正", async () => {
+    await mount(<MaterialDetailPage/>,{path:"/materials/12",pattern:"/materials/:id",roleCode:"BRANCH_REVIEWER",handler:c=>c.url==="/submissions/101"?{...baseSubmission,can:{review:true}}:undefined})
+    await click(button("解析文本"))
+    const field=document.querySelector('#material-tabs-panel-text textarea')
+    assert.equal(field.readOnly,false)
+    await input(field,"尚未保存的校正草稿")
+    await click(button("版本"));await click(button("解析文本"))
+    assert.equal(document.querySelector('#material-tabs-panel-text textarea').value,"尚未保存的校正草稿")
+    assert.equal(requests.some(r=>r.method==="put"),false)
+  })
+
+  await test("任务默认按人折叠，展开精确筛选且组内分页独立", async () => {
+    await mount(<JobsPage />, { path: "/tasks/jobs", roleCode: "SYS_ADMIN", handler: (c) => {
+      if (c.url === "/jobs/creators") return { items: [{ created_by: 17, name: "测试发起人", username: "same-name-a", total: 25, running: 1, failed: 2 }], total: 1, page: 1, page_size: 10 }
+      if (c.url === "/jobs") return { items: [{id: 70, job_type: "NOTICE_BATCH", status: "SUCCEEDED", total:1}], total:25, page:c.params.page, page_size:c.params.page_size }
+    } })
+    assert.equal(requests.filter((c) => c.url === "/jobs").length, 0)
+    await click([...document.querySelectorAll("button")].find((b) => b.textContent.includes("测试发起人")))
+    assert.match(text(), /批量补全通知/)
+    let last = requests.filter((c) => c.url === "/jobs").at(-1)
+    assert.equal(last.params.created_by, 17)
+    assert.equal(last.params.page_size, 20)
+    await click([...document.querySelectorAll("button")].find((b) => b.textContent === "下一页" && !b.disabled))
+    last = requests.filter((c) => c.url === "/jobs").at(-1)
+    assert.equal(last.params.page, 2)
+    assert.equal(requests.filter((c) => c.url === "/jobs/creators").length, 1)
+    await input(document.querySelector('input[placeholder="姓名或账号"]'), "someone")
+    assert.equal([...document.querySelectorAll("button")].find((b) => b.textContent.includes("测试发起人")).getAttribute("aria-expanded"), "false")
+  })
+
+  await test("日志搜索选择操作人使用精确ID，清除后保留时间列表", async () => {
+    await mount(<AuditLogsPage />, { path: "/admin/audit-logs", roleCode: "SYS_ADMIN", handler: (c) => {
+      if (c.url === "/audit-logs/actors") return { items: [{key:"17",user_id:17,username:"actor-a",name:"同名操作人"},{key:"18",user_id:18,username:"actor-b",name:"同名操作人"}], total:2 }
+      if (c.url === "/audit-logs") return { items:[],total:0 }
+    } })
+    await click(button("选择操作人"))
+    await input(document.querySelector('[aria-label="搜索操作人姓名或账号"]'), "同名")
+    await click([...document.querySelectorAll("button")].find((b) => b.textContent.includes("actor-b")))
+    assert.equal(requests.filter((c) => c.url === "/audit-logs").at(-1).params.user_id, "18")
+    await click(button("清除操作人"))
+    assert.equal(requests.filter((c) => c.url === "/audit-logs").at(-1).params.user_id, undefined)
+  })
+
+  await test("消息悬停仅展示，全部已读成功刷新红点且Esc可关闭", async () => {
+    let unread = 3
+    await mount(<AppLayout><p>测试首页</p></AppLayout>, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/messages/unread-count") return {count:unread}
+      if(c.url === "/messages/read-all") {unread=0;return {updated:3}}
+    }})
+    const messageButton=document.querySelector('[aria-label="消息，3 条未读"]')
+    await act(async () => {messageButton.dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));await wait()})
+    assert.ok(button("全部标为已读"))
+    assert.equal(requests.filter((c) => c.url === "/messages/read-all").length,0)
+    await click(button("全部标为已读"))
+    assert.ok(document.querySelector('[aria-label="消息"]'))
+    assert.equal(button("全部标为已读").disabled,true)
+    await act(async()=>{document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));await wait()})
+    assert.equal(button("全部标为已读"),undefined)
+    await click(document.querySelector('[aria-label="展开消息快捷操作"]'))
+    assert.ok(button("查看消息"))
+  })
+
+  await test("消息标记期间重复点击只发送一次请求", async () => {
+    let finish
+    await mount(<AppLayout><p>测试首页</p></AppLayout>, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/messages/unread-count") return {count:2}
+      if(c.url === "/messages/read-all") return new Promise((resolve)=>{finish=resolve})
+    }})
+    await click(document.querySelector('[aria-label="展开消息快捷操作"]'))
+    await click(button("全部标为已读"))
+    assert.equal(button("正在标记…").disabled,true)
+    await click(button("正在标记…"))
+    assert.equal(requests.filter((c)=>c.url === "/messages/read-all").length,1)
+    await act(async()=>{finish({updated:2});await wait()})
+  })
+
+  await test("消息已读失败保留红点并可重试，聚焦和点击外部可操作", async () => {
+    let fail = true
+    await mount(<AppLayout><p>测试首页</p></AppLayout>, {roleCode:"SYS_ADMIN",handler:(c) => {
+      if(c.url === "/messages/unread-count") return {count:2}
+      if(c.url === "/messages/read-all") {if(fail) throw new Error("标记暂时失败");return {updated:2}}
+    }})
+    await act(async()=>{document.querySelector('[aria-label="消息，2 条未读"]').focus();await wait()})
+    await click(button("全部标为已读"))
+    assert.match(text(),/标记暂时失败/)
+    assert.ok(document.querySelector('[aria-label="消息，2 条未读"]'))
+    fail=false
+    await click(button("全部标为已读"))
+    assert.equal(requests.filter((c)=>c.url === "/messages/read-all").length,2)
+    await act(async()=>{document.body.dispatchEvent(new Event("pointerdown",{bubbles:true}));await wait()})
+    assert.equal(button("全部标为已读"),undefined)
+  })
+
+  await test("历史报告预览旧版本并定位旧问题，时间轴不混入当前日期", async () => {
+    const oldIssue = { id: 8001, title: "旧问题", category: "TIME", severity: "WARN", material_id: 12, material_version_id: 401, location: { page_no: 2, node_code: "T02" } }
+    await mount(<ReviewWorkspacePage />, { path: "/review/submissions/101?report=111", pattern: "/review/submissions/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+      if (c.url === "/submissions/101") return { ...baseSubmission, status: "BRANCH_REVIEW", materials: [{ id: 12, title: "材料", current_version_id: 402, version_no: 2 }], can: { add_issue: true, review: true } }
+      if (c.url === "/reports/111") return { ...baseReport, id: 111, submission_id: 101, issues_by_category: { TIME: [oldIssue] }, material_versions: [{ material_id: 12, version_id: 401, version_no: 1 }], timeline_snapshot: { node_inputs: { T02: { date: "2020-01-02", value_kind: "DATE" } } } }
+      if (c.url === "/archives/1/timeline") return { nodes: [{ code: "T02", effective: { date: "2026-10-29" } }] }
+    } })
+    assert.ok(requests.some(r => r.url === "/materials/12/pages/1" && r.params?.version_id === 401))
+    assert.ok(!requests.some(r => /\/materials\/12\/pages\//.test(r.url) && r.params?.version_id === 402))
+    await click([...document.querySelectorAll("button")].find(b => b.textContent.trim() === "旧问题"))
+    assert.ok(requests.some(r => r.url === "/materials/12/pages/2" && r.params?.version_id === 401))
+    assert.equal(button("确认问题"), undefined)
+    await click(button("时间节点"))
+    assert.ok(text().includes("2020-01-02"))
+    assert.ok(!text().includes("2026-10-29"))
+  })
+
+  await test("历史报告加载失败不会回退为可编辑的当前审核", async () => {
+    for (const student of [false, true]) {
+      await mount(student ? <SelfCheckPage /> : <ReviewWorkspacePage />, { path: student ? "/my/self-check/101?report=111" : "/review/submissions/101?report=111", pattern: student ? "/my/self-check/:submissionId" : "/review/submissions/:id", roleCode: student ? "STUDENT" : "BRANCH_REVIEWER", handler: c => {
+        if (c.url === "/reports/111") throw new Error("历史报告暂不可用")
+        if (c.url === "/submissions/101") return { ...baseSubmission, can: { submit: true, add_issue: true, ai_check: true, review: true } }
+      } })
+      assert.ok(text().includes("历史报告暂不可用"))
+      assert.equal(button("新增问题"), undefined)
+      assert.equal(button("提交审核"), undefined)
+      assert.ok(button("返回最新报告"))
+    }
+  })
+
   await test("可编辑材料可重新解析，接口失败保留页面供重试", async () => {
     await mount(<MaterialDetailPage />, { path: "/materials/12", pattern: "/materials/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
       if (c.url === "/submissions/101") return { ...baseSubmission, can: { upload: true } }
@@ -140,19 +471,38 @@ export async function runUiScenarios() {
     assert.equal(button("重新解析（使用当前模型配置）").disabled, false)
     assert.equal(requests.filter(c => c.url === "/materials/12/retry-parse").length, 1)
   })
+  await test("材料改类会跟踪重新解析任务并刷新日期结果", async () => {
+    let saved = false
+    await mount(<MaterialDetailPage />, { path: "/materials/12", pattern: "/materials/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+      if (c.url === "/submissions/101") return { ...baseSubmission, can: { review: true } }
+      if (c.url === "/materials/12/type") {
+        saved = true
+        return { ...baseMaterial, parse_job_id: 901, current_version: { ...currentVersion, parse_status: "PENDING" } }
+      }
+      if (c.url === "/jobs/901") return { id: 901, job_type: "PARSE", status: "SUCCEEDED" }
+      if (c.url === "/materials/12/parsed" && saved) return { version_id: 402, full_text: "新类型解析结果", extractions: [] }
+    } })
+    await click(button("确认类型"))
+    await flush()
+    assert.ok(requests.some(c => c.url === "/jobs/901"))
+    assert.ok(requests.filter(c => c.url === "/materials/12/parsed").length > 1)
+    assert.match(text(), /类型已确认，正在按新类型更新日期/)
+  })
   await test("投递检查只检查配置并明确不发送", async () => {
     await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : c.url === "/settings/delivery/test" ? { message: "未发送任何消息", email_ready: false, sms_ready: false, sent: false } : undefined })
+    await click(button("消息与通知"))
     await click(button("检查投递配置（不发送）"))
     assert.match(text(), /未发送任何消息/)
     assert.equal(requests.filter(c => c.method === "post").length, 1)
     await mount(<CompleteSettingsPage />, { roleCode: "ORG_ADMIN", handler: c => c.url === "/settings" ? { delivery: {} } : undefined })
-    assert.equal(button("检查投递配置（不发送）").disabled, true)
+    assert.equal(button("检查投递配置（不发送）"), undefined)
   })
   await test("清空已保存的短信地址和密钥会发送明确清空值", async () => {
     await mount(<CompleteSettingsPage />, { roleCode: "SYS_ADMIN", handler: c => {
       if (c.url === "/settings" && c.method === "get") return { delivery: { sms_url: "https://sms.invalid/send", sms_api_key_set: true } }
       if (c.url === "/settings" && c.method === "put") return { delivery: { sms_url: "", sms_api_key_set: false } }
     } })
+    await click(button("消息与通知"))
     await input(document.querySelector('[aria-label="短信服务 HTTPS 接口"]'), "")
     const clearKey = [...document.querySelectorAll('input[type="checkbox"]')].find(node => node.parentElement.textContent.includes("清除短信 API 密钥"))
     await click(clearKey)
@@ -205,6 +555,8 @@ export async function runUiScenarios() {
     await mount(<ParsedTextPanel parsed={parsed} editable onSave={(body) => { saved = body }} />, { roleCode: "BRANCH_REVIEWER" })
     assert.equal(document.querySelector("textarea").value, parsed.full_text)
     assert.equal(saved, undefined)
+    assert.equal(button("核对后填入校正文本").disabled, true)
+    await click([...document.querySelectorAll("label")].find((label) => label.textContent.includes("我已对照原图核对上述变化")).querySelector("input"))
     await click(button("核对后填入校正文本"))
     assert.equal(document.querySelector("textarea").value, "申请日期2026年10月24日")
     assert.equal(saved, undefined)
@@ -233,11 +585,17 @@ export async function runUiScenarios() {
         }
         return undefined
       } })
+      await click(button("批量导入"))
       const picker = document.querySelectorAll('input[type="file"]')[1]
       Object.defineProperty(picker, "files", { value: [new File(["synthetic"], "users.xlsx")], configurable: true })
       await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })))
       await flush()
       await click(button("确认并导入"))
+      assert.match(text(), /test-file-unlock/)
+      await click(button("批量导入"))
+      assert.equal(document.getElementById("user-import-panel").hidden, true)
+      await click(button("查看导入结果"))
+      assert.equal(document.getElementById("user-import-panel").hidden, false)
       assert.match(text(), /test-file-unlock/)
       assert.equal(document.body.textContent.includes("复制账号和密码"), false)
       await click(button("下载密码文件"))
@@ -292,14 +650,31 @@ export async function runUiScenarios() {
     await click(button("关闭批次"))
     assert.match(text(),/已有档案和审核记录保留/)
   })
+  for (const action of ["关闭批次", "删除"]) {
+    await test(`批次${action}失败保留确认框且允许重试`, async () => {
+      let attempts = 0, exists = true
+      const row = {id:4,name:"测试空批次",status:"ACTIVE",archive_count:0}
+      await mount(<BatchesPage />, {roleCode:"ORG_ADMIN",handler:c=>{
+        if(c.url === "/batches") return {items:exists ? [row] : [],total:exists ? 1 : 0,page:1,page_size:20}
+        if(c.url === "/batches/4") { if(++attempts === 1) throw new Error("测试业务冲突"); exists=false; return {} }
+      }})
+      await click(button(action));await click(button("确认"))
+      assert.match(document.querySelector("dialog").textContent,/测试业务冲突/)
+      assert.equal(button("确认").disabled,false)
+      await click(button("确认"))
+      assert.equal(attempts,2);assert.equal(document.querySelector("dialog"),null)
+    })
+  }
+
   await test("系统设置按组保存，组织部不能修改安全和任务参数", async () => {
     const settings = {ai:{},ocr:{},worker:{concurrency:2},security:{max_failed_login:5},calendar:{holidays:[]},notification:{},retention:{},upload:{}}
     await mount(<CompleteSettingsPage />, {roleCode:"SYS_ADMIN",handler:(c) => c.url === "/settings" ? settings : undefined})
+    await click(button("账号与运行"))
     await input(document.querySelector('[aria-label="任务并发数"]'),"3")
     await click(button("保存后台任务"))
     assert.deepEqual(JSON.parse(requests.find((c) => c.method === "put").data),{worker:{concurrency:3}})
     await mount(<CompleteSettingsPage />, {roleCode:"ORG_ADMIN",handler:(c) => c.url === "/settings" ? settings : undefined})
-    assert.ok(button("保存后台任务").disabled)
+    assert.equal(button("保存后台任务"), undefined)
     assert.equal(button("保存日历").disabled,false)
   })
   await test("规则试运行传递临时覆盖并展示具体新增问题", async () => {
@@ -432,6 +807,7 @@ export async function runUiScenarios() {
     assert.deepEqual(calendarSave.calendar.holidays, ["2026-10-01"])
     assert.deepEqual(calendarSave.calendar.extra_workdays, ["2026-10-10"])
     assert.equal("holidays_text" in calendarSave.calendar, false)
+    await click(button("维护工具"))
     await click(button("清理并重建"))
     assert.match(text(), /真实账号和真实材料不会被清理/)
     assert.equal(requests.some((request) => request.url === "/admin/seed-demo"), false)
@@ -571,6 +947,87 @@ export async function runUiScenarios() {
     assert.match(text(), /必需材料 1\/2/)
   })
 
+  await test("自查报告直接展示，提交后明确等待审核", async () => {
+    await mount(<SelfCheckPage />, { path: "/my/self-check/101", pattern: "/my/self-check/:submissionId", handler: (c) => c.url === "/submissions/101" ? { ...baseSubmission, status: "BRANCH_REVIEW", can: { submit: false } } : undefined })
+    const report = document.querySelector('[aria-label="自查报告与材料清单"]')
+    assert.ok(report)
+    assert.equal(report.closest("details"), null)
+    assert.match(document.querySelector('[aria-label="当前办理指引"]').textContent, /等待审核/)
+    assert.doesNotMatch(text(), /当前状态或角色不可提交/)
+    assert.equal(button("发起自查"), undefined)
+    assert.equal(button("提交审核"), undefined)
+  })
+
+  await test("整改默认只展示未回复问题，全部问题可切换并保留材料返回来源", async () => {
+    await mount(<RectificationPage />, { path: "/my/rectification", handler: (c) => {
+      if (c.url === "/submissions/101") return { ...baseSubmission, status: "RETURNED" }
+      if (c.url === "/submissions/101/issues") return { items: [
+        { id: 7, material_id: 12, category: "OTHER", message: "待修改测试内容", severity: "WARN", review_status: "CONFIRMED" },
+        { id: 8, category: "OTHER", message: "已回复测试内容", severity: "WARN", review_status: "CONFIRMED", response_type: "EXPLAINED", response_text: "这是已经保存的回复说明" },
+      ] }
+    } })
+    assert.ok(button("待我回复（1）"))
+    assert.doesNotMatch(text(), /这是已经保存的回复说明/)
+    assert.equal(button("重新提交").disabled, true)
+    assert.ok([...document.querySelectorAll("a")].some(a => a.getAttribute("href") === "/materials/12?issue_id=7&from=rectification"))
+    await click(button("全部问题（2）"))
+    assert.match(text(), /这是已经保存的回复说明/)
+    await click(button("待我回复（1）"))
+    assert.doesNotMatch(text(), /这是已经保存的回复说明/)
+  })
+
+  for (const page of ["rectification", "self-check"]) {
+    await test(`${page}问题筛选及范围切换保留整改草稿，失败可重试`, async () => {
+      let saved = false, attempts = 0
+      const issue = { id: 7, material_id: 12, category: "CONTENT", title: "测试问题", severity: "WARN", review_status: "CONFIRMED" }
+      await mount(page === "rectification" ? <RectificationPage /> : <SelfCheckPage />, { path: page === "rectification" ? "/my/rectification" : "/my/self-check/101", pattern: page === "rectification" ? "/my/rectification" : "/my/self-check/:submissionId", handler: c => {
+        if (c.url === "/submissions/101") return { ...baseSubmission, status: "RETURNED" }
+        if (c.url === "/submissions/101/issues") return { items: [{ ...issue, ...(saved ? {response_type:"EXPLAINED",response_text:"这是一份尚未保存的整改草稿"} : {}) }] }
+        if (c.url === "/issues/7/response") { if (++attempts === 1) throw new Error("测试保存失败"); saved = true; return {} }
+      } })
+      const draft = "这是一份尚未保存的整改草稿"
+      await input(document.querySelector('[aria-label="整改说明"]'), draft)
+      if (page === "rectification") { await click(button("全部问题（1）")); await click(button("待我回复（1）")) }
+      await input(document.querySelector('[aria-label="问题级别"]'), "BLOCK")
+      assert.equal(document.querySelector('[aria-label="整改说明"]'), null)
+      await input(document.querySelector('[aria-label="问题级别"]'), "")
+      assert.equal(document.querySelector('[aria-label="整改说明"]').value, draft)
+      await click(button("保存情况说明"))
+      assert.match(text(), /测试保存失败/)
+      assert.equal(document.querySelector('[aria-label="整改说明"]').value, draft)
+      await click(button("保存情况说明"))
+      assert.equal(attempts, 2)
+      assert.equal(JSON.parse(requests.filter(r => r.url === "/issues/7/response").at(-1).data).response_text, draft)
+    })
+  }
+
+  await test("组织管理包含停用组织，管理按钮遵守实际角色权限", async () => {
+    const tree = [{ id: 1, name: "学校", org_type: "SCHOOL", is_active: true, children: [{ id: 2, name: "停用学院", org_type: "COLLEGE", is_active: false, children: [] }] }]
+    for (const roleCode of ["SYS_ADMIN", "ORG_ADMIN", "COLLEGE_REVIEWER"]) {
+      await mount(<OrgsPage />, { roleCode, handler: c => c.url === "/orgs" ? tree : undefined })
+      assert.equal(requests.find(r => r.url === "/orgs").params.include_inactive, true)
+      assert.match(text(), /停用学院/)
+      assert.equal(!!button("删除"), roleCode === "SYS_ADMIN")
+      assert.equal(!!button("编辑"), roleCode !== "COLLEGE_REVIEWER")
+      assert.equal(!!button("新增学校"), roleCode !== "COLLEGE_REVIEWER")
+    }
+  })
+
+  await test("刷新任务同时更新已打开的任务明细，失败可在明细重试", async () => {
+    let reads = 0
+    await mount(<JobsPage />, { path: "/tasks/jobs?view=all", roleCode: "SYS_ADMIN", handler: c => {
+      if (c.url === "/jobs") return { items: [{id:77,job_type:"PARSE",status:"RUNNING"}],total:1,page:1,page_size:20 }
+      if (c.url === "/jobs/77") { reads++; if (reads === 2) throw new Error("测试详情刷新失败"); return {id:77,job_type:"PARSE",status:reads > 2 ? "SUCCEEDED" : "RUNNING",progress:reads > 2 ? 100 : 15} }
+    } })
+    await click(button("材料解析"))
+    assert.match(document.querySelector('[aria-label="任务明细"]').textContent, /运行中/)
+    await click(button("刷新任务"))
+    assert.equal(reads, 2)
+    assert.match(document.querySelector('[aria-label="任务明细"]').textContent, /测试详情刷新失败/)
+    await click([...document.querySelector('[aria-label="任务明细"]').querySelectorAll("button")].find(b => b.textContent === "重试"))
+    assert.match(document.querySelector('[aria-label="任务明细"]').textContent, /已完成/)
+  })
+
   await test("草稿报告过期时禁止提交", async () => {
     await mount(<SelfCheckPage />, { path: "/my/self-check/101", pattern: "/my/self-check/:submissionId", handler: (config) => config.url === "/submissions/101" ? { ...baseSubmission, latest_report: { ...baseReport, is_stale: true } } : undefined })
     assert.equal(button("提交审核")?.disabled, true)
@@ -599,6 +1056,35 @@ export async function runUiScenarios() {
     await click(button("重新提交"))
     assert.equal(requests.filter((request) => request.url === "/submissions/101/submit").length, 1)
     assert.match(text(), /正在复核整改/)
+    assert.equal(button("重新提交"), undefined)
+    assert.equal(document.querySelector('[aria-label="整改问题范围"]'), null)
+  })
+
+  await test("材料列表直接删除有确认，取消不请求，审核中隐藏删除", async () => {
+    let removed = false
+    const handler = (config) => {
+      if (config.url === "/archives/1/materials") return [{ stage_code: 1, checklist: [{ checklist_item_id: 1, material_type: { id: 1, name: "测试材料" }, materials: removed ? [] : [{ id: 12, title: "虚构材料.pdf", current_version: { parse_status: "DONE" } }] }] }]
+      if (config.url === "/materials/12" && config.method === "delete") { removed = true; return {} }
+    }
+    await mount(<MyMaterialsPage />, { path: "/my/materials", roleCode: "STUDENT", handler })
+    assert.ok(document.querySelector('a[href="/materials/12"]'))
+    await click(button("删除"))
+    assert.match(text(), /删除这份材料/)
+    await click(button("取消"))
+    assert.equal(removed, false)
+    await click(button("删除"))
+    await click(button("确认删除"))
+    assert.equal(removed, true)
+    assert.equal(button("删除"), undefined)
+    removed = false
+    await mount(<MyMaterialsPage />, { path: "/my/materials", roleCode: "STUDENT", handler: (config) => {
+      if (config.url === "/my/archive") return { ...baseArchive, current_submission: { id: 101, status: "BRANCH_REVIEW" } }
+      return handler(config)
+    } })
+    assert.equal(button("删除"), undefined)
+    assert.equal(button("上传该项"), undefined)
+    assert.match(text(), /自查报告/)
+    assert.doesNotMatch(text(), /按清单逐项上传|AI 自查与提交/)
   })
 
   await test("材料接口失败显示错误而非空清单", async () => {
@@ -653,7 +1139,7 @@ export async function runUiScenarios() {
     assert.match(text(), /上传回调失败/)
   })
 
-  await test("待确认阻断问题禁止通过，驳回后可通过", async () => {
+  await test("待确认关键问题禁止通过，驳回后可通过", async () => {
     const submission = { ...baseSubmission, status: "BRANCH_REVIEW", level: "BRANCH", can: { review: true } }
     const issue = { id: 51, severity: "BLOCK", is_active: true, review_status: "PENDING", report_id: 201 }
     await mount(<ReviewDecisionPanel submission={submission} issues={[issue]} />, { roleCode: "BRANCH_REVIEWER" })
@@ -777,11 +1263,17 @@ export async function runUiScenarios() {
     await mount(<StudentDashboard data={{ archive_id: 1, submission: { id: 101, status: "RETURNED" } }} />)
     const primary = document.querySelector(".next-action .btn-primary")
     assert.equal(primary.getAttribute("href"), "/my/rectification")
+    assert.equal(primary.querySelector("svg"), null)
+    assert.equal(document.querySelector(".home-support-links"), null)
+    assert.doesNotMatch(text(), /查看全部进度|查看全部事项/)
     assert.equal(document.querySelectorAll(".next-action .btn-primary").length, 1)
+    assert.match(document.querySelector(".process-list .is-current").textContent, /整改与重新提交/)
+    assert.equal(document.querySelector(".process-list .is-current a").getAttribute("href"), "/my/rectification")
+    assert.ok(document.querySelector(".next-action .badge-soft"))
   })
 
   await test("高级筛选默认收起，但启用的筛选条件会显示数量并展开", async () => {
-    const props = { fields: [{ key: "q", label: "姓名" }], advancedFields: [{ key: "has_block", label: "有无阻断" }], onChange: () => {} }
+    const props = { fields: [{ key: "q", label: "姓名" }], advancedFields: [{ key: "has_block", label: "有无关键问题" }], onChange: () => {} }
     await mount(<FilterBar {...props} values={{}} />)
     assert.equal(document.querySelector("details").open, false)
     await mount(<FilterBar {...props} values={{ has_block: "false" }} />)
@@ -916,12 +1408,12 @@ export async function runUiScenarios() {
   const listRequests = () => requests.filter((request) => request.url === "/submissions")
   const field = (label) => [...document.querySelectorAll("label")].find((node) => node.querySelector("span")?.textContent === label)?.querySelector("select, input")
 
-  await test("待办每次筛选只发一个列表请求，无阻断与截止参数原样交给后端", async () => {
+  await test("待办每次筛选只发一个列表请求，无关键问题与截止参数原样交给后端", async () => {
     // 450 条结果：原先的浏览器端补做筛选需要按每页 200 条拉取 3 次
     const many = (config) => config.url === "/submissions" ? { items: [{ id: 101, student_name: "测试学生", stage_code: 1, status: "BRANCH_REVIEW", issue_counts: {} }], total: 450, page: 1, page_size: 20 } : undefined
     await mount(<ReviewTasksPage />, { path: "/review/tasks?due_within_days=7", roleCode: "BRANCH_REVIEWER", handler: many })
     const before = listRequests().length
-    await input(field("阻断问题"), "false")
+    await input(field("关键问题"), "false")
     const sent = listRequests().slice(before)
     assert.equal(sent.length, 1)
     assert.equal(sent[0].params.has_block, "false")
@@ -931,13 +1423,13 @@ export async function runUiScenarios() {
     assert.match(text(), /共 450 份提交材料/)
   })
 
-  await test("首页“七日内到期”进入时截止筛选可见、可清除，筛选项含“仅看无阻断”", async () => {
+  await test("首页“七日内到期”进入时截止筛选可见、可清除，筛选项含“仅看无关键问题”", async () => {
     await mount(<ReviewTasksPage />, { path: "/review/tasks?due_within_days=7", roleCode: "BRANCH_REVIEWER" })
     assert.equal(document.querySelector("details").open, true)
     assert.equal(field("截止").value, "7")
     assert.deepEqual([...field("截止").options].map((option) => option.text), ["全部", "今天到期或已逾期", "3 天内", "7 天内", "14 天内"])
-    assert.ok([...field("阻断问题").options].some((option) => option.value === "false" && option.text === "仅看无阻断"))
-    await input(field("阻断问题"), "false")
+    assert.ok([...field("关键问题").options].some((option) => option.value === "false" && option.text === "仅看无关键问题"))
+    await input(field("关键问题"), "false")
     assert.equal(listRequests().at(-1).params.has_block, "false")
     await click(button("重置"))
     const last = listRequests().at(-1).params
@@ -978,10 +1470,10 @@ export async function runUiScenarios() {
 
   await test("批量通过按统一口径提示，结果逐项显示后端原因", async () => {
     await mount(<ReviewTasksPage />, { path: "/review/tasks", roleCode: "BRANCH_REVIEWER", handler: (config) => {
-      if (config.url === "/submissions/batch-review") return { passed: [], failed: [{ submission_id: 101, code: 40903, reason: "仍有未处理的阻断问题" }] }
+      if (config.url === "/submissions/batch-review") return { passed: [], failed: [{ submission_id: 101, code: 40903, reason: "仍有未处理的关键问题" }] }
     } })
     await click(button("批量处理"))
-    assert.match(text(), /已确认、修改或驳回的阻断问题不拦截，单份与批量一致/)
+    assert.match(text(), /已确认、修改或驳回的关键问题不拦截，单份与批量一致/)
     await click(document.querySelector('input[aria-label="选择行"]'))
     await click(button("批量通过"))
     assert.match(text(), /按单份通过的同一套规则/)
@@ -989,14 +1481,14 @@ export async function runUiScenarios() {
     const body = JSON.parse(requests.find((request) => request.url === "/submissions/batch-review").data)
     assert.deepEqual(body.submission_ids, [101])
     assert.match(text(), /未通过 1 份/)
-    assert.match(text(), /提交包 #101：仍有未处理的阻断问题/)
+    assert.match(text(), /提交包 #101：仍有未处理的关键问题/)
   })
 
   await test("审核面板的通过规则说明与批量一致，不再提示批量会拒绝", async () => {
     const submission = { ...baseSubmission, status: "BRANCH_REVIEW", level: "BRANCH", can: { review: true } }
     await mount(<ReviewDecisionPanel submission={submission} issues={[{ id: 51, severity: "BLOCK", is_active: true, review_status: "CONFIRMED", report_id: 201 }]} />, { roleCode: "BRANCH_REVIEWER" })
     assert.equal(button("通过")?.disabled, false)
-    assert.match(text(), /已确认、修改或驳回的阻断问题不拦截，单份与批量一致/)
+    assert.match(text(), /已确认、修改或驳回的关键问题不拦截，单份与批量一致/)
     assert.doesNotMatch(text(), /批量通过会拒绝/)
   })
 
@@ -1016,7 +1508,7 @@ export async function runUiScenarios() {
 
   await test("任务明细加载失败在明细区提示，重试后显示任务进度", async () => {
     let attempts = 0
-    await mount(<JobsPage />, { path: "/tasks/jobs", roleCode: "BRANCH_REVIEWER", handler: (config) => {
+    await mount(<JobsPage />, { path: "/tasks/jobs?view=all", roleCode: "BRANCH_REVIEWER", handler: (config) => {
       if (config.url === "/jobs") return { items: [{ id: 7, job_type: "BATCH_UPLOAD", status: "SUCCEEDED", total: 2, done_count: 2 }], total: 1, page: 1, page_size: 20 }
       if (config.url === "/jobs/7") {
         if (++attempts === 1) throw new Error("任务服务暂不可用")

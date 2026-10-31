@@ -9,10 +9,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from database import get_db
 from errors import forbidden, unauthorized
-from models import RevokedToken, User, UserRole
-from security import decode_token
+from models import User, UserRole
 from services.client_ip import client_ip
-import jwt
 
 
 @dataclass
@@ -68,27 +66,15 @@ def _actor_from_request(
     x_active_role: Optional[str],
     require_password_ok: bool,
 ) -> Actor:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise unauthorized()
-    token = authorization.split(" ", 1)[1].strip()
-    try:
-        payload = decode_token(token)
-    except jwt.ExpiredSignatureError:
-        raise unauthorized("登录已过期")
-    except jwt.InvalidTokenError:
-        raise unauthorized()
-    if payload.get("typ") != "access":
-        raise unauthorized("token 类型错误")
-    jti = payload.get("jti")
-    if jti and db.query(RevokedToken).filter(RevokedToken.jti == jti).first():
-        raise unauthorized("登录已失效")
-    user = _load_user(db, int(payload["sub"]))
-    if int(payload.get("tv", -1)) != user.token_version:
+    from services.sessions import session_user_id, mode
+    session = session_user_id(db, request)
+    user = _load_user(db, session.user_id)
+    if session.token_version != user.token_version:
         raise unauthorized("登录已失效，请重新登录")
     if user.locked_until and user.locked_until > datetime.now(timezone.utc):
         raise unauthorized("账号已锁定")
     path = request.url.path
-    if require_password_ok and user.must_change_password and not path.startswith("/api/auth"):
+    if require_password_ok and mode(db) == "demo" and user.must_change_password and not path.startswith("/api/auth"):
         raise forbidden("请先修改初始密码", code=40301)
     roles = list(user.roles or [])
     if not roles:

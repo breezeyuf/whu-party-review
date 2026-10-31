@@ -81,6 +81,22 @@ class UserRole(Base):
     org: Mapped[Org] = relationship()
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    token_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_version: Mapped[int] = mapped_column(Integer)
+    auth_mode: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CasLoginState(Base):
+    __tablename__ = "cas_login_states"
+    state_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class RevokedToken(Base):
     __tablename__ = "revoked_tokens"
     jti: Mapped[str] = mapped_column(Text, primary_key=True)

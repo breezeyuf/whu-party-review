@@ -27,7 +27,7 @@ export const FALLBACK_META = {
     { code: "CONTENT", name: "内容规范" },
   ],
   severities: [
-    { code: "BLOCK", name: "阻断" },
+    { code: "BLOCK", name: "关键问题" },
     { code: "WARN", name: "警告" },
     { code: "INFO", name: "提示" },
   ],

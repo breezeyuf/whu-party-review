@@ -171,18 +171,21 @@ def import_users(db, actor, data, dry_run=True, batch_id=None):
         with db.begin_nested():
             passwords = []
             for plan in user_plans.values():
-                pwd = random_password()
+                from services.sessions import mode
+                sso = mode(db) == 'sso'
+                pwd = None if sso else random_password()
                 rec = plan["rec"]
-                user = User(username=plan["username"], password_hash=hash_password(pwd), real_name=plan["name"],
+                user = User(username=plan["username"], password_hash='!SSO_ONLY' if sso else hash_password(pwd), real_name=plan["name"],
                             org_id=plan["org"].id, gender=plan["gender"], email=_text(rec.get("email")) or None,
                             phone_enc=encrypt_field(_text(rec.get("phone")) or None),
                             phone_masked=mask_phone(_text(rec.get("phone")) or None),
-                            must_change_password=True, created_at=now(), updated_at=now())
+                            must_change_password=not sso, created_at=now(), updated_at=now())
                 db.add(user)
                 db.flush()
                 db.add(UserRole(user_id=user.id, role=plan["role"], org_id=plan["org"].id, created_at=now()))
                 plan["user"] = user
-                passwords.append((user.username, pwd))
+                if pwd:
+                    passwords.append((user.username, pwd))
                 result["created_users"] += 1
             for plan in archive_plans:
                 user = plan["user"] or user_plans[plan["username"]]["user"]

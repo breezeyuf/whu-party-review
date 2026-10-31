@@ -1,3 +1,4 @@
+import { severityCode } from "../../utils/reviewTerms"
 import { STATUS_BADGE, SEVERITY_BADGE } from "../../utils/constants"
 import { useMeta } from "../../context/MetaContext"
 import { severityName, statusName, recoName, handoverName, categoryName, reviewStatusName } from "../../utils/format"
@@ -5,24 +6,24 @@ import { severityName, statusName, recoName, handoverName, categoryName, reviewS
 export function SeverityBadge({ code }) {
   const meta = useMeta()
   if (!code) return null
-  return <span className={`badge badge-sm ${SEVERITY_BADGE[code] || "badge-ghost"}`}>{severityName(meta, code)}</span>
+  return <span className={`badge badge-sm badge-soft inline-flex shrink-0 whitespace-nowrap ${SEVERITY_BADGE[severityCode(code)] || "badge-ghost"}`}>{severityName(meta, code)}</span>
 }
 
-export function StatusBadge({ code, map, soft = false }) {
+export function StatusBadge({ code, map, soft = true }) {
   const meta = useMeta()
   if (!code) return <span className="text-base-content/40">—</span>
   const name = map ? (map[code] || code) : statusName(meta, code)
   return <span className={`badge badge-sm inline-flex shrink-0 whitespace-nowrap ${STATUS_BADGE[code] || "badge-ghost"} ${soft ? "badge-soft" : ""}`}>{name}</span>
 }
 
-export function RecoBadge({ code, soft = false }) {
+export function RecoBadge({ code, soft = true }) {
   const meta = useMeta()
   if (!code) return <span className="text-base-content/40">—</span>
   const cls = code === "SUGGEST_RETURN" ? "badge-error" : code === "NEEDS_REVIEW" ? "badge-warning" : "badge-success"
   return <span className={`badge badge-sm inline-flex shrink-0 whitespace-nowrap ${cls} ${soft ? "badge-soft" : ""}`}>{recoName(meta, code)}</span>
 }
 
-export function HandoverBadge({ code, soft = false }) {
+export function HandoverBadge({ code, soft = true }) {
   const meta = useMeta()
   if (!code) return null
   const cls = code === "REQUIRED" ? "badge-warning" : code === "DONE" ? "badge-success" : "badge-ghost"
@@ -36,7 +37,7 @@ export function CategoryBadge({ code }) {
 
 export function ReviewStatusBadge({ code }) {
   const meta = useMeta()
-  return <span className={`badge badge-sm ${STATUS_BADGE[code] || "badge-ghost"}`}>{reviewStatusName(meta, code)}</span>
+  return <span className={`badge badge-sm badge-soft inline-flex shrink-0 whitespace-nowrap ${STATUS_BADGE[code] || "badge-ghost"}`}>{reviewStatusName(meta, code)}</span>
 }
 
 export function DemoBadge({ show }) {

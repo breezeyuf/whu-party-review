@@ -1,3 +1,4 @@
+import { reviewMessage } from "../../utils/reviewTerms"
 import { Suspense, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
@@ -29,7 +30,7 @@ const LEVEL_OF = {
 const DEFAULT_QUERY = { todo: "true", sort: "-submitted_at" }
 // 这些条件有值时，空结果提示“没有符合筛选条件的提交包”并提供清除
 const FILTER_KEYS = ["q", "status", "stage_code", "recommendation", "has_block", "due_within_days", "batch_id", "branch_id", "level", "min_issues"]
-const BLOCK_OPTIONS = [{ code: "true", name: "仅看有阻断" }, { code: "false", name: "仅看无阻断" }]
+const BLOCK_OPTIONS = [{ code: "true", name: "仅看有关键问题" }, { code: "false", name: "仅看无关键问题" }]
 const DUE_OPTIONS = [
   { code: "0", name: "今天到期或已逾期" },
   { code: "3", name: "3 天内" },
@@ -97,7 +98,14 @@ export default function ReviewTasksPage() {
         if (summary.failures.length) toast.info("部分提交包未通过，未通过的已保留勾选，请查看原因")
         else toast.success(`已通过 ${summary.passed} 份`)
       } else if (action === "completion") {
-        const res = await completionNotices({ submission_ids: ids, send: true })
+        const res = await completionNotices({ submission_ids: ids, send: true, background: true })
+        if (res.job_id) {
+          setJobId(res.job_id)
+          setResult({ message: `已排队 ${res.total ?? ids.length} 份补全提示`, items: [] })
+          toast.info("补全提示已交由后台处理，可在任务列表查看结果")
+          setSelected([])
+          return true
+        }
         setResult({ message: `已发送 ${res.created?.length || 0} 条补全提示，跳过 ${res.skipped?.length || 0} 份`, items: res.skipped || [] })
         toast.success(`已发送 ${res.created?.length || 0} 条补全提示`)
         setSelected([])
@@ -144,7 +152,7 @@ export default function ReviewTasksPage() {
         advancedFields={[
           { key: "status", label: "状态", type: "select", metaKey: "submission_statuses" },
           { key: "recommendation", label: "AI 结论", type: "select", metaKey: "recommendations" },
-          { key: "has_block", label: "阻断问题", type: "select", options: BLOCK_OPTIONS },
+          { key: "has_block", label: "关键问题", type: "select", options: BLOCK_OPTIONS },
           { key: "due_within_days", label: "截止", type: "select", options: dueOptions(query.due_within_days) },
         ]}
       /></fieldset>
@@ -157,7 +165,7 @@ export default function ReviewTasksPage() {
       {jobId && <div className="mb-3"><Suspense fallback={<p className="text-xs text-base-content/60" role="status">正在加载任务状态…</p>}><ReviewJobStatus jobId={jobId} onDone={() => req.reload().catch(() => {})} onRetry={() => req.reload().catch(() => {})} /></Suspense></div>}
       {result && <div className="surface-card mb-3 space-y-2 p-3 text-xs" role="status">
         <p className="font-medium">{result.message}</p>
-        {!!result.items.length && <ul className="space-y-1">{result.items.map((item) => <li key={item.submission_id}><Link className="link" to={`/review/submissions/${item.submission_id}`}>提交包 #{item.submission_id}</Link>：{item.reason}</li>)}</ul>}
+        {!!result.items.length && <ul className="space-y-1">{result.items.map((item) => <li key={item.submission_id}><Link className="link" to={`/review/submissions/${item.submission_id}`}>提交包 #{item.submission_id}</Link>：{reviewMessage(item.reason)}</li>)}</ul>}
       </div>}
       <div className="surface-card p-2">
         {!req.error && <div className="px-3 py-3 text-sm text-base-content/65" role="status" aria-live="polite">{req.loading ? "正在加载待办…" : `共 ${req.data?.total ?? 0} 份提交材料`}</div>}
@@ -204,7 +212,7 @@ export default function ReviewTasksPage() {
       {confirmBatchPass && <Suspense fallback={null}><ConfirmDialog
         open={confirmBatchPass}
         title="确认批量通过？"
-        message={`将逐份通过已选择的 ${selected.length} 份提交包，每份都按单份通过的同一套规则检查审核状态、AI 报告、阻断问题和人工接管。${PASS_RULE_TEXT}未通过的提交包会保留勾选并显示原因。`}
+        message={`将逐份通过已选择的 ${selected.length} 份提交包，每份都按单份通过的同一套规则检查审核状态、AI 报告、关键问题和人工接管。${PASS_RULE_TEXT}未通过的提交包会保留勾选并显示原因。`}
         confirmText="确认批量通过"
         busy={busy}
         onClose={() => { if (!busy) setConfirmBatchPass(false) }}

@@ -37,7 +37,6 @@ async function withRole(role, run) {
   const container = document.getElementById("root")
   container.innerHTML = ""
   const root = createRoot(container)
-  tokenStore.setTokens("stats-test-token", "stats-test-refresh")
   tokenStore.setRole(`${role.role}@${role.org_id}`)
   api.defaults.adapter = async (config) => {
     requests.push(config)

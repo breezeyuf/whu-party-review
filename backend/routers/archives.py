@@ -128,11 +128,13 @@ def create_archive(body: dict, db: Session = Depends(get_db), actor: Actor = Dep
     user = db.query(User).filter(User.username == username).first() if username else None
     initial = None
     if not user:
-        pwd = random_password()
+        from services.sessions import mode
+        sso = mode(db) == "sso"
+        pwd = None if sso else random_password()
         user = User(
-            username=username, password_hash=hash_password(pwd), real_name=stu["real_name"],
+            username=username, password_hash="!SSO_ONLY" if sso else hash_password(pwd), real_name=stu["real_name"],
             gender=stu.get("gender"), org_id=branch.id, phone_enc=encrypt_field(stu.get("phone")),
-            phone_masked=mask_phone(stu.get("phone")), must_change_password=True,
+            phone_masked=mask_phone(stu.get("phone")), must_change_password=not sso,
             created_at=now(), updated_at=now(),
         )
         db.add(user)
@@ -237,9 +239,9 @@ def update_archive(aid: int, body: dict, request: Request, db: Session = Depends
             a.batch_id = new_batch
             # 提交包必须和档案同批次：否则旧批次互查员能看提交包、看不到材料，
             # 新批次互查员能看档案、看不到提交包。已归档提交包保留历史归属。
-            db.query(Submission).filter(Submission.archive_id == a.id, Submission.status != "FILED").update(
-                {"batch_id": new_batch}, synchronize_session=False
-            )
+        db.query(Submission).filter(Submission.archive_id == a.id, Submission.status != "FILED").update(
+            {"batch_id": a.batch_id}, synchronize_session="fetch"
+        )
     a.updated_at = now()
     # Basic profile data is input to identity and cross-material checks.
     a.timeline_updated_at = now()

@@ -10,6 +10,7 @@ from ai.checks.timeline import run_timeline
 from ai.checks.format import run_format
 from ai.checks.content import run_content
 from ai.report import issue_fp, summarize
+from ai.ocr_status import run_ocr_review
 from errors import unprocessable
 from schemas.time_rules import validate_time_params
 from models import RuleVersion, Batch, Material, MaterialVersion, ParseResult
@@ -27,11 +28,12 @@ def _evaluate(db, sub, mats, versions, parses, nodes, rules, context, similarity
     d3, format_results = run_format(db, mats, versions, parses, rules.types, rule_set=rules)
     d4, content_results = run_content(db, sub, mats, versions, parses, rules.types, False,
                                       rule_set=rules, similarity_cache=similarity_cache)
-    drafts = {issue_fp(d): d for d in d1 + d2 + d3 + d4 if d.source != 'AI_LLM'}
+    ocr_drafts, ocr_results = run_ocr_review(mats, versions, parses)
+    drafts = {issue_fp(d): d for d in d1 + d2 + d3 + d4 + ocr_drafts if d.source != 'AI_LLM'}
     items = {key: {'fingerprint': key, 'rule_code': d.rule_code, 'title': d.title,
                    'description': d.description, 'category': d.category, 'severity': d.severity}
              for key, d in drafts.items()}
-    results = completeness_results + time_results + format_results + content_results
+    results = completeness_results + time_results + format_results + content_results + ocr_results
     return items, summarize(list(drafts.values()), len(mats), results)
 
 
@@ -82,7 +84,8 @@ def trial_rules(db, body, actor):
             versions[material.id], parses[ver.id] = ver, parsed
         batch = db.query(Batch).filter(Batch.id == sub.batch_id).first() if sub.batch_id else None
         context = EvaluationContext.capture(baseline, get_setting(db,'calendar',{}), batch.end_date if batch else None)
-        nodes = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows('time_node_defs', active=False))
+        nodes = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows('time_node_defs', active=False),
+                                     material_types=rules.types)
         # A changing candidate corpus must not change between baseline and trial.
         # Only aggregate similarity evidence is retained in this request-local cache.
         similarity_cache = {}

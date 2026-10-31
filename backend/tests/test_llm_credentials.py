@@ -13,6 +13,8 @@ SAVED_BASE = "https://saved.example.invalid/v1"
 
 @pytest.fixture
 def endpoint(monkeypatch):
+    from services import model_network
+    monkeypatch.setattr(model_network, "_resolve", lambda *args: ["10.2.3.4"])
     settings = {"base_url": SAVED_BASE, "model": "test-model", "api_key_enc": "synthetic-encrypted-key"}
     saved_key = Mock(return_value="saved-secret")
     requests = []
@@ -29,7 +31,7 @@ def endpoint(monkeypatch):
         })
 
     monkeypatch.setattr(llm.httpx, "Client", lambda **kwargs: client_class(
-        transport=httpx.MockTransport(respond), **kwargs,
+        transport=httpx.MockTransport(respond), **{k:v for k,v in kwargs.items() if k != "transport"},
     ))
     return db, settings, saved_key, requests
 
@@ -322,3 +324,9 @@ def test_public_settings_hide_credential_ciphertext_and_internal_binding(monkeyp
     assert "api_key_enc" not in result and "api_key_base_url" not in result
     assert result["api_key_set"] is True and result["base_url"] == SAVED_BASE
     assert config == original
+
+
+@pytest.fixture(autouse=True)
+def settings_private_dns(monkeypatch):
+    from services import model_network
+    monkeypatch.setattr(model_network, "_resolve", lambda *args: ["10.2.3.4"])
