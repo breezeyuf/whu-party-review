@@ -448,6 +448,32 @@ export async function runUiScenarios() {
     assert.ok(!text().includes("2026-10-29"))
   })
 
+  await test("历史报告中的失败任务只读，当前可审核报告保留重试", async () => {
+    for (const historical of [true, false]) {
+      await mount(<ReviewWorkspacePage />, { path: `/review/submissions/101${historical ? "?report=111" : ""}`, pattern: "/review/submissions/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+        if (c.url === "/submissions/101") return { ...baseSubmission, status:"BRANCH_REVIEW", ai_status:"FAILED", ai_job_id:503, can:{ai_check:true,review:true} }
+        if (c.url === "/reports/111") return { ...baseReport, id:111, submission_id:101, issues_by_category:{},material_versions:[] }
+        if (c.url === "/jobs/503") return {id:503,job_type:"AI_CHECK",status:"FAILED",error:"虚构任务失败"}
+        if (c.url === "/jobs/503/retry") return {job_id:503}
+      } })
+      assert.match(text(), /虚构任务失败/)
+      if (historical) {
+        assert.equal(button("重试失败任务"), undefined)
+        assert.equal(requests.filter(c=>c.url.endsWith("/retry")).length,0)
+      } else assert.ok(button("重试失败任务"))
+    }
+  })
+
+  await test("学生历史报告不追踪或操作当前自查任务", async () => {
+    await mount(<SelfCheckPage />, {path:"/my/self-check/101?report=111",pattern:"/my/self-check/:submissionId",handler:c=>{
+      if(c.url === "/submissions/101") return {...baseSubmission,ai_status:"RUNNING",ai_job_id:503}
+      if(c.url === "/reports/111") return {...baseReport,id:111,submission_id:101,issues_by_category:{},material_versions:[]}
+      if(c.url === "/jobs/503") return {id:503,job_type:"AI_CHECK",status:"FAILED"}
+    }})
+    assert.equal(button("重试"),undefined)
+    assert.equal(requests.filter(c=>c.url === "/jobs/503").length,0)
+  })
+
   await test("历史报告加载失败不会回退为可编辑的当前审核", async () => {
     for (const student of [false, true]) {
       await mount(student ? <SelfCheckPage /> : <ReviewWorkspacePage />, { path: student ? "/my/self-check/101?report=111" : "/review/submissions/101?report=111", pattern: student ? "/my/self-check/:submissionId" : "/review/submissions/:id", roleCode: student ? "STUDENT" : "BRANCH_REVIEWER", handler: c => {

@@ -11,6 +11,7 @@ from database import SessionLocal
 from models import Job, Material, Submission
 from utils import get_setting, now
 from diagnostics import event, log_exception
+from services.ai_job_policy import AiJobRejected, validate_ai_job, lock_submission, job_actor, require_no_other_job
 
 # 站内消息里的任务类型 / 状态用中文，避免界面出现英文枚举
 _JOB_TYPE_NAME = {
@@ -280,9 +281,8 @@ def _run(db, job: Job) -> None:
             sid = (job.params or {}).get("submission_id") or job.target_id
             trig = (job.params or {}).get("trigger_type") or "REVIEW"
             use_llm = (job.params or {}).get("use_llm", True)
-            sub = db.query(Submission).filter(Submission.id == sid).first()
-            if sub:
-                sub.ai_status = "RUNNING"
+            sub = validate_ai_job(db, job)
+            sub.ai_status = "RUNNING"
             report = run_check(db, int(sid), trig, job.created_by, job.id, use_llm=use_llm)
             _ok(db, job, {"report_id": report.id, "report_no": report.report_no})
             if job.parent_id:
@@ -294,11 +294,15 @@ def _run(db, job: Job) -> None:
                 if not ids:
                     _ok(db, job, {"total": 0, "failed": 0})
                     return
+                for sid in sorted(ids):
+                    sub = lock_submission(db, sid)
+                    job_actor(db, job, sub)
+                    require_no_other_job(db, sub, job)
                 for sid in ids:
                     child = Job(
                         job_type="AI_CHECK", status="QUEUED", parent_id=job.id,
                         target_type="submission", target_id=sid,
-                        params={"submission_id": sid, "trigger_type": "BATCH", "use_llm": True},
+                        params={"submission_id": sid, "trigger_type": "BATCH", "use_llm": True, **{k: v for k, v in (job.params or {}).items() if k in ("actor_role", "actor_org_id")}},
                         created_by=job.created_by, created_at=now(),
                     )
                     db.add(child)
@@ -323,6 +327,16 @@ def _run(db, job: Job) -> None:
             _ok(db, job, run_notice_batch(db, job))
         else:
             _fail(db, job, f"未知任务类型 {job.job_type}", attempt=attempt)
+    except AiJobRejected as exc:
+        # No report, issue or submission state is changed before this validation.
+        job.status = "FAILED"
+        job.error = exc.biz_message
+        job.stage_text = "检查已停止：权限或状态已变化"
+        job.finished_at = now()
+        db.flush()
+        _notify_done(db, job)
+        if parent_id:
+            _bump_parent(db, parent_id, False)
     except _LostAttempt:
         db.rollback()
     except Exception as e:

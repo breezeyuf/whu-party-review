@@ -232,7 +232,11 @@ def test_exhausted_orphan_fails_and_finishes_batch_once(sessions, monkeypatch):
     assert notified == [(child, "FAILED"), (parent, "PARTIAL")]
 
 
-def test_waiting_parent_does_not_retry_or_split_again(sessions):
+def test_waiting_parent_does_not_retry_or_split_again(sessions, monkeypatch):
+    # This coordinator fixture intentionally has no business users/submissions.
+    monkeypatch.setattr(worker, "lock_submission", lambda *_: SimpleNamespace())
+    monkeypatch.setattr(worker, "job_actor", lambda *_: None)
+    monkeypatch.setattr(worker, "require_no_other_job", lambda *_: None)
     parent = add_job(sessions, job_type="BATCH_AI_CHECK", params={"submission_ids": [11, 12]})
     with sessions() as db:
         job = worker._claim(db)
@@ -348,6 +352,8 @@ def test_lost_database_connection_is_recovered_and_late_result_is_discarded(sess
 
 
 def test_parallel_children_finish_parent_without_deadlock_or_duplicate_notice(sessions, monkeypatch):
+    # Business authorization is covered against real submissions in test_ai_retry_policy.
+    monkeypatch.setattr(worker, "validate_ai_job", lambda *_: SimpleNamespace())
     from ai import pipeline
 
     parent = add_job(sessions, job_type="BATCH_AI_CHECK", status="RUNNING", attempts=1, heartbeat_at=now())

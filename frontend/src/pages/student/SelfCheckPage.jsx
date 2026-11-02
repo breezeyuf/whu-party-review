@@ -134,7 +134,7 @@ export default function SelfCheckPage() {
         <span>正在查看报告 #{reportId} 的当时快照，仅供复核；提交状态与待回复问题仍以最新情况为准。</span>
         <button type="button" className="btn btn-ghost btn-xs" onClick={backToLatestReport}>返回最新报告</button>
       </div>}
-      {jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
+      {!snapshotMode && jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
       {materialsReq.error && <ErrorState error={materialsReq.error} onRetry={() => materialsReq.reload().catch(() => {})} />}
       <section aria-label="自查报告与材料清单" className="mb-5">
