@@ -12,6 +12,7 @@ from models import AiReport, HandoverRecord, Issue, Job, Material, RuleVersion, 
 from schemas.common import ok
 from services.audit import log
 from services.materials import enqueue_job
+from services.ai_job_policy import actor_params, require_actor, require_no_other_job, lock_submission
 from services.notices import create_completion_notice
 from services.scope import can_review, ensure_submission_access, scoped_submissions
 from services.issues import serialize_issue
@@ -31,12 +32,14 @@ def ai_check(sid: int, body: dict | None = None, request: Request = None, db: Se
     if not can_actions(db, s, actor)["ai_check"]:
         raise forbidden("当前状态或角色不可发起 AI 检查")
     s = db.query(Submission).filter(Submission.id == sid).with_for_update().populate_existing().one()
+    require_actor(db, s, actor)
     existing = db.query(Job).filter(Job.target_type == "submission", Job.target_id == sid, Job.job_type == "AI_CHECK", Job.status.in_(("QUEUED", "RUNNING"))).first()
     if existing:
         return ok({"job_id": existing.id, "report_no": None})
+    require_no_other_job(db, s)
     trig = "SELF_CHECK" if actor.role == "STUDENT" else "REVIEW"
     use_llm = (body or {}).get("use_llm", True)
-    job = enqueue_job(db, "AI_CHECK", actor.id, "submission", sid, {"submission_id": sid, "trigger_type": trig, "use_llm": use_llm})
+    job = enqueue_job(db, "AI_CHECK", actor.id, "submission", sid, {"submission_id": sid, "trigger_type": trig, "use_llm": use_llm, **actor_params(actor)})
     s.ai_status = "QUEUED"
     s.ai_job_id = job.id
     last = db.query(AiReport.report_no).filter(AiReport.submission_id == sid).order_by(AiReport.report_no.desc()).first()
@@ -51,7 +54,7 @@ def batch_ai(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(g
     ids = body.get("submission_ids")
     q = scoped_submissions(db.query(Submission), actor, db)
     allowed_states = {
-        "BRANCH_REVIEWER": ("DRAFT", "RETURNED", "BRANCH_REVIEW"),
+        "BRANCH_REVIEWER": ("DRAFT", "BRANCH_REVIEW"),
         "COLLEGE_REVIEWER": ("COLLEGE_REVIEW",),
         "ORG_ADMIN": ("ORG_FILING",),
     }
@@ -70,7 +73,11 @@ def batch_ai(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(g
     ids = [s.id for s in q.all()]
     if not ids:
         raise unprocessable("没有可检查的提交包")
-    job = enqueue_job(db, "BATCH_AI_CHECK", actor.id, "batch", body.get("batch_id"), {"submission_ids": ids}, total=len(ids))
+    for sid in sorted(ids):
+        sub = lock_submission(db, sid)
+        require_actor(db, sub, actor)
+        require_no_other_job(db, sub)
+    job = enqueue_job(db, "BATCH_AI_CHECK", actor.id, "batch", body.get("batch_id"), {"submission_ids": ids, **actor_params(actor)}, total=len(ids))
     return ok({"job_id": job.id, "total": len(ids)})
 
 

@@ -201,7 +201,7 @@ export default function ReviewWorkspacePage() {
       {activeRole?.role === "ORG_ADMIN" && !snapshotMode && <div className="surface-card mb-3 flex flex-wrap items-center justify-between gap-3 p-3 text-sm" role="status">
         <div><p className="mb-1 text-xs text-base-content/60">关键问题须核实处理，未处理时不能通过或备案；确认问题不代表必须退回。</p><p>{passBlockReason(sub, issueReq.data?.items || [], !!issueReq.data && !issueReq.loading && !issueReq.error && !subReq.loading) || "报告与问题处置已满足前端备案条件，请核对原文后填写结论。"}</p></div><a className="btn btn-outline btn-sm shrink-0" href="#review-decision">填写备案结论</a>
       </div>}
-      {trackedJobId && <div className="mb-3"><Suspense fallback={<p className="text-xs text-base-content/60" role="status">正在加载任务状态…</p>}><ReviewJobStatus jobId={trackedJobId} onDone={refreshAll} onRetry={refreshAll} /></Suspense></div>}
+      {trackedJobId && <div className="mb-3"><Suspense fallback={<p className="text-xs text-base-content/60" role="status">正在加载任务状态…</p>}><ReviewJobStatus readonly={snapshotMode || !sub.can?.ai_check} jobId={trackedJobId} onDone={refreshAll} onRetry={refreshAll} /></Suspense></div>}
       {viewingHistoryReport && <div className="surface-card mb-3 flex flex-wrap items-center gap-3 p-3 text-sm" role="status">
         <span className="badge badge-warning badge-sm">历史报告</span>
         <span>报告 #{reportId} 快照：问题、完整性与结论取自该次报告；审核决定仍以最新报告为准。</span>

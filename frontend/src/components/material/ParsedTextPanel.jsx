@@ -6,7 +6,7 @@ import { extractionChanges, extractionDraft } from "../../utils/extractionWorkfl
 import { applyOcrSuggestion, pendingOcrPages } from "../../utils/ocrReview"
 import OcrReviewSuggestions from "./OcrReviewSuggestions"
 
-export default function ParsedTextPanel({ parsed, editable, onSave }) {
+export default function ParsedTextPanel({ parsed, editable, onSave, allowRecheck = true }) {
   const [text, setText] = useState("")
   const [fields, setFields] = useState("")
   const [busy, setBusy] = useState(false)
@@ -132,7 +132,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
       {editable && (
         <div className="flex gap-2">
           <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => save(false)}>保存校正</button>
-          <button type="button" className="btn btn-outline btn-sm" disabled={busy} onClick={() => save(true)}>保存并重新校验</button>
+          {allowRecheck && <button type="button" className="btn btn-outline btn-sm" disabled={busy} onClick={() => save(true)}>保存并重新校验</button>}
         </div>
       )}
       {error && <p role="alert" className="text-xs text-error">{error}</p>}

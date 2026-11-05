@@ -123,18 +123,19 @@ export default function SelfCheckPage() {
     <div>
       <PageHeader title={pageTitle} crumbs={[{ label: "我的材料", to: "/my/materials" }, { label: pageTitle }]}
         extra={canEdit && !snapshotMode ? <>
-          <button type="button" className="btn btn-outline btn-sm" disabled={starting || busy || !canCheck || snapshotMode} onClick={start}>{starting ? "发起中…" : taskPending || isAiPending(sub) ? "自查进行中…" : "发起自查"}</button>
+          {sub?.status !== "RETURNED" && <button type="button" className="btn btn-outline btn-sm" disabled={starting || busy || !canCheck || snapshotMode} onClick={start}>{starting ? "发起中…" : taskPending || isAiPending(sub) ? "自查进行中…" : "发起自查"}</button>}
           <button type="button" className="btn btn-primary btn-sm" disabled={busy || starting || !!submitReason || snapshotMode} onClick={submit}>{busy ? "提交中…" : sub?.status === "RETURNED" ? "重新提交" : "提交审核"}</button>
         </> : null}>
         {sub?.stage_name} · {canEdit && !snapshotMode ? "AI 结论作为参考，提交前请处理待回复问题。" : "查看本次自查结果；审核进度以发展进度和消息为准。"}
       </PageHeader>
+      {!snapshotMode && sub?.status === "RETURNED" && <p className="mb-3 text-sm text-base-content/65" role="status">请先回复审核员已确认的问题；重新提交后系统会自动复核，保留本次整改依据。</p>}
       {!snapshotMode && <StudentFlowGuide submission={sub} issues={issues} groups={materialsReq.data || []} ready={!!issueReq.data && !!materialsReq.data && !issueReq.error && !materialsReq.error && !subReq.loading} taskPending={taskPending || replyBusy} source="self-check" blockedReason={canEdit ? submitReason : ""}/>}
       {viewingHistoryReport && <div className="surface-card mb-3 flex flex-wrap items-center gap-3 p-3 text-sm" role="status">
         <span className="badge badge-warning badge-sm">历史报告</span>
         <span>正在查看报告 #{reportId} 的当时快照，仅供复核；提交状态与待回复问题仍以最新情况为准。</span>
         <button type="button" className="btn btn-ghost btn-xs" onClick={backToLatestReport}>返回最新报告</button>
       </div>}
-      {jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
+      {!snapshotMode && jobId && <div className="mb-4"><StudentTaskProgress jobId={jobId} onDone={(job) => { setFinishedJobId(job.id); refresh() }} onRestart={() => { setFinishedJobId(null); refresh() }} /></div>}
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
       {materialsReq.error && <ErrorState error={materialsReq.error} onRetry={() => materialsReq.reload().catch(() => {})} />}
       <section aria-label="自查报告与材料清单" className="mb-5">

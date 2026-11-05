@@ -113,13 +113,26 @@ def get_job(jid: int, db: Session = Depends(get_db), actor: Actor = Depends(get_
 
 @router.post("/{jid}/retry")
 def retry(jid: int, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
-    j = db.query(Job).filter(Job.id == jid).first()
+    j = db.query(Job).filter(Job.id == jid).with_for_update().populate_existing().first()
     if not j:
         raise not_found()
     if actor.role not in ("SYS_ADMIN", "ORG_ADMIN") and j.created_by != actor.id:
         raise forbidden()
     if j.status not in ("FAILED", "PARTIAL"):
         raise conflict("仅失败或部分失败的任务可重试")
+    from services.ai_job_policy import validate_ai_job, lock_submission, job_actor, require_actor, require_no_other_job
+    if j.job_type == "AI_CHECK":
+        validate_ai_job(db, j, actor)
+    elif j.job_type == "BATCH_AI_CHECK":
+        failed = db.query(Job).filter(Job.parent_id == jid, Job.status == "FAILED").all()
+        targets = {int((k.params or {}).get("submission_id") or k.target_id): k for k in failed}
+        if not targets and not db.query(Job.id).filter(Job.parent_id == jid).first():
+            targets = {int(sid): None for sid in (j.params or {}).get("submission_ids", [])}
+        for sid, child in sorted(targets.items()):
+            sub = lock_submission(db, sid)
+            job_actor(db, child or j, sub)
+            require_actor(db, sub, actor)
+            require_no_other_job(db, sub, child or j)
     n = 0
     if j.job_type == "BATCH_AI_CHECK":
         kids = db.query(Job).filter(Job.parent_id == jid, Job.status == "FAILED").all()

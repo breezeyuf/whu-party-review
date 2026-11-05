@@ -339,6 +339,10 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         raise not_found()
     ensure_material_access(db, actor, m, request)
     sub = _editable_submission(db, actor, m, reviewer=True)
+    if body.get("recheck"):
+        from services.ai_job_policy import require_actor, require_no_other_job
+        require_actor(db, sub, actor)
+        require_no_other_job(db, sub)
     vid = body.get("version_id") or m.current_version_id
     if vid != m.current_version_id:
         raise conflict("历史材料版本只读")
@@ -421,9 +425,12 @@ def put_parsed(mid: int, body: dict, request: Request, db: Session = Depends(get
         "extractions": corrections, "ocr_reviewed_pages": reviewed_pages, "ocr_transcribed_pages": sorted(transcribed)})
     job_id = None
     if body.get("recheck"):
+        from services.ai_job_policy import actor_params
         job = enqueue_job(db, "AI_CHECK", actor.id, "submission", m.submission_id,
-                          {"submission_id": m.submission_id, "trigger_type": "REVIEW"})
+                          {"submission_id": m.submission_id, "trigger_type": "REVIEW", **actor_params(actor)})
         job_id = job.id
+        sub.ai_status = "QUEUED"
+        sub.ai_job_id = job.id
     data = {"ok": True}
     if job_id:
         data["job_id"] = job_id

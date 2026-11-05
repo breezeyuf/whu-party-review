@@ -212,7 +212,7 @@ export default function MaterialDetailPage() {
     </></>}</div>
     <div role="tabpanel" id="material-tabs-panel-text" aria-labelledby="material-tabs-text" hidden={tab !== "text"}>{visitedTabs.current.has("text") && <><div className="surface-card p-4">
       {parsed.loading || (parsed.data && String(parsed.data.version_id) !== String(vid)) ? <Loading label="解析文本" /> : parsed.error ? <ErrorState error={parsed.error} onRetry={parsed.reload} /> :
-        <Suspense fallback={<Loading label="解析文本" />}><ParsedTextPanel parsed={parsed.data} editable={canCorrect && !historical && selectedVersion?.parse_status === "DONE"} onSave={async (body) => {
+        <Suspense fallback={<Loading label="解析文本" />}><ParsedTextPanel parsed={parsed.data} allowRecheck={!!submission.data?.can?.ai_check} editable={canCorrect && !historical && selectedVersion?.parse_status === "DONE"} onSave={async (body) => {
           const result = await putParsed(id, body)
           toast.success(body.recheck ? "已保存校正，正在重新校验" : "已保存校正")
           if (result.job_id) setTaskId(result.job_id)
@@ -223,7 +223,7 @@ export default function MaterialDetailPage() {
       <div>
         {versions.error ? <ErrorState error={versions.error} onRetry={versions.reload} /> : <VersionList versions={allVersions} currentId={vid} onSelect={selectVersion}
           reportHref={subId ? (rid) => `${student ? `/my/self-check/${subId}` : `/review/submissions/${subId}`}?report=${rid}` : undefined} />}
-        {canUpload && <div className="mt-3"><FileUploader accept=".pdf,.jpg,.jpeg,.png,.docx" disabled={uploading} label="上传新版本" onFile={async (file) => {
+        {canUpload && !historical && <div className="mt-3"><FileUploader accept=".pdf,.jpg,.jpeg,.png,.docx" disabled={uploading} label="上传新版本" onFile={async (file) => {
           setUploading(true)
           try {
             const result = await uploadVersion(id, file, { change_note: "替换材料" })

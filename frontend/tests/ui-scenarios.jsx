@@ -388,8 +388,10 @@ export async function runUiScenarios() {
       if(c.url === "/messages/read-all") {unread=0;return {updated:3}}
     }})
     const messageButton=document.querySelector('[aria-label="消息，3 条未读"]')
-    await act(async () => {messageButton.dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));await wait()})
+    await act(async () => {const event = new MouseEvent("pointerover", { bubbles: true });Object.defineProperty(event,"pointerType",{value:"mouse"});messageButton.dispatchEvent(event);await wait()})
     assert.ok(button("全部标为已读"))
+    await act(async () => {document.querySelector('[aria-label="展开消息快捷操作"]').dispatchEvent(new MouseEvent("click",{bubbles:true,detail:1}));await wait()})
+    assert.ok(button("全部标为已读"), "悬停后鼠标点击展开按钮仍保持浮层打开")
     assert.equal(requests.filter((c) => c.url === "/messages/read-all").length,0)
     await click(button("全部标为已读"))
     assert.ok(document.querySelector('[aria-label="消息"]'))
@@ -409,6 +411,8 @@ export async function runUiScenarios() {
     await click(document.querySelector('[aria-label="展开消息快捷操作"]'))
     await click(button("全部标为已读"))
     assert.equal(button("正在标记…").disabled,true)
+    await act(async () => {button("正在标记…").dispatchEvent(new Event("focusout",{bubbles:true}));await wait()})
+    assert.ok(button("正在标记…"), "请求中按钮被禁用导致失焦，不应收起消息浮层")
     await click(button("正在标记…"))
     assert.equal(requests.filter((c)=>c.url === "/messages/read-all").length,1)
     await act(async()=>{finish({updated:2});await wait()})
@@ -446,6 +450,32 @@ export async function runUiScenarios() {
     await click(button("时间节点"))
     assert.ok(text().includes("2020-01-02"))
     assert.ok(!text().includes("2026-10-29"))
+  })
+
+  await test("历史报告中的失败任务只读，当前可审核报告保留重试", async () => {
+    for (const historical of [true, false]) {
+      await mount(<ReviewWorkspacePage />, { path: `/review/submissions/101${historical ? "?report=111" : ""}`, pattern: "/review/submissions/:id", roleCode: "BRANCH_REVIEWER", handler: c => {
+        if (c.url === "/submissions/101") return { ...baseSubmission, status:"BRANCH_REVIEW", ai_status:"FAILED", ai_job_id:503, can:{ai_check:true,review:true} }
+        if (c.url === "/reports/111") return { ...baseReport, id:111, submission_id:101, issues_by_category:{},material_versions:[] }
+        if (c.url === "/jobs/503") return {id:503,job_type:"AI_CHECK",status:"FAILED",error:"虚构任务失败"}
+        if (c.url === "/jobs/503/retry") return {job_id:503}
+      } })
+      assert.match(text(), /虚构任务失败/)
+      if (historical) {
+        assert.equal(button("重试失败任务"), undefined)
+        assert.equal(requests.filter(c=>c.url.endsWith("/retry")).length,0)
+      } else assert.ok(button("重试失败任务"))
+    }
+  })
+
+  await test("学生历史报告不追踪或操作当前自查任务", async () => {
+    await mount(<SelfCheckPage />, {path:"/my/self-check/101?report=111",pattern:"/my/self-check/:submissionId",handler:c=>{
+      if(c.url === "/submissions/101") return {...baseSubmission,ai_status:"RUNNING",ai_job_id:503}
+      if(c.url === "/reports/111") return {...baseReport,id:111,submission_id:101,issues_by_category:{},material_versions:[]}
+      if(c.url === "/jobs/503") return {id:503,job_type:"AI_CHECK",status:"FAILED"}
+    }})
+    assert.equal(button("重试"),undefined)
+    assert.equal(requests.filter(c=>c.url === "/jobs/503").length,0)
   })
 
   await test("历史报告加载失败不会回退为可编辑的当前审核", async () => {
@@ -1101,6 +1131,16 @@ export async function runUiScenarios() {
     await click(button("解析文本"))
     assert.equal(document.querySelector("textarea")?.readOnly, true)
     assert.equal(button("保存校正"), undefined)
+    await click(button("版本"))
+    assert.equal(button("上传新版本"), undefined)
+    assert.equal(document.querySelector('input[type="file"]'), null)
+  })
+
+  await test("退回状态保留整改依据，重新提交后自动复核", async () => {
+    await mount(<SelfCheckPage />, { path: "/my/self-check/101", pattern: "/my/self-check/:submissionId", handler: (config) => config.url === "/submissions/101" ? { ...baseSubmission, status: "RETURNED", can: { submit: true, self_check: false } } : undefined })
+    assert.equal(button("发起自查"), undefined)
+    assert.ok(button("重新提交"))
+    assert.match(text(), /重新提交后系统会自动复核/)
   })
 
   await test("所选版本对比使用明确的两个版本编号", async () => {
@@ -1545,7 +1585,7 @@ export async function runUiScenarios() {
   })
 
   await test("ZIP 确认携带导入阶段，结果区分本次导入与此前已入库", async () => {
-    const items = [{ item_id: 31, entry_path: "20260001_申请书.pdf", status: "MATCHED", matched_archive: { id: 1, real_name: "测试学生" } }]
+    const items = [{ item_id: 31, entry_path: "20260001_申请书.pdf", parsed_student_no: "20260001", status: "MATCHED", matched_archive: { id: 1, real_name: "测试学生" } }]
     await mount(<BatchUploadPage />, { path: "/materials/batch-upload", roleCode: "BRANCH_REVIEWER", handler: (config) => {
       if (config.url === "/materials/batch-upload") return { job_id: 601 }
       if (config.url === "/jobs/601") return { id: 601, status: "SUCCEEDED", params: { stage_code: 2 }, result: { items } }
@@ -1557,6 +1597,7 @@ export async function runUiScenarios() {
     await flush()
     assert.equal(requests.find((request) => request.url === "/materials/batch-upload").data.get("stage_code"), "2")
     assert.equal(document.querySelector('[aria-label="导入阶段"]').value, "2")
+    assert.match(document.querySelector('[aria-label="20260001_申请书.pdf 的归属档案"] option:checked').textContent, /20260001/)
     await click(button("确认导入 1 个文件"))
     const body = JSON.parse(requests.find((request) => request.url.endsWith("/assign")).data)
     assert.equal(body.stage_code, 2)

@@ -5,18 +5,19 @@ import { retryJob } from "../../api/jobs"
 
 const LABEL = { QUEUED: "排队中", RUNNING: "运行中", SUCCEEDED: "已完成", PARTIAL: "部分失败", FAILED: "失败", CANCELLED: "已取消" }
 
-export default function ReviewJobStatus({ jobId, onDone, onRetry }) {
+export default function ReviewJobStatus({ jobId, onDone, onRetry, readonly = false }) {
   const [attempt, setAttempt] = useState(0)
   if (!jobId) return null
-  return <JobWatcher key={`${jobId}:${attempt}`} jobId={jobId} onDone={onDone} onRetry={() => { setAttempt((n) => n + 1); onRetry?.() }} />
+  return <JobWatcher key={`${jobId}:${attempt}`} jobId={jobId} readonly={readonly} onDone={onDone} onRetry={() => { setAttempt((n) => n + 1); onRetry?.() }} />
 }
 
-function JobWatcher({ jobId, onDone, onRetry }) {
+function JobWatcher({ jobId, onDone, onRetry, readonly }) {
   const { job, error } = useJobPolling(jobId, { onDone })
   const [busy, setBusy] = useState(false)
   const [retryError, setRetryError] = useState("")
   const failed = ["FAILED", "PARTIAL"].includes(job?.status)
   const retry = async () => {
+    if (readonly || busy) return
     setBusy(true)
     setRetryError("")
     try { await retryJob(jobId); onRetry() } catch (e) { setRetryError(e.message || "重试失败"); setBusy(false) }
@@ -36,7 +37,7 @@ function JobWatcher({ jobId, onDone, onRetry }) {
       {job?.error && <p className="text-error">{job.error}</p>}
       {job?.job_type === "NOTICE_BATCH" && job.result && <p>已生成 {job.result.created?.length || 0} 条，跳过 {job.result.skipped?.length || 0} 份。<Link className="link ml-2" to="/notices">查看通知</Link></p>}
       {!!job?.failed_children?.length && <ul className="space-y-1">{job.failed_children.map((child) => <li key={child.id}><Link className="link" to={`/review/submissions/${child.target_id}`}>提交包 #{child.target_id}</Link>：{child.error || "AI 检查失败"}</li>)}</ul>}
-      {failed && <button type="button" className="btn btn-outline btn-xs" disabled={busy} onClick={retry}>{busy ? "重试中…" : "重试失败任务"}</button>}
+      {failed && !readonly && <button type="button" className="btn btn-outline btn-xs" disabled={busy} onClick={retry}>{busy ? "重试中…" : "重试失败任务"}</button>}
       {retryError && <p className="text-error" role="alert">{retryError}</p>}
     </div>
   )
