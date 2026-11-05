@@ -1,7 +1,7 @@
 """Shared, live authorization for AI enqueue, retries and worker execution."""
 from deps import Actor
 from errors import AppError
-from models import Job, Org, Submission, User, UserRole
+from models import Job, Org, ReviewRecord, Submission, User, UserRole
 from services.scope import scoped_submissions
 from services.workflow import can_actions
 
@@ -22,15 +22,32 @@ def lock_submission(db, sid):
     return sub
 
 
-def require_actor(db, sub, actor):
+def _is_current_resubmit(db, sub, actor, job):
+    # Only the job created by this exact resubmission may run after the student
+    # hands control to reviewers. An old SELF_CHECK/RECHECK never gains this right.
+    if not job or actor.role != "STUDENT" or sub.archive.student_user_id != actor.id:
+        return False
+    params = job.params or {}
+    if params.get("trigger_type") != "RECHECK" or sub.ai_job_id != job.id:
+        return False
+    record = db.get(ReviewRecord, params.get("resubmit_record_id")) if params.get("resubmit_record_id") else None
+    return bool(record and record.submission_id == sub.id and record.reviewer_id == actor.id
+                and record.action == "RESUBMIT" and record.from_status == "RETURNED"
+                and record.round_no == sub.round_no and record.to_status == sub.status
+                and sub.status in ("BRANCH_REVIEW", "CROSS_REVIEW", "COLLEGE_REVIEW", "ORG_FILING"))
+
+
+def require_actor(db, sub, actor, recheck_job=None):
     # The submission lock serializes this decision with normal review/file operations.
     user = db.query(User).filter(User.id == actor.id).populate_existing().first()
     grant = db.query(UserRole).join(Org, Org.id == UserRole.org_id).filter(
         UserRole.user_id == actor.id, UserRole.role == actor.role,
         UserRole.org_id == actor.org_id, Org.is_active.is_(True)).first()
     visible = scoped_submissions(db.query(Submission), actor, db).filter(Submission.id == sub.id).first()
-    if (not user or not user.is_active or not grant or not visible
-            or not can_actions(db, sub, actor)["ai_check"]):
+    permitted = can_actions(db, sub, actor)["ai_check"]
+    if recheck_job and actor.role == "STUDENT" and (recheck_job.params or {}).get("trigger_type") == "RECHECK":
+        permitted = _is_current_resubmit(db, sub, actor, recheck_job)
+    if not user or not user.is_active or not grant or not visible or not permitted:
         raise AiJobRejected("当前权限或审核状态不允许重新检查，请刷新办理页面")
 
 
@@ -42,7 +59,7 @@ def job_actor(db, job, sub):
     grants = db.query(UserRole).filter(UserRole.user_id == user.id).all()
     if params.get("actor_role"):
         grants = [g for g in grants if g.role == params["actor_role"] and g.org_id == params.get("actor_org_id")]
-    elif params.get("trigger_type") == "SELF_CHECK":
+    elif params.get("trigger_type") in ("SELF_CHECK", "RECHECK"):
         grants = [g for g in grants if g.role == "STUDENT"]
     else:
         grants = [g for g in grants if g.role in ("BRANCH_REVIEWER", "CROSS_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN")]
@@ -50,7 +67,7 @@ def job_actor(db, job, sub):
     for grant in grants:
         actor = Actor(user, grant.role, grant.org_id, grants, "", "worker")
         try:
-            require_actor(db, sub, actor)
+            require_actor(db, sub, actor, recheck_job=job)
             candidates.append(actor)
         except AiJobRejected:
             pass
@@ -73,6 +90,6 @@ def validate_ai_job(db, job, retry_actor=None):
     sub = lock_submission(db, sid)
     job_actor(db, job, sub)
     if retry_actor:
-        require_actor(db, sub, retry_actor)
+        require_actor(db, sub, retry_actor, recheck_job=job)
     require_no_other_job(db, sub, job)
     return sub

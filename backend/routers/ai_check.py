@@ -54,7 +54,7 @@ def batch_ai(body: dict, db: Session = Depends(get_db), actor: Actor = Depends(g
     ids = body.get("submission_ids")
     q = scoped_submissions(db.query(Submission), actor, db)
     allowed_states = {
-        "BRANCH_REVIEWER": ("DRAFT", "RETURNED", "BRANCH_REVIEW"),
+        "BRANCH_REVIEWER": ("DRAFT", "BRANCH_REVIEW"),
         "COLLEGE_REVIEWER": ("COLLEGE_REVIEW",),
         "ORG_ADMIN": ("ORG_FILING",),
     }

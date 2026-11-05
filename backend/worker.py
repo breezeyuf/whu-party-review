@@ -328,7 +328,11 @@ def _run(db, job: Job) -> None:
         else:
             _fail(db, job, f"未知任务类型 {job.job_type}", attempt=attempt)
     except AiJobRejected as exc:
-        # No report, issue or submission state is changed before this validation.
+        # Keep evidence intact, but do not leave the current task's UI stuck queued.
+        if job_type == "AI_CHECK":
+            stopped_sub = db.get(Submission, (job.params or {}).get("submission_id") or job.target_id)
+            if stopped_sub and stopped_sub.ai_job_id == job.id and stopped_sub.ai_status in ("QUEUED", "RUNNING"):
+                stopped_sub.ai_status = "FAILED"
         job.status = "FAILED"
         job.error = exc.biz_message
         job.stage_text = "检查已停止：权限或状态已变化"

@@ -128,7 +128,8 @@ def submit_package(db: Session, sub: Submission, actor, comment: Optional[str] =
         sub.return_level = None
         from services.materials import enqueue_job
         job = enqueue_job(db, "AI_CHECK", actor.id, "submission", sub.id,
-                          {"submission_id": sub.id, "trigger_type": "RECHECK", "use_llm": True})
+                          {"submission_id": sub.id, "trigger_type": "RECHECK", "use_llm": True,
+                           "actor_role": actor.role, "actor_org_id": actor.org_id})
         sub.ai_status = "QUEUED"
         sub.ai_job_id = job.id
         recheck_job_id = job.id
@@ -141,6 +142,8 @@ def submit_package(db: Session, sub: Submission, actor, comment: Optional[str] =
     sub.level_entered_at = now()
     freeze_versions(db, sub, True)
     rec = add_record(db, sub, actor, "SELF", action, from_s, to_s, comment)
+    if recheck_job_id:
+        job.params = {**job.params, "resubmit_record_id": rec.id}
     notify_role_users(
         db, "BRANCH_REVIEWER", sub.branch_id, msg_type="TASK",
         title=f"{sub.archive.real_name} 已提交{stage_name(db, sub.stage_code)}材料",
@@ -316,9 +319,9 @@ def can_actions(db, sub: Submission, actor) -> dict:
     review = can_review(sub, actor, db)
     return {
         "upload": (owner and st in ("DRAFT", "RETURNED")) or (actor.role == "BRANCH_REVIEWER" and st in ("DRAFT", "RETURNED")),
-        "self_check": owner and st in ("DRAFT", "RETURNED"),
+        "self_check": owner and st == "DRAFT",
         "submit": owner and st in ("DRAFT", "RETURNED"),
-        "ai_check": review or ((owner or actor.role == "BRANCH_REVIEWER") and st in ("DRAFT", "RETURNED")),
+        "ai_check": review or ((owner or actor.role == "BRANCH_REVIEWER") and st == "DRAFT"),
         "handover": review and bool(sub.latest_report_id) and bool(
             (report := _latest_report(db, sub)) and report.handover_status == "REQUIRED"
         ),
