@@ -93,7 +93,7 @@ def test_verified_https_health_login_and_same_origin_policy(tmp_path):
             bad = client.post(f"https://localhost:{port}/api/auth/login",
                               json={"username": "nonexistent", "password": "wrong"},
                               headers={"Origin": "https://untrusted.invalid"})
-            assert bad.status_code == 401
+            assert bad.status_code == 403
             assert "access-control-allow-origin" not in bad.headers
     finally:
         process.terminate()

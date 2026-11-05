@@ -4,16 +4,15 @@ import { getMeta } from "../../api/meta"
 import { useRequest } from "../../hooks/useRequest"
 import { extractionChanges, extractionDraft } from "../../utils/extractionWorkflow"
 import { applyOcrSuggestion, pendingOcrPages } from "../../utils/ocrReview"
-import MaterialViewer from "./MaterialViewer"
+import OcrReviewSuggestions from "./OcrReviewSuggestions"
 
-export default function ParsedTextPanel({ parsed, editable, onSave }) {
+export default function ParsedTextPanel({ parsed, editable, onSave, allowRecheck = true }) {
   const [text, setText] = useState("")
   const [fields, setFields] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [drafts, setDrafts] = useState([])
   const [reason, setReason] = useState("")
-  const [reviewSource, setReviewSource] = useState(null)
   const [reviewedPages, setReviewedPages] = useState([])
   const nextKey = useRef(0)
   const defsReq = useRequest(getMeta, [editable], { immediate: !!editable })
@@ -26,7 +25,6 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
     setDrafts((parsed?.extractions || []).map((ex) => extractionDraft(ex)))
     setReason("")
     setError("")
-    setReviewSource(null)
     setReviewedPages([])
   }, [parsed])
 
@@ -70,35 +68,21 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
           {editable ? `已对照原图核对第 ${page.page_no} 页` : `第 ${page.page_no} 页待审核人员核对`}
         </label>)}
       </section>}
-      {(parsed.pages || []).some((page) => page.vision_reviews?.length) && <section className="space-y-2 rounded border border-base-300 p-3" aria-label="视觉 OCR 复核结果">
-        <h3 className="text-sm font-medium">视觉 OCR 复核建议</h3>
-        <p className="text-xs text-base-content/60">以下为模型原始建议记录，不代表已采纳。请对照对应页原图，尤其核对姓名和日期；填入后仍须保存校正。已保存的校正以解析文本为准。</p>
-        {reviewSource && <div className="rounded border border-base-300 p-2">
-          <button type="button" className="btn btn-ghost btn-xs mb-2" onClick={() => setReviewSource(null)}>收起复核原图</button>
-          <MaterialViewer materialId={parsed.material_id} versionId={parsed.version_id} page={reviewSource.page_no} pageCount={parsed.page_count} highlights={[reviewSource]} activeId="ocr-review" />
-        </div>}
-        {(parsed.pages || []).flatMap((page) => (page.vision_reviews || []).map((review, index) => <div key={`${page.page_no}-${index}`} className="space-y-1 border-t border-base-300 pt-2 text-xs">
-          <p>第 {page.page_no} 页 · {review.block_index == null ? "整页" : `文字块 ${review.block_index + 1}`} · {review.model} · {review.status === "failed" ? "复核失败" : review.status === "unchanged" ? "与本地结果一致" : "需人工核对"}</p>
-          {parsed.material_id && <button type="button" className="btn btn-ghost btn-xs" onClick={() => setReviewSource({ id: "ocr-review", page_no: page.page_no, bbox: review.bbox, version_id: parsed.version_id, title: "视觉 OCR 复核区域" })}>查看原图区域</button>}
-          {review.error ? <p className="text-warning">{review.error}</p> : <>
-            <p className="whitespace-pre-wrap">本地原文：{review.original_text || "（未识别到文字）"}</p>
-            <p className="whitespace-pre-wrap">模型建议：{review.candidate_text || "（空白）"}</p>
-            <p>模型自报置信度：{Math.round((review.confidence || 0) * 100)}%{review.uncertain ? " · 存在无法辨认的文字" : ""}</p>
-            {editable && review.status === "pending" && <button type="button" className="btn btn-outline btn-xs" disabled={busy} onClick={() => {
-              try { setText(applyOcrSuggestion(text, parsed, page, review)); setError("") }
-              catch (e) { setError(e.message) }
-            }}>核对后填入校正文本</button>}
-          </>}
-        </div>))}
-      </section>}
+      <OcrReviewSuggestions parsed={parsed} editable={editable} busy={busy} onApply={(page, review) => {
+        try { setText(applyOcrSuggestion(text, parsed, page, review)); setError("") }
+        catch (e) { setError(e.message) }
+      }}/>
       <label className="form-control">
         <span className="label-text text-xs">解析文本</span>
         <textarea className="textarea textarea-bordered font-mono text-xs" rows={10} value={text} readOnly={!editable || busy} onChange={(e) => setText(e.target.value)} />
       </label>
-      <label className="form-control">
+      <details className="service-inline-details" open={editable ? true : undefined}>
+      <summary>{editable ? "抽取字段校正" : "识别详情"}</summary>
+      <label className="form-control mt-2">
         <span className="label-text text-xs">抽取字段（JSON）</span>
         <textarea className="textarea textarea-bordered font-mono text-xs" rows={6} value={fields} readOnly={!editable || busy} onChange={(e) => setFields(e.target.value)} />
       </label>
+      </details>
       <div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">时间节点抽取</h3>
           {editable && <button type="button" className="btn btn-outline btn-xs" disabled={busy || !definitions.some((def) => def.is_active !== false && def.value_kind !== "DERIVED")} onClick={() => setDrafts((rows) => [...rows, extractionDraft({}, `new-${++nextKey.current}`)])}>新增节点记录</button>}
@@ -124,6 +108,10 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
                 {def?.value_kind === "DATE_RANGE" && <label className="form-control text-xs"><span>结束日期</span><input aria-label={`记录 ${index + 1} 结束日期`} className="input input-bordered input-sm mt-1" type="date" value={draft.end_date} onChange={(event) => changeDraft(draft.key, { end_date: event.target.value })} /></label>}
                 {def?.has_hours && <label className="form-control text-xs"><span>学时</span><input aria-label={`记录 ${index + 1} 学时`} className="input input-bordered input-sm mt-1" type="number" min="0" step="any" value={draft.hours} onChange={(event) => changeDraft(draft.key, { hours: event.target.value })} /></label>}
                 {def?.value_kind === "DATE_SEQ" && <label className="form-control text-xs"><span>序号（从 0 开始）</span><input aria-label={`记录 ${index + 1} 序号`} className="input input-bordered input-sm mt-1" type="number" min="0" step="1" value={draft.seq_index} onChange={(event) => changeDraft(draft.key, { seq_index: event.target.value })} /></label>}
+                {source?.usable === false && <div className="space-y-2 text-xs sm:col-span-2">
+                  <p className="text-warning" role="status">{source.review_reason || "此日期待人工确认，暂不参与时间规则计算"}</p>
+                  <label className="flex items-center gap-2"><input type="checkbox" className="checkbox checkbox-sm" checked={draft.confirmed} onChange={(event) => changeDraft(draft.key, { confirmed: event.target.checked })} />已对照原图确认此日期</label>
+                </div>}
                 {source && <p className="text-xs text-base-content/60 sm:col-span-2">原文：{source.raw_text || "未记录"} · 第 {source.page_no || "—"} 页{source.invalid_reason && <span className="text-warning"> · 原抽取提示：{source.invalid_reason}</span>}</p>}
               </div>}
             </fieldset>
@@ -134,6 +122,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
           {(parsed.extractions || []).map((ex) => (
             <li key={ex.id} className="mono">
               {ex.node_code} · {fmtDate(ex.date)} · 第 {ex.page_no || "—"} 页 · {ex.method} · {ex.raw_text}
+              {ex.usable === false && <span className="text-warning"> · 待人工确认，未用于计算</span>}
               {ex.invalid_reason && <span className="text-error"> · {ex.invalid_reason}</span>}
             </li>
           ))}
@@ -143,7 +132,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave }) {
       {editable && (
         <div className="flex gap-2">
           <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => save(false)}>保存校正</button>
-          <button type="button" className="btn btn-outline btn-sm" disabled={busy} onClick={() => save(true)}>保存并重新校验</button>
+          {allowRecheck && <button type="button" className="btn btn-outline btn-sm" disabled={busy} onClick={() => save(true)}>保存并重新校验</button>}
         </div>
       )}
       {error && <p role="alert" className="text-xs text-error">{error}</p>}

@@ -207,7 +207,8 @@ def test_pipeline_pins_one_snapshot_through_live_change_and_saves_context(monkey
     monkeypatch.setattr(pipeline, "llm_enabled", lambda db: False)
     monkeypatch.setattr(pipeline, "get_setting", lambda db, key, default: {})
 
-    def concurrent_change(db, archive_id, *, node_defs):
+    def concurrent_change(db, archive_id, *, node_defs, material_types):
+        assert material_types[1].code == 'THOUGHT_REPORT'
         # An administrator publishes V2 after this check captured V1.
         rv.snapshot["checklist_items"][0]["fixed_count"] = 2
         db.rows[RuleVersion] = [rules_version(2)]
@@ -264,12 +265,13 @@ def test_inline_parse_uses_snapshot_types_nodes_and_threshold(monkeypatch):
 
     monkeypatch.setattr(pipeline, "classify_material", classify)
     monkeypatch.setattr(pipeline, "extract_nodes", extract)
-    monkeypatch.setattr(pipeline, "merge_archive_nodes", lambda db, aid, **kw: seen.update(merge=kw["node_defs"]))
+    monkeypatch.setattr(pipeline, "merge_archive_nodes", lambda db, aid, **kw: seen.update(merge=kw["node_defs"], merge_types=kw['material_types']))
     result = pipeline.parse_version(db, 10, rule_set=rules, context=ctx)
     assert result.full_text and ver.parse_status == "DONE"
     assert seen["declared"].code == "THOUGHT_REPORT" and seen["threshold"] == 0.9
     assert seen["material_type"] == rules.types[1]
     assert seen["nodes"] == seen["merge"] == rules.rows("time_node_defs")
+    assert seen['merge_types'] == rules.types
 
 
 def test_content_pipeline_sends_pinned_prompt_and_rule_to_model(endpoint):

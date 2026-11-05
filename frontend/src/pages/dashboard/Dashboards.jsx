@@ -3,10 +3,9 @@ import { ArrowRight, Check, Clock3, FileCheck2 } from "lucide-react"
 import { dashboard } from "../../api/stats"
 import { useRequest } from "../../hooks/useRequest"
 import { Loading, ErrorState } from "../../components/common/States"
-import StageProgress from "../../components/archive/StageProgress"
 import { SeverityBadge, StatusBadge } from "../../components/common/Badges"
 import { useMeta } from "../../context/MetaContext"
-import { daysLeftText, fmtDate, issueCountsText, stageShort, categoryName } from "../../utils/format"
+import { daysLeftText, fmtDate, stageShort, categoryName } from "../../utils/format"
 import { completeness } from "../../api/reports"
 import { checklistProgress } from "../../utils/archiveWorkflow"
 import { nextStudentAction } from "../../utils/workbench"
@@ -20,7 +19,7 @@ export function StudentDashboard({ data }) {
   if (!data.archive_id) return <div className="surface-card p-6 text-sm">暂无发展档案，请联系所属支部为你建立档案。</div>
   const steps = [
     { title: "准备材料", hint: "按本阶段清单上传", to: "/my/materials" },
-    { title: "自查与提交", hint: "核对问题后提交审核", to: sub.id ? `/my/self-check/${sub.id}` : "/my/materials" },
+    { title: sub.status === "RETURNED" ? "整改与重新提交" : "自查与提交", hint: sub.status === "RETURNED" ? "按退回意见补充材料与说明" : "核对问题后提交审核", to: sub.status === "RETURNED" ? "/my/rectification" : sub.id ? `/my/self-check/${sub.id}` : "/my/materials" },
     { title: "查看审核结果", hint: sub.status === "RETURNED" ? "已退回，请完成整改" : "关注消息与发展进度", to: sub.status === "RETURNED" ? "/my/rectification" : "/my/progress" },
   ]
   return <div className="home-stack">
@@ -29,7 +28,7 @@ export function StudentDashboard({ data }) {
       <p className="section-eyebrow">现在需要你做什么</p>
       <h2 id="student-next-action">{next.title}</h2>
       <p className="next-action-description">{next.description}</p>
-      <div className="next-action-footer"><Link className="btn btn-primary" to={next.to}>{next.label}<ArrowRight size={17} /></Link><Link className="quiet-link" to="/my/progress">查看全部进度</Link></div>
+      <div className="next-action-footer"><Link className="btn btn-primary" to={next.to}>{next.label}</Link></div>
     </section>
     <section className="service-section" aria-labelledby="student-process">
       <div className="section-heading"><h2 id="student-process">本阶段办理流程</h2><span className="text-sm text-base-content/65">必需材料 {checklist.loading ? "加载中…" : progress ? `${progress.actual}/${progress.expected}` : "暂无统计"}</span></div>
@@ -39,8 +38,6 @@ export function StudentDashboard({ data }) {
         <div><Link to={step.to}>{step.title}</Link><p>{step.hint}</p>{index === next.step && <span className="process-current-label">当前步骤</span>}</div>
       </li>)}</ol>
     </section>
-    <div className="home-support-links"><Link to="/my/rectification">整改记录<ArrowRight size={15} /></Link><Link to="/messages">查看消息<ArrowRight size={15} /></Link><span className="text-sm text-base-content/60">{issueCountsText(data.open_issues)}</span></div>
-    <details className="service-details"><summary>查看发展阶段与关键日期</summary><div className="details-content"><div className="overflow-x-auto"><StageProgress current={data.current_stage} stages={sub.id ? [{ code: data.current_stage, status: sub.status, submission_id: sub.id }] : []} submissionBase="/my/self-check" /></div>{(data.timeline_preview || []).length > 0 && <dl className="mt-6 grid gap-3 sm:grid-cols-3">{data.timeline_preview.map((node) => <div key={node.code}><dt className="text-sm text-base-content/60">{node.name || node.code}</dt><dd className="mono mt-1">{fmtDate(node.date)}</dd></div>)}</dl>}</div></details>
   </div>
 }
 
@@ -63,16 +60,30 @@ export function ReviewerDashboard({ data }) {
 }
 
 export function AdminDashboard({ data }) {
-  const management = menusFor({ role: data.role }).filter((group) => group.group === "管理").flatMap((group) => group.items)
-  const descriptions = { "/admin/users": "开通账号、分配身份与维护账号状态", "/admin/orgs": "维护学院、支部与组织关系", "/admin/settings": "配置平台运行参数", "/admin/audit-logs": "查询系统操作记录", "/admin/batches": "维护发展批次与各环节截止时间" }
+  const org = data.role === "ORG_ADMIN"
+  const allowed = new Map(menusFor({ role: data.role }).flatMap(group => group.items).map(entry => [entry.to, entry]))
+  const entries = (paths) => paths.filter(([to]) => allowed.has(to))
+  const main = entries(org ? [
+    ["/archives", "发展档案", "查询学生材料与办理进度"],
+    ["/admin/batches", "发展批次", "安排批次与各环节截止时间"],
+    ["/stats/overview", "审核统计", "查看各组织的审核与整改情况"],
+  ] : [
+    ["/admin/users", "用户管理", "开通账号与维护授权身份"],
+    ["/admin/orgs", "组织架构", "维护学院、支部与组织关系"],
+    ["/admin/settings", "系统配置", "配置识别服务与平台运行参数"],
+    ["/admin/audit-logs", "操作日志", "追查账号操作与配置变更"],
+  ])
   return <div className="home-stack">
-    <section className="next-action"><p className="section-eyebrow">管理事项</p><h2>组织与平台管理</h2><p className="next-action-description">选择需要维护的事项，进入对应管理页面。</p></section>
-    <section className="admin-entry-grid" aria-label="管理功能">{management.map((item) => <Link key={item.to} className="service-section admin-entry" to={item.to}><h2>{item.label}<ArrowRight size={18} /></h2><p>{descriptions[item.to]}</p></Link>)}</section>
-    <div className="admin-quick-links" aria-label="常用入口">
-      {data.role === "ORG_ADMIN" && <Link className="admin-quick-link" to="/review/tasks"><span><strong>进入备案待办</strong><small>当前有 {data.todo?.to_review ?? 0} 份材料等待组织部备案</small></span><ArrowRight size={18} /></Link>}
-      <Link className="admin-quick-link" to="/stats/overview"><span><strong>查看审核统计</strong><small>了解材料审核与整改情况</small></span><ArrowRight size={18} /></Link>
-      <Link className="admin-quick-link" to="/messages"><span><strong>查看消息</strong><small>查看审核提醒与工作通知</small></span><ArrowRight size={18} /></Link>
-    </div>
+    {org && <section className="next-action" aria-labelledby="filing-next-action">
+      <p className="section-eyebrow">当前备案待办</p>
+      <h2 id="filing-next-action">{data.todo?.to_review == null ? "查看待备案材料" : data.todo.to_review ? `${data.todo.to_review} 份材料等待备案` : "当前没有待备案材料"}</h2>
+      <p className="next-action-description">核对原文、处理问题，再填写备案或退回结论。</p>
+      <div className="next-action-footer"><Link className="btn btn-primary" to="/review/tasks">进入备案待办</Link></div>
+    </section>}
+    <section aria-label={org ? "日常办理" : "管理功能"}>
+      <h2 className="mb-3 text-sm font-semibold">{org ? "日常办理" : "账号与平台管理"}</h2>
+      <div className={`admin-entry-grid ${org ? "" : "admin-entry-grid--system"}`}>{main.map(([to, title, description]) => <Link key={to} className="service-section admin-entry" to={to}><h3 className="text-base font-semibold">{title}</h3><p>{description}</p></Link>)}</div>
+    </section>
   </div>
 }
 

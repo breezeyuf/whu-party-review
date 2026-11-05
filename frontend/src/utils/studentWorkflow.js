@@ -28,7 +28,7 @@ export function studentSubmitReason(submission, issues, { ready = true, taskPend
     return "请先完成有效的 AI 自查；材料或时间节点变更后需重新自查。"
   }
   const count = pendingStudentReplies(submission, issues).length
-  if (count) return `还有 ${count} 条${submission.status === "RETURNED" ? "已确认问题" : "阻断问题"}未回复，请逐条整改或填写情况说明。`
+  if (count) return `还有 ${count} 条${submission.status === "RETURNED" ? "已确认问题" : "关键问题"}未回复，请逐条整改或填写情况说明。`
   return ""
 }
 

@@ -29,22 +29,28 @@ async function cleanup() {
   router?.dispose()
   tokenStore.clear()
 }
-async function mount({ roles = [{ role: "STUDENT", org_id: 2 }], path = "/login", session = false, selected = "", passwordChange = false, failMe, failLogin = false } = {}) {
+async function mount({ roles = [{ role: "STUDENT", org_id: 2 }], path = "/login", session = false, selected = "", passwordChange = false, failMe, failLogin = false, authMode = "demo", failLogout = false } = {}) {
   await cleanup()
   requests = []
-  if (session) tokenStore.setTokens("identity-test", "identity-refresh")
+  let authenticated = session
   tokenStore.setRole(selected)
   api.defaults.adapter = async (config) => {
     requests.push({ url: config.url, method: config.method, role: config.headers["X-Active-Role"] })
     let data
     if (config.url === "/auth/login") {
       if (failLogin) throw new Error("账号或密码错误")
-      data = { access_token: "identity-test", refresh_token: "identity-refresh", user: { roles }, must_change_password: passwordChange }
-    } else if (config.url === "/auth/me") {
+      authenticated = true
+      data = { user: { roles }, must_change_password: passwordChange }
+    } else if (config.url === "/auth/config") data = { mode: authMode }
+    else if (config.url === "/auth/me") {
+      if (!authenticated) throw new Error("未登录")
       if (failMe?.(config)) throw new Error("身份验证服务暂不可用")
       const active = roles.find((role) => roleKey(role) === config.headers["X-Active-Role"]) || roles[0]
-      data = { id: 77, username: "test", real_name: "身份测试用户", org_name: "测试组织", roles, active_role: active, must_change_password: passwordChange }
-    } else if (config.url === "/auth/demo-accounts" || config.url === "/auth/logout") data = []
+      data = { auth_mode: authMode, id: 77, username: "test", real_name: "身份测试用户", org_name: "测试组织", roles, active_role: active, must_change_password: passwordChange }
+    } else if (config.url === "/auth/logout") {
+      if (failLogout) throw new Error("退出服务暂不可用")
+      authenticated = false; data = {}
+    } else if (config.url === "/auth/demo-accounts") data = []
     else if (config.url === "/meta") data = FALLBACK_META
     else if (config.url === "/messages/unread-count") data = { count: 0 }
     else if (config.url === "/dashboard") data = { role: auth.activeRole.role, archive_id: null, todo: { to_review: 3 } }
@@ -176,13 +182,13 @@ export async function runIdentityScenarios() {
   await test("重新登录清除上一个账号的角色头，按新账号的真实身份进入", async () => {
     await mount({ selected: "SYS_ADMIN@1" }); await login()
     assert.equal(router.state.location.pathname, "/student")
-    assert.equal(requests.find((r) => r.url === "/auth/me").role, undefined)
+    assert.equal(requests.filter((r) => r.url === "/auth/me").at(-1).role, undefined)
     assert.equal(tokenStore.role, "STUDENT@2")
   })
   await test("登录后的身份查询失败不残留令牌或半登录状态", async () => {
     await mount({ failMe: () => true }); await login()
     assert.equal(router.state.location.pathname, "/login")
-    assert.equal(tokenStore.access, "")
+    assert.equal(tokenStore.role, "")
     assert.equal(tokenStore.role, "")
     assert.equal(auth.user, null)
     assert.match(text(), /身份验证服务暂不可用/)
@@ -205,6 +211,24 @@ export async function runIdentityScenarios() {
     await mount(); await login()
     assert.doesNotMatch(nav(), /用户管理|系统配置/)
     assert.equal(router.state.location.pathname, "/student")
+  })
+  await test("统一认证登录页仅显示学校入口，不显示本地密码或演示账号", async () => {
+    await mount({ authMode: "sso" })
+    assert.equal(document.querySelector('input[type="password"]'), null)
+    assert.equal(document.querySelector('a[href="/api/auth/sso/start"]')?.textContent, "学校统一身份认证")
+    assert.ok(!requests.some((r) => r.url === "/auth/demo-accounts"))
+  })
+  await test("统一认证个人中心隐藏本地改密入口", async () => {
+    await mount({ authMode: "sso", session: true, path: "/profile" })
+    assert.equal(router.state.location.pathname, "/profile")
+    assert.equal(document.querySelector('input[type="password"]'), null)
+  })
+  await test("退出失败保留当前界面并提示重试", async () => {
+    await mount({ session: true, failLogout: true })
+    await click(button("退出登录"))
+    assert.ok(auth.user)
+    assert.notEqual(router.state.location.pathname, "/login")
+    assert.match(text(), /退出服务暂不可用/)
   })
   await cleanup()
   return results

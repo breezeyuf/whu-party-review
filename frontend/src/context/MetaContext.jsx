@@ -1,3 +1,4 @@
+import { displaySeverities } from "../utils/reviewTerms"
 import { createContext, useContext, useEffect, useMemo, useState } from "react"
 import { getMeta } from "../api/meta"
 import { FALLBACK_META } from "../utils/constants"
@@ -14,7 +15,7 @@ export function MetaProvider({ children }) {
     let alive = true
     getMeta().then((data) => {
       if (!alive || !data) return
-      setMeta({ ...FALLBACK_META, ...data })
+      setMeta({ ...FALLBACK_META, ...data, severities: displaySeverities(data.severities || FALLBACK_META.severities) })
     }).catch(() => {})
     return () => { alive = false }
   }, [user])

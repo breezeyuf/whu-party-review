@@ -1,12 +1,11 @@
-import { api, tokenStore } from "./client"
+import { api } from "./client"
 
 export function login(username, password) {
   return api.post("/auth/login", { username, password })
 }
 
 export function logout() {
-  const refresh = tokenStore.refresh
-  return api.post("/auth/logout", { refresh_token: refresh || undefined }).catch(() => ({}))
+  return api.post("/auth/logout", {})
 }
 
 export function me() {
@@ -24,3 +23,5 @@ export function demoAccounts() {
 export function health() {
   return api.get("/health")
 }
+
+export function authConfig() { return api.get("/auth/config") }

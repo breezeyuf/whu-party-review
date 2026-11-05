@@ -63,28 +63,27 @@ export default function ChecklistsPage() {
       {req.loading && !req.data ? <Loading label="材料清单" /> : req.error ? <ErrorState error={req.error} onRetry={req.reload} /> : !groups.length ? <EmptyState title="还没有材料清单条目" /> : (
         <div className="space-y-4">
           {groups.map((g) => (
-            <section key={g.stage_code} className="surface-card overflow-x-auto">
+            <section key={g.stage_code} className="surface-card min-w-0">
               <h2 className="border-b border-base-300 px-3 py-2 text-sm font-medium">{g.stage_name || stageShort(meta, g.stage_code)}</h2>
-              <table className="table table-sm">
-                <thead><tr><th>材料</th><th>方式</th><th>份数</th><th>必需</th><th>要求</th>{writable && <th />}</tr></thead>
+              <div className="overflow-x-auto"><table className="table table-sm w-full table-fixed" style={{ minWidth: 960, tableLayout: "fixed" }}>
+                <colgroup>{[24,14,8,7,35,12].map((width,i) => <col key={i} style={{ width: `${width}%` }} />)}</colgroup>
+                <thead><tr><th>材料</th><th>方式</th><th>份数</th><th>必需</th><th>要求</th><th>操作</th></tr></thead>
                 <tbody>
                   {(g.items || []).map((it) => (
                     <tr key={it.id}>
-                      <td>{it.material_type?.name || it.material_type_name || it.material_type_id}</td>
-                      <td className="text-xs">{QUANTITY_MODE[it.quantity_mode] || it.quantity_mode}</td>
-                      <td className="mono text-xs">{it.quantity_mode === "PER_PERIOD" ? `每 ${it.period_months} 月` : it.fixed_count}</td>
-                      <td>{it.is_required ? "是" : "否"}</td>
-                      <td className="max-w-xs text-xs text-base-content/70">{it.requirement_text}</td>
-                      {writable && (
-                        <td className="whitespace-nowrap">
+                      <td className="break-words">{it.material_type?.name || it.material_type_name || it.material_type_id}</td>
+                      <td className="whitespace-nowrap text-xs">{QUANTITY_MODE[it.quantity_mode] || it.quantity_mode}</td>
+                      <td className="mono whitespace-nowrap text-xs">{it.quantity_mode === "PER_PERIOD" ? `每 ${it.period_months} 月` : it.fixed_count}</td>
+                      <td className="whitespace-nowrap">{it.is_required ? "是" : "否"}</td>
+                      <td className="break-words whitespace-normal text-xs text-base-content/70">{it.requirement_text}</td>
+                      <td className="whitespace-nowrap">{writable ? <>
                           <button type="button" className="btn btn-ghost btn-xs" onClick={() => setEdit(it)}>编辑</button>
                           <button type="button" className="btn btn-ghost btn-xs text-error" onClick={() => setRemoveId(it.id)}>删除</button>
-                        </td>
-                      )}
+                        </> : <span className="text-xs text-base-content/55">只读</span>}</td>
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </table></div>
             </section>
           ))}
         </div>

@@ -37,7 +37,6 @@ const timeline = { stages: [{ code: 1, status: "FILED" }, { code: 2, status: sub
 // Isolated memory store: preview login/logout never reads or changes real credentials.
 const session = { access: "", refresh: "", role: "" }
 for (const key of ["access", "refresh", "role"]) Object.defineProperty(tokenStore, key, { configurable: true, get: () => session[key] })
-tokenStore.setTokens = (access, refresh) => { session.access = access; session.refresh = refresh }
 tokenStore.setRole = (value) => { session.role = value || "" }
 tokenStore.clear = () => { session.access = ""; session.refresh = ""; session.role = "" }
 globalThis.__previewRequests = []
@@ -51,7 +50,8 @@ api.defaults.adapter = async (config) => {
   globalThis.__previewRequests.push({ method: config.method, url: config.url, data: config.data })
   const url = config.url
   let data
-  if (url === "/auth/demo-accounts") data = previewAccounts.map((item) => ({ ...item, password_hint: "Preview123!" }))
+  if (url === "/auth/config") data = { mode: "demo" }
+  else if (url === "/auth/demo-accounts") data = previewAccounts.map((item) => ({ ...item, password_hint: "Preview123!" }))
   else if (url === "/auth/login") {
     const body = JSON.parse(config.data)
     account = previewAccounts.find((item) => item.username === body.username && body.password === "Preview123!")

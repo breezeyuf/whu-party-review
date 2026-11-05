@@ -70,7 +70,7 @@ test("report gate distinguishes failure, ongoing jobs, missing report and stale 
 
 test("pass and filing remain disabled until all issues and handover are ready", () => {
   assert.match(passBlockReason(current(), [], false), /未完整加载/)
-  assert.match(passBlockReason(current(), [{ severity: "BLOCK", review_status: "PENDING" }]), /阻断/)
+  assert.match(passBlockReason(current(), [{ severity: "BLOCK", review_status: "PENDING" }]), /关键问题/)
   const handover = current(); handover.latest_report.handover_status = "REQUIRED"
   assert.match(passBlockReason(handover, []), /接管/)
   handover.latest_report.handover_status = "DONE"

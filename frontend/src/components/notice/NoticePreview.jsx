@@ -35,7 +35,7 @@ export default function NoticePreview({ notice }) {
           <li key={it.no || it.issue_id} className="text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <span className="mono text-xs">{it.no}.</span>
-              <SeverityBadge code={it.severity === "阻断" ? "BLOCK" : it.severity === "警告" ? "WARN" : it.severity} />
+              <SeverityBadge code={["阻断", "关键问题"].includes(it.severity) ? "BLOCK" : it.severity === "警告" ? "WARN" : it.severity} />
               <span>{it.material}</span>
               <span className="text-xs text-base-content/50">{it.location}</span>
             </div>

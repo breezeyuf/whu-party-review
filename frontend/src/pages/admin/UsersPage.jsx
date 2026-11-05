@@ -26,7 +26,8 @@ const formatImportError = (error) => {
 export default function UsersPage() {
   const meta = useMeta()
   const toast = useToast()
-  const { activeRole } = useAuth()
+  const { activeRole, user } = useAuth()
+  const isSso = user?.auth_mode === "sso"
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listUsers(query), [JSON.stringify(query)])
   const batches = useRequest(() => listBatches({ page_size: 200 }), [])
@@ -39,6 +40,7 @@ export default function UsersPage() {
   const [formError, setFormError] = useState("")
   const [fieldErrors, setFieldErrors] = useState({})
   const [secret, setSecret] = useState("")
+  const [importOpen, setImportOpen] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importing, setImporting] = useState(false)
   const [downloadingPasswords, setDownloadingPasswords] = useState(false)
@@ -232,6 +234,7 @@ export default function UsersPage() {
     <div>
       <PageHeader title="用户管理" extra={
         <>
+          <button type="button" className="btn btn-outline btn-sm" disabled={importing || downloadingPasswords} aria-expanded={importOpen} aria-controls="user-import-panel" onClick={() => setImportOpen(value => !value)}>批量导入</button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={downloadTemplate} disabled={downloadingTemplate}>
             {downloadingTemplate && <span className="loading loading-spinner loading-xs" />}
             {downloadingTemplate ? "模板准备中…" : "下载导入模板"}
@@ -256,7 +259,8 @@ export default function UsersPage() {
           </button>
         </div>
       )}
-      <div className="surface-card mb-4 p-3 text-sm">
+      {!importOpen && importResult && <p className="mb-3 text-sm" role="status">导入结果已保留。<button type="button" className="link ml-2" onClick={() => setImportOpen(true)}>查看导入结果</button></p>}
+      <section id="user-import-panel" hidden={!importOpen} aria-label="用户批量导入" className="surface-card mb-4 p-3 text-sm">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-base-content/60">Excel 导入</span>
           <select className="select select-bordered select-xs" value={batchId} onChange={(e) => setBatchId(e.target.value)} disabled={importing}>
@@ -297,7 +301,7 @@ export default function UsersPage() {
             )}
           </div>
         )}
-      </div>
+      </section>
       <div className="surface-card p-2">
         <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty={query.q || query.role || query.org_id || query.is_active ? "没有符合条件的用户" : "暂无用户"} columns={[
           { key: "name", title: "用户", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },
@@ -312,7 +316,7 @@ export default function UsersPage() {
           { key: "op", title: "", render: (r) => (
             <>
               <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setFormError(""); setFieldErrors({}); const grants = (r.roles || []).map((x) => ({ role: x.role, org_id: x.org_id ?? r.org_id })); setEdit({ ...r, grants, original_grants: grants, is_active: r.is_active !== false, original_is_active: r.is_active !== false }) }}>编辑</button>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>
+              {!isSso && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>}
             </>
           ) },
         ]} />
@@ -336,7 +340,7 @@ export default function UsersPage() {
         {pendingImportFile && <div className="grid gap-3">
           <div className="text-sm">文件：<span className="font-medium break-all">{pendingImportFile.name}</span></div>
           <div className="text-sm">学生档案建档批次：<span className="font-medium">{batchId ? (batches.data?.items || []).find((batch) => String(batch.id) === String(batchId))?.name || `批次 ${batchId}` : "未指定，可使用文件中的批次名称"}</span></div>
-          <div className="alert alert-warning text-sm" role="alert">正式导入会创建文件中的用户/档案。新用户的初始密码通过加密 Excel 交付，文件只能下载一次，打开口令仅本次显示。建议先对同一文件执行预校验。</div>
+          <div className="alert alert-warning text-sm" role="alert">{isSso ? "正式导入会创建用户/档案，用户通过学校统一认证登录，不生成本地密码。建议先预校验。" : "正式导入会创建文件中的用户/档案。新用户的初始密码通过加密 Excel 交付，文件只能下载一次，打开口令仅本次显示。建议先对同一文件执行预校验。"}</div>
         </div>}
       </Modal>
       <Modal open={!!resetTarget} title="确认重置密码" onClose={() => { if (!resetting) setResetTarget(null) }} footer={(

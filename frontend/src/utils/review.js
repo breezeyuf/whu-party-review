@@ -1,7 +1,7 @@
 export const sameId = (a, b) => a != null && b != null && String(a) === String(b)
 
 // 通过规则的统一说明：单份通过、批量通过与备案共用后端同一个校验（services/workflow.ensure_passable）
-export const PASS_RULE_TEXT = "仍有待处理的阻断问题时不能通过；已确认、修改或驳回的阻断问题不拦截，单份与批量一致。"
+export const PASS_RULE_TEXT = "仍有待处理的关键问题时不能通过；已确认、修改或驳回的关键问题不拦截，单份与批量一致。"
 
 // 待办的筛选、计数和分页全部由 GET /api/submissions 完成；这里只去掉空值，其余参数
 // （含 has_block=false、due_within_days）原样交给后端，取值是否合法也由后端判断（422）
@@ -14,7 +14,7 @@ export async function loadReviewTasks(fetchPage, query) {
   return fetchPage(reviewTaskQuery(query))
 }
 
-const QUERY_FIELD_NAME = { due_within_days: "截止天数", has_block: "阻断问题", stage_code: "阶段", batch_id: "批次", branch_id: "支部", min_issues: "问题数", todo: "任务范围" }
+const QUERY_FIELD_NAME = { due_within_days: "截止天数", has_block: "关键问题", stage_code: "阶段", batch_id: "批次", branch_id: "支部", min_issues: "问题数", todo: "任务范围" }
 
 // 后端参数校验失败（422）时指出是哪个筛选条件，其他错误原样显示
 export function reviewQueryErrorText(error) {
@@ -49,7 +49,7 @@ export function passBlockReason(submission, issues, issuesReady = true) {
   const reportReason = reportBlockReason(submission)
   if (reportReason) return reportReason
   if (!issuesReady) return "问题清单尚未完整加载，暂不能通过或备案。"
-  if (issues.some((i) => i.is_active !== false && i.severity === "BLOCK" && i.review_status === "PENDING")) return "仍有待人工处理的阻断问题，请先确认、修改或驳回。"
+  if (issues.some((i) => i.is_active !== false && i.severity === "BLOCK" && i.review_status === "PENDING")) return "仍有待人工处理的关键问题，请先确认、修改或驳回。"
   const report = submission.latest_report
   if (report.handover_status === "REQUIRED") return "报告需要人工接管，请先提交人工结论。"
   if (report.handover_status !== "NOT_REQUIRED" && !(report.handover_status === "DONE" && report.effective_recommendation)) return "人工审核结论未完成，请刷新后重试。"

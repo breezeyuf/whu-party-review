@@ -164,7 +164,7 @@ export default function RuleVersionsPage() {
               {(trial.results || []).map((r) => (
                 <li key={r.submission_id} className="surface-card p-2">
                   提交包 {r.submission_id} · 新增 {(r.added || []).length} · 消失 {(r.removed || []).length}
-                  <p className="mt-1 text-base-content/65">当前规则：{r.current?.summary?.total ?? 0} 个问题（阻断 {r.current?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.current?.summary?.by_severity?.WARN ?? 0}）；临时规则：{r.trial?.summary?.total ?? 0} 个问题（阻断 {r.trial?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.trial?.summary?.by_severity?.WARN ?? 0}）。</p>
+                  <p className="mt-1 text-base-content/65">当前规则：{r.current?.summary?.total ?? 0} 个问题（关键问题 {r.current?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.current?.summary?.by_severity?.WARN ?? 0}）；临时规则：{r.trial?.summary?.total ?? 0} 个问题（关键问题 {r.trial?.summary?.by_severity?.BLOCK ?? 0}，警告 {r.trial?.summary?.by_severity?.WARN ?? 0}）。</p>
                   {r.error && <p className="text-error">{r.error}</p>}
                   {[["新增问题", r.added_items || r.added], ["消失问题", r.removed_items || r.removed]].map(([label, items]) => <details key={label} className="mt-2"><summary className="cursor-pointer">{label}（{(items || []).length}）</summary><ul className="mt-1 space-y-1">{(items || []).map((item, index) => <li key={index}>{typeof item === "string" ? item : `${item.rule_code || "人工问题"} · ${item.title || item.fingerprint} · ${item.description || ""}`}</li>)}{!items?.length && <li>无</li>}</ul></details>)}
                 </li>

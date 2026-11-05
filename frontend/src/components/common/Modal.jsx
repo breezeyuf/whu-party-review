@@ -1,29 +1,49 @@
-import { useEffect, useId, useRef } from "react"
+import { useId, useLayoutEffect, useRef } from "react"
 import { Loading } from "./States"
+
+function useModalDialog(open) {
+  const ref = useRef(null)
+  useLayoutEffect(() => {
+    if (!open) return undefined
+    const dialog = ref.current
+    const opener = document.activeElement
+    if (!dialog.open) dialog.showModal()
+    return () => {
+      if (dialog.open) dialog.close()
+      if (opener?.isConnected) opener.focus({ preventScroll: true })
+    }
+  }, [open])
+  return ref
+}
 
 // 按需加载的弹窗下载完成前显示的占位
 export function ModalLoading() {
+  const ref = useModalDialog(true)
   return (
-    <dialog className="modal modal-open" aria-busy="true">
+    <dialog className="modal" ref={ref} aria-busy="true" aria-label="正在加载弹窗" onCancel={(event) => { event.preventDefault(); event.stopPropagation() }}>
       <div className="modal-box max-w-lg border border-base-300"><Loading /></div>
     </dialog>
   )
 }
 
 export function Modal({ open, title, onClose, children, footer, wide }) {
-  const ref = useRef(null)
+  const ref = useModalDialog(open)
   const titleId = useId()
-
-  useEffect(() => {
-    if (!open) return undefined
-    const onKey = (e) => { if (e.key === "Escape") onClose?.() }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [open, onClose])
 
   if (!open) return null
   return (
-    <dialog className="modal modal-open" ref={ref} aria-labelledby={titleId}>
+    <dialog className="modal" ref={ref} aria-labelledby={titleId}
+      onCancel={(event) => {
+        // 由页面的 onClose 决定是否关闭，保留保存/删除期间的关闭守卫。
+        event.preventDefault()
+        event.stopPropagation()
+        onClose?.()
+      }}
+      onClose={(event) => {
+        event.stopPropagation()
+        // close 事件异步派发；忽略 StrictMode 清理后已重新打开的弹窗。
+        if (!event.currentTarget.open) onClose?.()
+      }}>
       <div className={`modal-box border border-base-300 ${wide ? "max-w-3xl" : "max-w-lg"}`}>
         <h3 id={titleId} className="text-base font-semibold">{title}</h3>
         <div className="py-4">{children}</div>

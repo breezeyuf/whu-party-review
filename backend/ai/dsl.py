@@ -25,6 +25,7 @@ class NodeVal:
     has_conflict: bool = False
     invalid_reason: Optional[str] = None
     missing: bool = True
+    pending_review: bool = False
 
 
 @dataclass
@@ -351,11 +352,16 @@ def _required(ctx: DSLContext, p: dict) -> CheckResult:
 
 def required_for_stage(ctx: DSLContext, nodes_by_stage: dict, stage: int) -> CheckResult:
     need = nodes_by_stage.get(str(stage)) or nodes_by_stage.get(stage) or []
-    missing = []
+    missing, pending = [], []
     for code in need:
         n = ctx.nodes.get(code)
         if not n or n.missing or not n.date:
-            missing.append(code)
+            if n and n.pending_review:
+                pending.append(code)
+            else:
+                missing.append(code)
+    if pending and not missing:
+        return CheckResult(ok=True, skipped=True, reason="日期待人工确认：" + ",".join(pending))
     ok = not missing
     return CheckResult(ok=ok, actual="缺失 " + ",".join(missing) if missing else "齐全",
                        expected="阶段必填节点齐全", reason="" if ok else f"缺少 {','.join(missing)}")

@@ -1,16 +1,16 @@
 import { Cell, Pie, PieChart as RCPie, ResponsiveContainer, Tooltip } from "recharts"
-import { COLORS } from "./BarChart"
+import { COLORS } from "./chartTheme"
 
 export function PieChart({ data = [], nameKey = "name", valueKey = "value", height = 240 }) {
   const total = data.reduce((sum, item) => sum + (Number(item[valueKey]) || 0), 0)
   return (
     <div>
-      {data.length ? <>
+      {data.length && total > 0 ? <>
         <div style={{ width: "100%", height }}>
           <ResponsiveContainer>
             <RCPie>
               <Pie data={data} dataKey={valueKey} nameKey={nameKey} innerRadius={48} outerRadius={78} paddingAngle={2}>
-                {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                {data.map((_, i) => <Cell key={i} fill={data[i].color || COLORS[i % COLORS.length]} />)}
               </Pie>
               <Tooltip />
             </RCPie>
@@ -21,7 +21,7 @@ export function PieChart({ data = [], nameKey = "name", valueKey = "value", heig
             const value = Number(item[valueKey]) || 0
             const share = total ? Math.round(value / total * 100) : 0
             return <li key={`${item[nameKey]}-${i}`} className="flex min-w-0 items-center gap-2">
-              <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
+              <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: item.color || COLORS[i % COLORS.length] }} />
               <span className="min-w-0 flex-1 truncate">{item[nameKey]}</span>
               <span className="mono text-base-content/65">{value} 项 · {share}%</span>
             </li>

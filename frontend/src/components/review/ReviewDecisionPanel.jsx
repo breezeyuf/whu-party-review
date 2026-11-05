@@ -47,7 +47,7 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
 
   return (
     <div className="surface-card space-y-3 p-4">
-      <h2 className="text-base font-semibold">作出审核决定 <span className="ml-2 text-sm font-normal text-base-content/60">{levelName(meta, level)}</span></h2>
+      <h2 className="text-base font-semibold">{level === "ORG" ? "备案结论" : "作出审核决定"} <span className="ml-2 text-sm font-normal text-base-content/60">{levelName(meta, level)}</span></h2>
       {can.handover && (
         <div className="rounded border border-warning/40 bg-warning/10 p-3 text-sm">
           <div className="font-medium">待人工审核</div>
@@ -107,7 +107,7 @@ export default function ReviewDecisionPanel({ submission, issues = [], issuesRea
           </button>
         )}
       </div>
-      {(can.review || can.file) && confirmed.some((issue) => issue.severity === "BLOCK") && <p className="text-xs text-warning">仍有已确认的阻断问题，请核实处理情况后作出最终审核决定。{PASS_RULE_TEXT}</p>}
+      {(can.review || can.file) && confirmed.some((issue) => issue.severity === "BLOCK") && <p className="text-xs text-warning">仍有已确认的关键问题，请核实处理情况后作出最终审核决定。{PASS_RULE_TEXT}</p>}
       {(can.review || can.file || can.handover) && passReason && <p className="text-xs text-warning">{passReason}</p>}
       {returning && can.review && returnReason && <p className="text-xs text-base-content/60">{returnReason}</p>}
       {!can.review && !can.file && !can.handover && <p className="text-xs text-base-content/50">当前角色在此状态下没有审核操作。</p>}

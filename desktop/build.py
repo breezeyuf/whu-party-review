@@ -76,9 +76,13 @@ def main():
     collect_licenses(app)
     shutil.copy2(ROOT / "docs/Windows本地程序使用说明.md", app / "README_CN.md")
     shutil.copy2(ROOT / "docs/Windows本地程序验收.md", app / "VALIDATION_CN.md")
+    shutil.copy2(ROOT / "docs/production-auth-and-model-policy.md", app / "AUTH_POLICY_CN.md")
     (app / "StartDemo.cmd").write_text('@echo off\r\ncd /d "%~dp0"\r\nstart "" "%~dp0PartyReview.exe" --demo\r\n', encoding="ascii")
     (app / "FirstLogin.cmd").write_text('@echo off\r\ncd /d "%~dp0"\r\nif exist "data\\FirstLogin.txt" start "" notepad.exe "data\\FirstLogin.txt"\r\nif exist "demo-data\\FirstLogin.txt" start "" notepad.exe "demo-data\\FirstLogin.txt"\r\n', encoding="ascii")
+    revision = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    dirty = bool(subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip())
     manifest = {"app": "党员发展材料审核", "python": sys.version.split()[0], "postgres_url": PG_URL,
+                "source_commit": revision, "source_has_uncommitted_changes": dirty,
                 "postgres_archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest() if archive.exists() else None,
                 "files": {str(file.relative_to(app)).replace("\\", "/"): hashlib.sha256(file.read_bytes()).hexdigest()
                           for file in app.rglob("*") if file.is_file()}}

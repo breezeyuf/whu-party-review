@@ -2,6 +2,7 @@
 from ai.llm import chat_json
 from ai.dates import parse_date, find_dates
 from ai.extract import _locate
+from ai.node_sources import eligible_nodes, bound_sources
 
 
 def classify_fallback(db, text, result, types, threshold, *, archive=None, rule_set=None):
@@ -17,7 +18,8 @@ def classify_fallback(db, text, result, types, threshold, *, archive=None, rule_
             'type_confidence':confidence,'type_status':'AUTO' if confidence >= threshold else 'NEEDS_CONFIRM'}, None
 
 
-def extract_fallback(db, text, pages, extractions, nodes, *, archive=None, rule_set=None):
+def extract_fallback(db, text, pages, extractions, nodes, *, archive=None, rule_set=None, material_type=None):
+    nodes = eligible_nodes(nodes, material_type)
     found = {r['node_code'] for r in extractions if r.get('value_date')}
     missing = {n.code:n for n in nodes if n.code not in found and n.value_kind != 'DERIVED'}
     if not missing or not text.strip(): return extractions, None
@@ -35,10 +37,13 @@ def extract_fallback(db, text, pages, extractions, nodes, *, archive=None, rule_
         if (code, day) in accepted or (missing[code].value_kind != 'DATE_SEQ' and any(c==code for c,d in accepted)): continue
         page, box = _locate(pages, raw)
         result = [r for r in result if not (r['node_code']==code and not r.get('value_date'))]
+        from ai.date_evidence import REVIEW_PREFIX
+        review = REVIEW_PREFIX + '模型仅提供单个日期，须核对完整起止区间' if missing[code].value_kind == 'DATE_RANGE' else None
         result.append({'node_code':code,'seq_index':sum(1 for r in result if r['node_code']==code),
-            'value_date':day,'raw_text':raw,'confidence':item['confidence'],'method':'LLM','page_no':page,'bbox':box})
+            'value_date':day,'raw_text':raw,'confidence':item['confidence'],'method':'LLM','page_no':page,'bbox':box,
+            'invalid_reason': review})
         accepted.add((code,day))
-    return result, None
+    return bound_sources(result, nodes, material_type), None
 
 
 def polish_suggestions(db, drafts, *, archive=None, rule_set=None):

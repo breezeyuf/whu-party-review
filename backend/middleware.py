@@ -94,6 +94,10 @@ class RequestDiagnosticsMiddleware:
                     (key, value) for key, value in message.get("headers", [])
                     if key.lower() != b"x-request-id"
                 ] + [(b"x-request-id", trace.encode("ascii"))]}
+                if scope.get('path', '').startswith('/api/auth/'):
+                    message['headers'] = [(key, value) for key, value in message['headers']
+                                          if key.lower() not in (b'cache-control', b'referrer-policy')]
+                    message['headers'] += [(b'cache-control', b'no-store'), (b'referrer-policy', b'no-referrer')]
             await send(message)
 
         try:

@@ -128,11 +128,13 @@ def create_archive(body: dict, db: Session = Depends(get_db), actor: Actor = Dep
     user = db.query(User).filter(User.username == username).first() if username else None
     initial = None
     if not user:
-        pwd = random_password()
+        from services.sessions import mode
+        sso = mode(db) == "sso"
+        pwd = None if sso else random_password()
         user = User(
-            username=username, password_hash=hash_password(pwd), real_name=stu["real_name"],
+            username=username, password_hash="!SSO_ONLY" if sso else hash_password(pwd), real_name=stu["real_name"],
             gender=stu.get("gender"), org_id=branch.id, phone_enc=encrypt_field(stu.get("phone")),
-            phone_masked=mask_phone(stu.get("phone")), must_change_password=True,
+            phone_masked=mask_phone(stu.get("phone")), must_change_password=not sso,
             created_at=now(), updated_at=now(),
         )
         db.add(user)

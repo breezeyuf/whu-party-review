@@ -42,13 +42,13 @@ export default function ProfilePage() {
             <dd>{roleName(meta, activeRole?.role) || "—"}</dd>
           </dl>
         </section>
-        <form className="surface-card space-y-3 p-4" onSubmit={submit}>
+        {user?.auth_mode !== "sso" && <form className="surface-card space-y-3 p-4" onSubmit={submit}>
           <h2 className="font-medium">修改密码</h2>
           <input type="password" className="input input-bordered input-sm w-full" placeholder="当前密码" value={oldPassword} onChange={(e) => setOld(e.target.value)} required />
           <input type="password" className="input input-bordered input-sm w-full" placeholder="新密码（8 位以上，含字母和数字）" value={password} onChange={(e) => setPassword(e.target.value)} required />
           {error && <p className="text-xs text-error">{error}</p>}
           <button className="btn btn-primary btn-sm" type="submit">保存</button>
-        </form>
+        </form>}
       </div>
     </div>
   )

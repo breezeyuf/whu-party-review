@@ -84,7 +84,8 @@ def trial_rules(db, body, actor):
             versions[material.id], parses[ver.id] = ver, parsed
         batch = db.query(Batch).filter(Batch.id == sub.batch_id).first() if sub.batch_id else None
         context = EvaluationContext.capture(baseline, get_setting(db,'calendar',{}), batch.end_date if batch else None)
-        nodes = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows('time_node_defs', active=False))
+        nodes = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows('time_node_defs', active=False),
+                                     material_types=rules.types)
         # A changing candidate corpus must not change between baseline and trial.
         # Only aggregate similarity evidence is retained in this request-local cache.
         similarity_cache = {}

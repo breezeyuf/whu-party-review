@@ -1,6 +1,8 @@
+import { useState } from "react"
 import { SeverityBadge, CategoryBadge, ReviewStatusBadge } from "../common/Badges"
 
 export default function IssueCard({ issue, active, onSelect, actions, footer }) {
+  const [evidenceOpen, setEvidenceOpen] = useState(false)
   return (
     <article
       className={`surface-card cursor-pointer p-3 ${active ? "border-primary" : ""}`}
@@ -18,13 +20,13 @@ export default function IssueCard({ issue, active, onSelect, actions, footer }) 
         {issue.resolution === "UNRESOLVED" && <span className="badge badge-error badge-xs">未解决</span>}
       </div>
       {onSelect ? (
-        <button type="button" className="mt-2 text-left text-sm font-medium hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-pressed={Boolean(active)} onClick={() => onSelect(issue)}>
-          {issue.title} <span className="ml-1 text-xs font-normal text-base-content/45">{issue.material_id || issue.location?.material_id ? "定位材料" : "选中问题"}</span>
+        <button type="button" className="mt-2 text-left text-sm font-medium hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-pressed={Boolean(active)} onClick={e => { e.stopPropagation(); onSelect(issue) }}>
+          {issue.title}
         </button>
       ) : <h3 className="mt-2 text-sm font-medium">{issue.title}</h3>}
       <p className="mt-1 text-xs leading-relaxed text-base-content/75">{issue.description}</p>
-      {(issue.actual_value || issue.expected_value || issue.rule_basis || issue.location?.snippet || issue.material_version_id || issue.rule_code) && <details className="service-inline-details mt-2" onClick={(event) => event.stopPropagation()}>
-        <summary>查看原文依据与定位</summary>
+      {(issue.actual_value || issue.expected_value || issue.rule_basis || issue.location?.snippet || issue.material_version_id || issue.rule_code) && <details className="plain-disclosure mt-2" onToggle={e => setEvidenceOpen(e.currentTarget.open)} onClick={(event) => event.stopPropagation()}>
+        <summary className="btn btn-outline btn-xs">{evidenceOpen ? "收起依据" : "查看依据"}</summary>
         <div className="details-content">
         {issue.rule_code && <p className="mono text-xs text-base-content/55">规则 {issue.rule_code}</p>}
       {(issue.actual_value || issue.expected_value) && (
