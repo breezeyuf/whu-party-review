@@ -4,7 +4,7 @@ import { Link } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
-import { DemoBadge, HandoverBadge, RecoBadge, StatusBadge } from "../../components/common/Badges"
+import { DemoBadge, RecoBadge, StatusBadge } from "../../components/common/Badges"
 import { usePagination } from "../../hooks/usePagination"
 import { useRequest } from "../../hooks/useRequest"
 import { listSubmissions, batchReview } from "../../api/submissions"
@@ -75,6 +75,12 @@ export default function ReviewTasksPage() {
     : current.filter((id) => !rows.some((row) => row.id === id)))
 
   const level = LEVEL_OF[activeRole?.role] || "BRANCH"
+  const changeFilters = (patch) => {
+    const expected = { BRANCH: "BRANCH_REVIEW", CROSS: "CROSS_REVIEW", COLLEGE: "COLLEGE_REVIEW", ORG: "ORG_FILING" }[level]
+    if (patch.status && patch.status !== expected) patch = { ...patch, todo: "false" }
+    if (patch.todo === "true" && query.status && query.status !== expected) patch = { ...patch, status: "" }
+    setQuery(patch)
+  }
   const filtered = FILTER_KEYS.some((key) => query[key] != null && query[key] !== "")
   // 重置同时清除筛选栏未显示、但可能来自链接的条件（如 batch_id）
   const reset = () => setQuery({ ...Object.fromEntries(FILTER_KEYS.map((key) => [key, ""])), todo: "true", sort: "-submitted_at" })
@@ -83,7 +89,7 @@ export default function ReviewTasksPage() {
     ? { title: "没有符合筛选条件的提交包", hint: "可以放宽或清除筛选条件后再查看。", action: <button type="button" className="btn btn-outline btn-sm" onClick={reset}>清除筛选条件</button> }
     : query.todo === "false"
       ? { title: "当前没有可见的提交包" }
-      : { title: "当前层级没有待办", hint: "新提交或流转到本层级的材料会出现在这里。" }
+      : { title: "当前层级没有待办", hint: "学生完成自查并点击“提交审核”后，或材料流转到本层级时，才会出现在这里。仅上传文件仍属于草稿，可到发展档案查看。" }
 
   const run = async (action) => {
     if (!selected.length) { toast.info("请先勾选提交包"); return }
@@ -142,7 +148,7 @@ export default function ReviewTasksPage() {
       </PageHeader>
       <fieldset disabled={busy} className="min-w-0"><FilterBar
         values={query}
-        onChange={(patch) => setQuery(patch)}
+        onChange={changeFilters}
         onReset={reset}
         fields={[
           { key: "todo", label: "任务范围", type: "select", placeholder: "当前层级待办", options: [{ code: "true", name: "当前层级待办" }, { code: "false", name: "全部可见提交包" }] },
@@ -198,12 +204,12 @@ export default function ReviewTasksPage() {
               <div className="flex flex-col gap-1">
                 {["QUEUED", "RUNNING", "FAILED"].includes(r.ai_status) && <span className={`text-xs ${r.ai_status === "FAILED" ? "text-error" : "text-warning"}`}>{({ QUEUED: "检查排队中", RUNNING: "检查运行中", FAILED: "检查失败" })[r.ai_status]}</span>}
                 <RecoBadge code={r.effective_recommendation || r.recommendation} soft />
-                {r.handover_status === "REQUIRED" && <HandoverBadge code={r.handover_status} soft />}
+                {r.handover_status === "REQUIRED" && <span className="text-xs text-base-content/65">待人工审核</span>}
                 <span className="text-xs text-base-content/65">{issueCountsText(r.issue_counts)}</span>
               </div>
             ) },
             { key: "days", title: "截止", sortKey: "days_left", render: (r) => <span className={`text-xs ${r.days_left < 0 ? "text-error" : ""}`}>{daysLeftText(r.days_left)}</span> },
-            { key: "action", title: "办理", render: (r) => <Link className="quiet-link whitespace-nowrap" to={`/review/submissions/${r.id}`}>打开材料 →</Link> },
+            { key: "action", title: "办理", render: (r) => <Link className="quiet-link whitespace-nowrap" to={`/review/submissions/${r.id}`}>打开材料</Link> },
           ]}
         />
         </fieldset>

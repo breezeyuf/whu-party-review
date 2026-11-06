@@ -8,3 +8,5 @@ export const getTimeline = (id) => api.get(`/archives/${id}/timeline`)
 export const correctNode = (id, code, body) => api.put(`/archives/${id}/timeline/${code}`, body)
 export const getHistory = (id, params) => api.get(`/archives/${id}/history`, { params })
 export const myArchive = () => api.get("/my/archive")
+
+export const deleteArchive = (id) => api.delete(`/archives/${id}`)

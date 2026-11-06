@@ -4,11 +4,11 @@ import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
 import { DemoBadge, RecoBadge, StatusBadge } from "../../components/common/Badges"
-import { Modal } from "../../components/common/Modal"
+import { Modal, ConfirmDialog } from "../../components/common/Modal"
 import { ErrorState } from "../../components/common/States"
 import { usePagination } from "../../hooks/usePagination"
 import { useRequest } from "../../hooks/useRequest"
-import { createArchive, listArchives } from "../../api/archives"
+import { deleteArchive, createArchive, listArchives } from "../../api/archives"
 import { listBatches } from "../../api/batches"
 import { listOrgs } from "../../api/orgs"
 import { issueCountsText, stageShort } from "../../utils/format"
@@ -32,6 +32,25 @@ export default function ArchiveListPage() {
   const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const orgs = useRequest(() => listOrgs({ flat: true }), [], { immediate: canCreate })
   const branches = availableBranches(orgs.data || [], activeRole)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const remove = async () => {
+    if (deleting || !deleteTarget) return
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      await deleteArchive(deleteTarget.id)
+      setDeleteTarget(null)
+      toast.success("空档案已删除，学生账号已保留")
+      if (req.data?.items?.length === 1 && query.page > 1) setPage(query.page - 1)
+      else req.reload().catch(() => {})
+    } catch (e) {
+      setDeleteError(e.message || "删除失败，请重试")
+    } finally {
+      setDeleting(false)
+    }
+  }
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [password, setPassword] = useState("")
@@ -110,12 +129,18 @@ export default function ArchiveListPage() {
               <Link className="link inline-flex max-w-full no-underline hover:no-underline" to={`/review/submissions/${r.submission.id}`}><StatusBadge code={r.submission.status} soft /></Link>
             ) : "—" },
             { key: "ai", title: "AI", className: "min-w-[7rem] whitespace-nowrap", render: (r) => <RecoBadge code={r.submission?.recommendation} soft /> },
+            ...(canCreate ? [{ key: "op", title: "操作", render: (r) => <button type="button" className="btn btn-ghost btn-xs text-error whitespace-nowrap" onClick={() => { setDeleteError(""); setDeleteTarget(r) }}>删除空档案</button> }] : []),
             { key: "issues", title: "问题", render: (r) => <span className="text-xs">{issueCountsText(r.submission?.issue_counts)}</span> },
           ]}
         />
         <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>
       </div>
       )}
+      <ConfirmDialog open={!!deleteTarget} title="删除空档案" danger busy={deleting} confirmText="确认删除"
+        onClose={() => { if (!deleting) setDeleteTarget(null) }} onConfirm={remove}
+        message={<><span className="block mb-2">{deleteTarget?.real_name}（{deleteTarget?.student_no}）</span>
+          <span className="block">仅删除没有材料、日期及办理记录的空档案，学生登录账号将保留。如需删除账号，请再到用户管理操作。</span>
+          {deleteError && <span role="alert" className="block mt-3 text-error">{deleteError}</span>}</>} />
       <Modal open={open} title="新建发展档案" onClose={close} footer={
         password ? <button type="button" className="btn btn-primary btn-sm" onClick={close}>知道了</button> : (
           <>

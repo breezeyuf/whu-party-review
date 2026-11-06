@@ -16,3 +16,5 @@ export function importUsers(file, { dryRun = true, batchId } = {}) {
 
 export const importTemplate = () => getBlob("/users/import-template")
 export const downloadImportPasswords = (id) => getBlob(`/users/import-passwords/${id}/download`)
+
+export const deleteUser = (id) => api.delete(`/users/${id}`)

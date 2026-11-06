@@ -38,6 +38,9 @@ def fill_suggestions(db, drafts: list[IssueDraft], extra: dict | None = None, *,
             "问题描述": d.description,
         }
         text = tpl.template_text
+        if not vals["材料名"]:
+            # A submission-level issue has no single source document.
+            text = text.replace("《{材料名}》", "本次提交材料")
         for k, v in vals.items():
             text = text.replace("{" + k + "}", str(v))
         text = re.sub(r"\{[^}]+\}", "", text)

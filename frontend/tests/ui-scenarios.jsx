@@ -185,6 +185,37 @@ export async function runUiScenarios() {
     assert.equal(document.getElementById("settings-worker").hidden, true)
   })
 
+  for (const archive of [false, true]) {
+    await test(`${archive ? "空档案" : "未使用账号"}删除需确认，失败保留原因并可重试`, async () => {
+      let deleted = false, attempts = 0
+      const collection = archive ? "/archives" : "/users"
+      const row = archive ? {...baseArchive, id: 73} : {id:73,username:"mistake",real_name:"误建测试",roles:[]}
+      await mount(archive ? <ArchiveListPage /> : <UsersPage />, {
+        path: collection, roleCode: "ORG_ADMIN", handler: c => {
+          if (c.url === collection && c.method === "get") return {items: deleted ? [] : [row], total:deleted ? 0 : 1,page:1,page_size:20}
+          if (c.url === `${collection}/73` && c.method === "delete") {
+            attempts += 1
+            if (attempts === 1) throw Error("暂时无法删除，请重试")
+            deleted = true
+            return {deleted:true}
+          }
+        },
+      })
+      await click(button(archive ? "删除空档案" : "删除"))
+      assert.equal(attempts, 0)
+      await click(button("取消"))
+      assert.equal(attempts, 0)
+      await click(button(archive ? "删除空档案" : "删除"))
+      if (archive) assert.match(text(), /学生登录账号将保留/)
+      await click(button("确认删除"))
+      assert.match(document.querySelector("dialog[open]").textContent, /暂时无法删除/)
+      await click(button("确认删除"))
+      assert.equal(attempts, 2)
+      assert.equal(deleted, true)
+      assert.equal(document.querySelector("dialog[open]"), null)
+    })
+  }
+
   await test("用户导入默认收起，可显式展开而不发起导入请求", async () => {
     await mount(<UsersPage />, { roleCode: "SYS_ADMIN" })
     assert.equal(document.getElementById("user-import-panel").hidden, true)
@@ -203,6 +234,25 @@ export async function runUiScenarios() {
     assert.equal(button("保存校正"), undefined)
     await mount(<ParsedTextPanel parsed={parsed} editable onSave={() => {}} />, { roleCode: "BRANCH_REVIEWER" })
     assert.equal([...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "抽取字段校正").open, true)
+  })
+
+  await test("报告摘要原因与触发方式中文显示，人工状态不再叠放彩色色块", async () => {
+    await mount(<ReportSummary report={{...baseReport,recommendation:"SUGGEST_RETURN",effective_recommendation:"SUGGEST_PASS",handover_status:"DONE",mode:"RULE_LLM",trigger_type:"RECHECK",is_stale:true,handover_reasons:["LOW_CONFIDENCE","NEEDS_JUDGEMENT","KEY_STAGE"]}} />)
+    assert.match(text(),/自动检查结果需进一步核实；内容需要人工判断；本阶段须由人工确认/)
+    assert.match(text(),/整改复核/)
+    assert.match(text(),/规则与大模型检查/)
+    assert.doesNotMatch(text(),/LOW_CONFIDENCE|NEEDS_JUDGEMENT|KEY_STAGE|RULE_LLM|RECHECK/)
+    assert.equal(document.querySelectorAll(".badge").length,1)
+  })
+
+  await test("未授权视觉复核显示中性说明，真实识别失败仍显示警告", async () => {
+    await mount(<ParsedTextPanel parsed={{parser:"OCR",ocr_engine:"rapidocr",full_text:"本地已识别文字",extracted_fields:{},pages:[],extractions:[],warnings:["视觉 OCR 未发送图片：尚未允许将材料图片发送至配置的服务","本地识别失败，请检查引擎"]}} editable={false} />)
+    const notice=[...document.querySelectorAll('[role="status"]')].find(x=>x.textContent.includes("未授权发送原图"))
+    assert.ok(notice)
+    assert.equal(notice.classList.contains("alert-warning"),false)
+    assert.match(document.querySelector('[role="alert"]').textContent,/本地识别失败/)
+    assert.match(text(),/图片文字识别/)
+    assert.match(text(),/RapidOCR/)
   })
 
   await test("报告技术信息收起，规则模式和过期风险保持可见", async () => {
@@ -987,6 +1037,65 @@ export async function runUiScenarios() {
     assert.equal(button("发起自查"), undefined)
     assert.equal(button("提交审核"), undefined)
   })
+
+  await test("问题卡仅保留一个等级色块，日期缺项用明确名称说明且依据仍可展开", async () => {
+    await mount(<IssueCard issue={{id:99,source:"AI_RULE",rule_code:"R-T22",category:"TIME",severity:"BLOCK",review_status:"PENDING",resolution:"UNRESOLVED",needs_human_judgement:true,is_new_in_recheck:true,title:"阶段必填节点与单调递增",description:"缺少 T01,T02",suggestion:"《》中T01缺失"}} />)
+    const card=document.getElementById("issue-99")
+    assert.equal(card.querySelectorAll(".badge").length,1)
+    assert.match(card.textContent,/出生日期、递交入党申请书日期/)
+    assert.match(card.textContent,/需人工核实/)
+    assert.match(card.textContent,/复核后仍存在/)
+    assert.doesNotMatch(card.textContent,/《》|单调递增/)
+    await act(async()=>{card.querySelector("summary").click()})
+    assert.equal(card.querySelector("details").open,true)
+    assert.match(card.textContent,/规则 R-T22/)
+  })
+
+  await test("退回前保存的旧说明仍需更新，本次保存后解除重新提交限制", async () => {
+    let saved=false
+    await mount(<RectificationPage />, {path:"/my/rectification",handler:c=>{
+      if(c.url === "/submissions/101") return {...baseSubmission,status:"RETURNED"}
+      if(c.url === "/submissions/101/issues") return {items:[{id:7,source:"AI_RULE",title:"本次退回问题",category:"FORMAT",severity:"WARN",review_status:"CONFIRMED",response_type:"EXPLAINED",response_text:"这是退回之前保存的情况说明",requires_response:!saved}]}
+      if(c.url === "/issues/7/response") {saved=true;return {}}
+    }})
+    assert.ok(button("待我回复（1）"))
+    assert.equal(button("重新提交").disabled,true)
+    await click([...document.querySelectorAll("summary")].find(x=>x.textContent.includes("整改回复")))
+    assert.match(text(),/根据本次退回意见更新/)
+    await input(document.querySelector('[aria-label="整改说明"]'),"这是本次根据退回意见重新保存的整改说明")
+    await click(button("保存情况说明"))
+    assert.ok(button("待我回复（0）"))
+    assert.equal(button("重新提交").disabled,false)
+  })
+
+  await test("过期自动问题默认移出整改清单，回看只读且重新自查优先", async () => {
+    await mount(<RectificationPage />, {path:"/my/rectification",handler:c=>{
+      if(c.url === "/submissions/101") return {...baseSubmission,latest_report:{...baseReport,is_stale:true}}
+      if(c.url === "/submissions/101/issues") return {items:[{id:7,title:"旧文件签名问题",category:"FORMAT",severity:"BLOCK",source:"AI_RULE",review_status:"PENDING"}]}
+    }})
+    assert.match(document.querySelector('[aria-label="当前办理指引"]').textContent,/重新自查/)
+    assert.equal(text().includes("旧文件签名问题"),false)
+    assert.equal(document.querySelectorAll('[aria-label="整改说明"]').length,0)
+    await click(button("查看上次问题"))
+    assert.match(text(),/旧文件签名问题/)
+    assert.equal(document.querySelectorAll('[aria-label="整改说明"]').length,0)
+    await click(button("返回当前问题"))
+    assert.equal(text().includes("旧文件签名问题"),false)
+  })
+
+  for (const roleCode of ["BRANCH_REVIEWER", "COLLEGE_REVIEWER"]) {
+    await test(`${roleCode}选择其他环节时自动放宽范围，切回待办清除冲突状态`, async () => {
+      await mount(<ReviewTasksPage />, {path:"/review/tasks",roleCode})
+      const more=button("更多筛选")
+      if(more) await click(more)
+      const state=document.querySelector('[aria-label="状态"]') || [...document.querySelectorAll("select")].find(x=>[...x.options].some(o=>o.value==="RETURNED"))
+      await input(state,"RETURNED")
+      assert.equal(router.state.location.search.includes("todo=false"),true)
+      const range=[...document.querySelectorAll("select")].find(x=>[...x.options].some(o=>o.textContent==="全部可见提交包"))
+      await input(range,"true")
+      assert.equal(router.state.location.search.includes("status=RETURNED"),false)
+    })
+  }
 
   await test("整改默认只展示未回复问题，全部问题可切换并保留材料返回来源", async () => {
     await mount(<RectificationPage />, { path: "/my/rectification", handler: (c) => {

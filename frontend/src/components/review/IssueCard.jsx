@@ -1,10 +1,20 @@
 import { useState } from "react"
-import { SeverityBadge, CategoryBadge, ReviewStatusBadge } from "../common/Badges"
+import { SeverityBadge } from "../common/Badges"
+
+import { useMeta } from "../../context/MetaContext"
+import { categoryName, reviewStatusName } from "../../utils/format"
+import { issuePresentation } from "../../utils/issuePresentation"
 
 export default function IssueCard({ issue, active, onSelect, actions, footer }) {
   const [evidenceOpen, setEvidenceOpen] = useState(false)
+  const meta = useMeta()
+  const display = issuePresentation(issue, meta.time_nodes || [])
+  const status = issue.resolution === "RESOLVED" ? "已解决" : issue.review_status === "REJECTED" ? "已驳回" : reviewStatusName(meta, issue.review_status)
+  const notes = [categoryName(meta, issue.category), status,
+    issue.resolution === "UNRESOLVED" && issue.review_status !== "REJECTED" ? "复核后仍存在" : "",
+    issue.needs_human_judgement ? "需人工核实" : "", issue.is_new_in_recheck ? "本轮新增" : ""].filter(Boolean)
   return (
-    <article
+    <article id={`issue-${issue.id}`}
       className={`surface-card cursor-pointer p-3 ${active ? "border-primary" : ""}`}
       onClick={() => onSelect?.(issue)}
       tabIndex={onSelect ? 0 : undefined}
@@ -12,19 +22,14 @@ export default function IssueCard({ issue, active, onSelect, actions, footer }) 
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <SeverityBadge code={issue.severity} />
-        <CategoryBadge code={issue.category} />
-        <ReviewStatusBadge code={issue.review_status} />
-        {issue.needs_human_judgement && <span className="badge badge-warning badge-xs">需人工研判</span>}
-        {issue.is_new_in_recheck && <span className="badge badge-info badge-xs">复核新增</span>}
-        {issue.resolution === "RESOLVED" && <span className="badge badge-success badge-xs">已解决</span>}
-        {issue.resolution === "UNRESOLVED" && <span className="badge badge-error badge-xs">未解决</span>}
+        <span className="text-xs leading-relaxed text-base-content/60">{notes.join(" · ")}</span>
       </div>
       {onSelect ? (
         <button type="button" className="mt-2 text-left text-sm font-medium hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-pressed={Boolean(active)} onClick={e => { e.stopPropagation(); onSelect(issue) }}>
-          {issue.title}
+          {display.title}
         </button>
-      ) : <h3 className="mt-2 text-sm font-medium">{issue.title}</h3>}
-      <p className="mt-1 text-xs leading-relaxed text-base-content/75">{issue.description}</p>
+      ) : <h3 className="mt-2 text-sm font-medium">{display.title}</h3>}
+      <p className="mt-1 text-xs leading-relaxed text-base-content/75">{display.description}</p>
       {(issue.actual_value || issue.expected_value || issue.rule_basis || issue.location?.snippet || issue.material_version_id || issue.rule_code) && <details className="plain-disclosure mt-2" onToggle={e => setEvidenceOpen(e.currentTarget.open)} onClick={(event) => event.stopPropagation()}>
         <summary className="btn btn-outline btn-xs">{evidenceOpen ? "收起依据" : "查看依据"}</summary>
         <div className="details-content">
@@ -43,7 +48,7 @@ export default function IssueCard({ issue, active, onSelect, actions, footer }) 
       </details>}
       {issue.suggestion && (
         <div className="mt-2 rounded bg-base-200 px-2 py-1.5 text-xs">
-          <span className="text-base-content/50">修改建议 </span>{issue.suggestion}
+          <span className="text-base-content/50">修改建议 </span>{display.suggestion}
         </div>
       )}
       {issue.review_note && <p className="mt-1 text-xs text-base-content/65">人工处理说明：{issue.review_note}</p>}
