@@ -11,7 +11,7 @@ from errors import forbidden, not_found, unprocessable
 from models import Issue, Material, Submission
 from schemas.common import ok
 from services.audit import log
-from services.issues import act_issue, manual_location, respond_issue, serialize_issue
+from services.issues import needs_student_response, act_issue, manual_location, respond_issue, serialize_issue
 from services.scope import REVIEWER_ROLES, can_review, current_level, ensure_submission_access
 from utils import now
 
@@ -49,7 +49,7 @@ def list_issues(sid: int, category: str | None = None, severity: str | None = No
     by_rev = dict(Counter(i.review_status for i in items))
     pending_block = sum(1 for i in items if i.severity == "BLOCK" and i.review_status == "PENDING")
     return ok({
-        "items": [serialize_issue(i) for i in items],
+        "items": [{**serialize_issue(i), "requires_response": needs_student_response(i, s)} for i in items],
         "counts": {"by_category": by_cat, "by_severity": by_sev, "by_review_status": by_rev, "pending_block": pending_block},
     })
 

@@ -33,6 +33,13 @@ def _scope_users(db, actor, q, role=None):
     return q.filter(User.id == actor.id)
 
 
+@router.delete("/{uid}")
+def delete_user(uid: int, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    from services.unused_deletion import delete_unused_user
+    delete_unused_user(db, actor, uid)
+    return ok({"deleted": True})
+
+
 @router.get("")
 def list_users(q: str | None = None, org_id: int | None = None, role: str | None = None, is_active: bool | None = None,
                page: int = 1, page_size: int = 20, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):

@@ -91,7 +91,7 @@ export default function IssueResponseForm({ issue, onDone, onBusyChange, compact
     <details className="service-inline-details" open={!compact ? true : undefined}>
       <summary hidden={!compact}>{issue.response_type ? "查看或修改整改回复" : "填写整改回复"}{working ? "（处理中）" : ""}</summary>
       <div className="space-y-3 rounded bg-base-200 p-3">
-      {(saved || issue.response_type) && <p className="text-xs text-success">已保存整改回复，等待复核确认。{uploadedVersion && `关联材料版本 v${uploadedVersion.version_no}`}</p>}
+      {(saved || issue.response_type) && <p className="text-xs text-success">{issue.requires_response && !saved ? "上次回复已保留，请根据本次退回意见更新后再保存。" : "已保存整改回复，等待复核确认。"}{uploadedVersion && `关联材料版本 v${uploadedVersion.version_no}`}</p>}
       <textarea className="textarea textarea-bordered textarea-xs w-full" rows={2} aria-label="整改说明" placeholder="整改说明；情况说明不少于 10 字" value={text} disabled={working} onChange={(e) => { setText(e.target.value); drafts?.set(draftKey, e.target.value); setSaved(false) }} />
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className="btn btn-ghost btn-xs" disabled={working} onClick={explain}>保存情况说明</button>

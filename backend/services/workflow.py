@@ -114,7 +114,8 @@ def submit_package(db: Session, sub: Submission, actor, comment: Optional[str] =
             .all()
         )
         msg = "存在未回复的已确认问题"
-    pending = [iss.id for iss in candidates if not iss.response_type]
+    from services.issues import needs_student_response
+    pending = [iss.id for iss in candidates if needs_student_response(iss, sub)]
     if pending:
         raise conflict(msg, code=40902, data={"issue_ids": pending})
     from_s = sub.status
@@ -144,11 +145,26 @@ def submit_package(db: Session, sub: Submission, actor, comment: Optional[str] =
     rec = add_record(db, sub, actor, "SELF", action, from_s, to_s, comment)
     if recheck_job_id:
         job.params = {**job.params, "resubmit_record_id": rec.id}
-    notify_role_users(
-        db, "BRANCH_REVIEWER", sub.branch_id, msg_type="TASK",
-        title=f"{sub.archive.real_name} 已提交{stage_name(db, sub.stage_code)}材料",
-        content=comment or "", link_type="submission", link_id=sub.id,
-    )
+    recipient_role, recipient_org = {
+        "BRANCH_REVIEW": ("BRANCH_REVIEWER", sub.branch_id),
+        "COLLEGE_REVIEW": ("COLLEGE_REVIEWER", sub.college_id),
+        "ORG_FILING": ("ORG_ADMIN", None),
+    }.get(to_s, (None, None))
+    if to_s == "CROSS_REVIEW":
+        from models import CrossReviewPair, UserRole
+        pair = db.query(CrossReviewPair).filter(CrossReviewPair.batch_id == sub.batch_id,
+                    CrossReviewPair.target_branch_id == sub.branch_id).first()
+        if pair:
+            recipients = [pair.reviewer_user_id] if pair.reviewer_user_id else [uid for (uid,) in
+                db.query(UserRole.user_id).filter(UserRole.role == "CROSS_REVIEWER", UserRole.org_id == pair.reviewer_branch_id)]
+            for uid in recipients:
+                send_message(db, uid, "TASK", f"{sub.archive.real_name} 已重新提交材料", comment or "", "submission", sub.id)
+    elif recipient_role:
+        notify_role_users(
+            db, recipient_role, recipient_org, msg_type="TASK",
+            title=f"{sub.archive.real_name} 已提交{stage_name(db, sub.stage_code)}材料",
+            content=comment or "", link_type="submission", link_id=sub.id,
+        )
     return {"submission": sub, "review_record_id": rec.id, "recheck_job_id": recheck_job_id}
 
 
