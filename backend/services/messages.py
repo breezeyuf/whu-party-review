@@ -38,10 +38,13 @@ def send_message(
     return msg
 
 
-def notify_role_users(db: Session, role: str, org_id: int, **kwargs) -> int:
+def notify_role_users(db: Session, role: str, org_id: int | None, **kwargs) -> int:
     from models import UserRole
 
-    rows = db.query(UserRole.user_id).filter(UserRole.role == role, UserRole.org_id == org_id).all()
+    query = db.query(UserRole.user_id).filter(UserRole.role == role)
+    if org_id is not None:
+        query = query.filter(UserRole.org_id == org_id)
+    rows = query.distinct().all()
     n = 0
     for (uid,) in rows:
         send_message(db, uid, **kwargs)

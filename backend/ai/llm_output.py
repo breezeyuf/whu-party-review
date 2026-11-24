@@ -57,10 +57,27 @@ class SuggestionOutput(BaseModel):
     suggestion: NonEmptyText
 
 
+class OcrCorrectionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    original: NonEmptyText
+    suggestion: NonEmptyText
+    reason: NonEmptyText
+    confidence: Confidence
+
+
+class OcrProofreadDemoOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    corrections: list[OcrCorrectionOutput] = Field(max_length=8)
+
+
 def validate_task_output(code: str, value: dict) -> dict:
     if code == "CONTENT_CHECK":
         return ContentCheckOutput.model_validate(value).model_dump()
     model = {'CLASSIFY':ClassificationOutput,'EXTRACT':ExtractionsOutput,'SUGGEST':SuggestionOutput}.get(code)
+    if code == "OCR_PROOFREAD_DEMO":
+        return OcrProofreadDemoOutput.model_validate(value).model_dump()
     if model:
         return model.model_validate(value).model_dump()
     # Other existing callers include the connection test, not a content review.

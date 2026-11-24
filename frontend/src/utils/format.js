@@ -1,3 +1,5 @@
+import { severityCode } from "./reviewTerms.js"
+import { uiLabel } from "./interfaceLabels.js"
 import dayjs from "dayjs"
 
 export function fmtDate(v) {
@@ -38,15 +40,15 @@ export function stageShort(meta, code) {
 }
 
 export function roleName(meta, code) {
-  return labelOf(meta?.roles, code)
+  return uiLabel(labelOf(meta?.roles, code))
 }
 
 export function statusName(meta, code) {
-  return labelOf(meta?.submission_statuses, code)
+  return uiLabel(labelOf(meta?.submission_statuses, code))
 }
 
 export function severityName(meta, code) {
-  return labelOf(meta?.severities, code)
+  return severityCode(code) === "BLOCK" ? "关键问题" : labelOf(meta?.severities, code)
 }
 
 export function categoryName(meta, code) {
@@ -54,7 +56,7 @@ export function categoryName(meta, code) {
 }
 
 export function reviewStatusName(meta, code) {
-  return labelOf(meta?.review_statuses, code)
+  return uiLabel(labelOf(meta?.review_statuses, code))
 }
 
 export function recoName(meta, code) {
@@ -62,7 +64,7 @@ export function recoName(meta, code) {
 }
 
 export function handoverName(meta, code) {
-  return labelOf(meta?.handover_statuses, code)
+  return uiLabel(labelOf(meta?.handover_statuses, code))
 }
 
 export function levelName(meta, code) {
@@ -85,5 +87,5 @@ export function issueCountsText(counts) {
   const b = counts.BLOCK || 0
   const w = counts.WARN || 0
   const i = counts.INFO || 0
-  return `阻断 ${b} · 警告 ${w} · 提示 ${i}`
+  return `关键问题 ${b} · 警告 ${w} · 提示 ${i}`
 }

@@ -20,6 +20,8 @@ export default function BatchesPage() {
   const [closeTarget, setCloseTarget] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState("")
   const set = (key, value) => setEdit((f) => ({ ...f, [key]: value }))
   const save = async () => {
     if (busy) return
@@ -33,6 +35,18 @@ export default function BatchesPage() {
       req.reload().catch(() => {})
     } catch (e) { setError(e.message || "保存失败") } finally { setBusy(false) }
   }
+  const confirmAction = async (kind) => {
+    if (actionBusy) return
+    setActionBusy(true); setActionError("")
+    try {
+      if (kind === "close") await updateBatch(closeTarget.id, { status: "CLOSED" })
+      else await deleteBatch(removeId)
+      setCloseTarget(null); setRemoveId(null)
+      toast.success(kind === "close" ? "批次已关闭" : "批次已删除")
+      req.reload().catch(() => toast.error("操作已完成，但列表刷新失败，请重试加载"))
+    } catch (e) { setActionError(e.message || "操作失败，请重试") }
+    finally { setActionBusy(false) }
+  }
   return <div>
     <PageHeader title="发展批次" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => { setError(""); setEdit({ ...EMPTY }) }}>新建批次</button>} />
     <div className="surface-card p-2"><DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="还没有发展批次" emptyHint="点击右上角“新建批次”开始配置。" columns={[
@@ -43,8 +57,8 @@ export default function BatchesPage() {
       { key: "status", title: "状态", render: (r) => r.status === "CLOSED" ? "已关闭" : "进行中" },
       { key: "actions", title: "操作", render: (r) => <div className="flex flex-wrap gap-1">
         <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setError(""); setEdit({ ...r, stage_codes: (r.stage_codes || []).join(",") }) }}>编辑</button>
-        {r.status !== "CLOSED" && <button type="button" className="btn btn-ghost btn-xs" onClick={() => setCloseTarget(r)}>关闭批次</button>}
-        <button type="button" className="btn btn-ghost btn-xs text-error" disabled={Number(r.archive_count) > 0} title={Number(r.archive_count) > 0 ? "已有档案，请关闭批次" : "删除批次"} onClick={() => setRemoveId(r.id)}>删除</button>
+        {r.status !== "CLOSED" && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setActionError(""); setCloseTarget(r) }}>关闭批次</button>}
+        <button type="button" className="btn btn-ghost btn-xs text-error" disabled={Number(r.archive_count) > 0} title={Number(r.archive_count) > 0 ? "已有档案，请关闭批次" : "删除批次"} onClick={() => { setActionError(""); setRemoveId(r.id) }}>删除</button>
       </div> },
     ]} />{!req.error && <Pager page={req.data?.page} total={req.data?.total} pageSize={req.data?.page_size} onPage={setPage} onPageSize={page_size => setQuery({page_size})} />}</div>
     <Modal open={!!edit} wide title={edit?.id ? "编辑批次" : "新建批次"} onClose={() => { if (!busy) setEdit(null) }} footer={<><button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setEdit(null)}>取消</button><button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? "保存中…" : "保存"}</button></>}>
@@ -57,7 +71,7 @@ export default function BatchesPage() {
       </fieldset>}
       {error && <p role="alert" className="mt-2 text-xs text-error">{error}</p>}
     </Modal>
-    <ConfirmDialog open={!!closeTarget} title="关闭批次" message={`确定关闭“${closeTarget?.name || ""}”？已有档案和审核记录保留。`} onClose={() => setCloseTarget(null)} onConfirm={async () => { await updateBatch(closeTarget.id,{ status:"CLOSED" }); setCloseTarget(null); await req.reload() }} />
-    <ConfirmDialog open={!!removeId} danger title="删除批次" message="已有档案的批次不能删除，请使用关闭批次。" onClose={() => setRemoveId(null)} onConfirm={async () => { await deleteBatch(removeId); setRemoveId(null); await req.reload() }} />
+    <ConfirmDialog open={!!closeTarget} busy={actionBusy} title="关闭批次" message={<>{`确定关闭“${closeTarget?.name || ""}”？已有档案和审核记录保留。`}{actionError && <span role="alert" className="mt-2 block text-error">{actionError}</span>}</>} onClose={() => { if (!actionBusy) setCloseTarget(null) }} onConfirm={() => confirmAction("close")} />
+    <ConfirmDialog open={!!removeId} busy={actionBusy} danger title="删除批次" message={<>已有档案的批次不能删除，请使用关闭批次。{actionError && <span role="alert" className="mt-2 block text-error">{actionError}</span>}</>} onClose={() => { if (!actionBusy) setRemoveId(null) }} onConfirm={() => confirmAction("delete")} />
   </div>
 }

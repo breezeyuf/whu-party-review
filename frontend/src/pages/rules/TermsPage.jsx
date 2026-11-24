@@ -103,7 +103,7 @@ export default function TermsPage() {
         { key: "wrong_variants", label: "错误写法（每行一条）", type: "textarea", wide: true },
         { key: "sequence_items", label: "并列项（每行一项，按正确顺序）", type: "textarea", wide: true },
         { key: "category", label: "分类" },
-        { key: "severity", label: "级别", type: "select", options: [{ value: "BLOCK", label: "阻断" }, { value: "WARN", label: "警告" }, { value: "INFO", label: "提示" }] },
+        { key: "severity", label: "级别", type: "select", options: [{ value: "BLOCK", label: "关键问题" }, { value: "WARN", label: "警告" }, { value: "INFO", label: "提示" }] },
         { key: "note", label: "说明", wide: true },
         { key: "is_active", label: "启用", type: "checkbox" },
       ]} initial={edit || {}} onClose={() => setEdit(null)} onSubmit={save} />

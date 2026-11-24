@@ -45,6 +45,8 @@ def content(*issues):
 
 @pytest.fixture
 def endpoint(monkeypatch):
+    from services import model_network
+    monkeypatch.setattr(model_network, "_resolve", lambda *args: ["10.2.3.4"])
     requests = []
     responses = []
     settings = {"base_url": "https://model.test/v1", "model": "test-model", "max_attempts": 3,
@@ -62,7 +64,7 @@ def endpoint(monkeypatch):
             item = {"choices": [{"message": {"content": item}}]}
         return httpx.Response(200, json=item)
 
-    monkeypatch.setattr(llm.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(respond), **kw))
+    monkeypatch.setattr(llm.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(respond), **{k:v for k,v in kw.items() if k != "transport"}))
     monkeypatch.setattr(llm, "llm_config", lambda db: settings)
     monkeypatch.setattr(llm, "decrypt_field", lambda encrypted: "test-key")
     monkeypatch.setattr(llm.time, "sleep", lambda seconds: None)

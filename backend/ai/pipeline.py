@@ -131,10 +131,12 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
         if enrich:
             from ai.enrichment import extract_fallback
             extractions, error = extract_fallback(db, result.get('full_text') or '', result.get('pages') or [], extractions, nodes,
-                archive=material.archive, rule_set=rule_set)
+                archive=material.archive, rule_set=rule_set, material_type=type_row)
             if error: result.setdefault('warnings', []).append('模型补抽未采用：'+error)
         # A retry of the same file must keep manually checked node values. New
         # file versions still replace all sources from the old version.
+        from ai.date_evidence import bound_extractions
+        extractions = bound_extractions(extractions, result.get('pages') or [])
         manual = db.query(TimeNodeExtraction).filter(
             TimeNodeExtraction.material_version_id == ver.id,
             TimeNodeExtraction.is_current.is_(True),
@@ -214,7 +216,8 @@ def parse_version(db: Session, version_id: int, *, rule_set=None, context=None, 
         ver.page_count = result.get("page_count") or len(result.get("pages") or [])
         db.flush()
         if is_current:
-            merge_archive_nodes(db, material.archive_id, node_defs=nodes)
+            merge_archive_nodes(db, material.archive_id, node_defs=nodes,
+                                material_types=rule_set.types if rule_set else None)
         return pr
     except Exception as e:
         log_exception("material.parse_failed", e, version_id=version_id)
@@ -299,7 +302,8 @@ def run_check(db: Session, submission_id: int, trigger_type: str = "SELF_CHECK",
             if pr:
                 parses[ver.id] = pr
             used_versions.append({"material_id": m.id, "version_id": ver.id, "version_no": ver.version_no})
-        node_map = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows("time_node_defs", active=False))
+        node_map = node_map_for_archive(db, sub.archive_id, node_defs=rules.rows("time_node_defs", active=False),
+                                       material_types=rules.types)
         completeness, d1, r1 = run_completeness(db, sub, materials, _to_nodevals(node_map), rule_set=rules, context=context, versions=versions)
         snapshot, d2, r2 = run_timeline(db, sub, node_map, rule_set=rules, context=context)
         snapshot["evaluation_context"] = context.to_dict()

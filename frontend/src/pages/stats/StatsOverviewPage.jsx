@@ -1,3 +1,4 @@
+import { CATEGORY_COLORS, SEVERITY_COLORS, COLORS } from "../../components/charts/chartTheme"
 import { useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
@@ -27,8 +28,8 @@ export default function StatsOverviewPage() {
   const topReq = useRequest(() => topIssues({ ...filters, limit: 10, group_by: groupBy }), [JSON.stringify(filters), groupBy])
   const d = dataReq.data || {}
 
-  const pie = Object.entries(d.issues_by_category || {}).map(([k, v]) => ({ name: categoryName(meta, k), value: v }))
-  const sev = Object.entries(d.issues_by_severity || {}).map(([k, v]) => ({ name: severityName(meta, k), value: v }))
+  const pie = Object.entries(d.issues_by_category || {}).map(([k, v]) => ({ code: k, name: categoryName(meta, k), value: v, color: CATEGORY_COLORS[k] }))
+  const sev = ["BLOCK", "WARN", "INFO"].filter(k => k in (d.issues_by_severity || {})).map(k => ({ code: k, name: severityName(meta, k), value: d.issues_by_severity[k], color: SEVERITY_COLORS[k] }))
   const byBranch = (d.by_branch || []).map((b) => ({ name: b.branch_name, value: b.submissions }))
   const byStage = (d.by_stage || []).map((s) => ({ name: stageShort(meta, s.stage_code), value: s.submissions }))
 
@@ -57,11 +58,11 @@ export default function StatsOverviewPage() {
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">各支部提交量</h2>
-              <BarChart data={byBranch} />
+              <div className="max-h-96 overflow-y-auto"><BarChart data={byBranch} horizontal maxTickLength={16} height={Math.max(240, byBranch.length * 36)} color={COLORS[1]} /></div>
             </section>
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">各阶段提交量</h2>
-              <BarChart data={byStage} />
+              <BarChart data={byStage} color={COLORS[0]} />
             </section>
             <section className="surface-card p-4 lg:col-span-2">
               <h2 className="mb-2 text-sm font-medium">流转趋势</h2>

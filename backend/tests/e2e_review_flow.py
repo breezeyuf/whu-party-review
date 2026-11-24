@@ -32,7 +32,8 @@ def main():
         assert condition, name
 
     def call(method, path, actor=None, expected=200, **kwargs):
-        headers = actor or {}
+        headers = {"X-Requested-With": "party-review", **(actor or {})}
+        client.cookies.clear()
         response = client.request(method, "/api" + path, headers=headers, **kwargs)
         requests.append({"method": method, "path": path, "status": response.status_code})
         assert response.status_code == expected, (method, path, response.status_code, response.text[:600])
@@ -42,7 +43,9 @@ def main():
         data = call("POST", "/auth/login", json={"username": username, "password": password})
         roles = data["user"]["roles"]
         selected = next((r for r in roles if r["role"] == role), roles[0])
-        return {"Authorization": "Bearer " + data["access_token"],
+        cookie = client.cookies.get("prw_session")
+        assert cookie, "login must set the HttpOnly session cookie"
+        return {"Cookie": "prw_session=" + cookie,
                 "X-Active-Role": f'{selected["role"]}@{selected["org_id"]}'}
 
     def wait_job(jid, actor):

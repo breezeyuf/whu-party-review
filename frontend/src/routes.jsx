@@ -56,7 +56,7 @@ function RequireAuth() {
   const { user, ready } = useAuth()
   const loc = useLocation()
   // 已有会话正在校验身份时，同时下载登录后的外壳
-  useEffect(() => { if (!ready && tokenStore.access) preloadShell() }, [ready])
+  useEffect(() => { if (!ready) preloadShell() }, [ready])
   if (!ready) return <Loading />
   if (!user) return <Navigate to="/login" replace state={{ from: loc.pathname }} />
   if (user.must_change_password && loc.pathname !== "/change-password") {

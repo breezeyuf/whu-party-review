@@ -1,12 +1,12 @@
 import { CartesianGrid, Line, LineChart as RCLine, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts"
-import { COLORS } from "./BarChart"
+import { LINE_COLORS as COLORS } from "./chartTheme"
 
 export function LineChart({ data = [], xKey = "date", lines = [], height = 240 }) {
   return (
     <div style={{ width: "100%", height }}>
       <ResponsiveContainer>
         <RCLine data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-          <CartesianGrid stroke="oklch(0.9 0.01 250)" vertical={false} />
+          <CartesianGrid stroke="#E6EBEF" strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey={xKey} tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={32} />
           <Tooltip />

@@ -10,6 +10,7 @@ export default function FileUploader({
   hint,
   disabled,
   compact = false,
+  buttonClassName = "btn-primary",
   onFile,
 }) {
   const inputRef = useRef(null)
@@ -51,7 +52,7 @@ export default function FileUploader({
         onDrop={(e) => { e.preventDefault(); setDrag(false); if (!disabled) check(e.dataTransfer.files?.[0]) }}
       >
         <p className="text-sm">{hint || "拖拽文件到此处，或点击选择"}</p>
-        <button type="button" className="btn btn-primary btn-sm mt-3 gap-2" disabled={disabled || progress != null} onClick={() => inputRef.current?.click()}>
+        <button type="button" className={`btn ${buttonClassName} btn-sm mt-3 gap-2`} disabled={disabled || progress != null} onClick={() => inputRef.current?.click()}>
           <Upload size={15} strokeWidth={1.8} />
           {label}
         </button>

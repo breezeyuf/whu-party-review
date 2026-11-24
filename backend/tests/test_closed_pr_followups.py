@@ -57,8 +57,10 @@ def test_r_t21_uses_each_version_upload_day_and_keeps_source(published_schema):
 
     with Session(published_schema.engine, expire_on_commit=False) as db:
         c = build_case(db)
+        from models import MaterialType
+        source_type = db.query(MaterialType).filter_by(code='AUTOBIOGRAPHY').one()
         material = Material(archive_id=c.arch_a.id, submission_id=c.sub_branch.id, stage_code=1,
-                            title="日期材料", status="ACTIVE", created_at=now(), updated_at=now())
+                            type_id=source_type.id, title="日期材料", status="ACTIVE", created_at=now(), updated_at=now())
         db.add(material)
         db.flush()
         version = MaterialVersion(material_id=material.id, version_no=1, original_filename="date.pdf",

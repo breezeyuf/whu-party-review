@@ -2,10 +2,10 @@ import { useEffect, useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
-import { Modal } from "../../components/common/Modal"
+import { Modal, ConfirmDialog } from "../../components/common/Modal"
 import { usePagination } from "../../hooks/usePagination"
 import { useRequest } from "../../hooks/useRequest"
-import { createUser, downloadImportPasswords, importTemplate, importUsers, listUsers, resetPassword, updateUser } from "../../api/users"
+import { deleteUser, createUser, downloadImportPasswords, importTemplate, importUsers, listUsers, resetPassword, updateUser } from "../../api/users"
 import { saveBlob } from "../../api/client"
 import { listBatches } from "../../api/batches"
 import { listOrgs } from "../../api/orgs"
@@ -26,11 +26,31 @@ const formatImportError = (error) => {
 export default function UsersPage() {
   const meta = useMeta()
   const toast = useToast()
-  const { activeRole } = useAuth()
+  const { activeRole, user } = useAuth()
+  const isSso = user?.auth_mode === "sso"
   const { query, setQuery, setPage } = usePagination()
   const req = useRequest(() => listUsers(query), [JSON.stringify(query)])
   const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const orgs = useRequest(() => listOrgs({ flat: true }), [])
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const remove = async () => {
+    if (deleting || !deleteTarget) return
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      await deleteUser(deleteTarget.id)
+      setDeleteTarget(null)
+      toast.success("账号已删除")
+      if (req.data?.items?.length === 1 && query.page > 1) setPage(query.page - 1)
+      else req.reload().catch(() => {})
+    } catch (e) {
+      setDeleteError(e.message || "删除失败，请重试")
+    } finally {
+      setDeleting(false)
+    }
+  }
   const [edit, setEdit] = useState(null)
   const [saving, setSaving] = useState(false)
   const [resetTarget, setResetTarget] = useState(null)
@@ -39,6 +59,7 @@ export default function UsersPage() {
   const [formError, setFormError] = useState("")
   const [fieldErrors, setFieldErrors] = useState({})
   const [secret, setSecret] = useState("")
+  const [importOpen, setImportOpen] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importing, setImporting] = useState(false)
   const [downloadingPasswords, setDownloadingPasswords] = useState(false)
@@ -232,6 +253,7 @@ export default function UsersPage() {
     <div>
       <PageHeader title="用户管理" extra={
         <>
+          <button type="button" className="btn btn-outline btn-sm" disabled={importing || downloadingPasswords} aria-expanded={importOpen} aria-controls="user-import-panel" onClick={() => setImportOpen(value => !value)}>批量导入</button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={downloadTemplate} disabled={downloadingTemplate}>
             {downloadingTemplate && <span className="loading loading-spinner loading-xs" />}
             {downloadingTemplate ? "模板准备中…" : "下载导入模板"}
@@ -256,7 +278,8 @@ export default function UsersPage() {
           </button>
         </div>
       )}
-      <div className="surface-card mb-4 p-3 text-sm">
+      {!importOpen && importResult && <p className="mb-3 text-sm" role="status">导入结果已保留。<button type="button" className="link ml-2" onClick={() => setImportOpen(true)}>查看导入结果</button></p>}
+      <section id="user-import-panel" hidden={!importOpen} aria-label="用户批量导入" className="surface-card mb-4 p-3 text-sm">
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-base-content/60">Excel 导入</span>
           <select className="select select-bordered select-xs" value={batchId} onChange={(e) => setBatchId(e.target.value)} disabled={importing}>
@@ -297,7 +320,7 @@ export default function UsersPage() {
             )}
           </div>
         )}
-      </div>
+      </section>
       <div className="surface-card p-2">
         <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty={query.q || query.role || query.org_id || query.is_active ? "没有符合条件的用户" : "暂无用户"} columns={[
           { key: "name", title: "用户", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },
@@ -312,7 +335,8 @@ export default function UsersPage() {
           { key: "op", title: "", render: (r) => (
             <>
               <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setFormError(""); setFieldErrors({}); const grants = (r.roles || []).map((x) => ({ role: x.role, org_id: x.org_id ?? r.org_id })); setEdit({ ...r, grants, original_grants: grants, is_active: r.is_active !== false, original_is_active: r.is_active !== false }) }}>编辑</button>
-              <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>
+              {Number(r.id) !== Number(user?.id) && <button type="button" className="btn btn-ghost btn-xs text-error" onClick={() => { setDeleteError(""); setDeleteTarget(r) }}>删除</button>}
+              {!isSso && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>}
             </>
           ) },
         ]} />
@@ -325,6 +349,11 @@ export default function UsersPage() {
         />}
       </div>
       {secret && <div className="alert mt-3 flex flex-wrap items-center justify-between gap-3 text-sm" role="status"><span>初始密码只显示这一次：<span className="mono font-medium select-all">{secret}</span></span><div className="flex items-center gap-1"><button type="button" className="btn btn-outline btn-xs" onClick={copySecret}>复制临时密码</button><button type="button" className="btn btn-ghost btn-xs" onClick={() => setSecret("")}>关闭密码提示</button></div></div>}
+      <ConfirmDialog open={!!deleteTarget} title="删除账号" danger busy={deleting} confirmText="确认删除"
+        onClose={() => { if (!deleting) setDeleteTarget(null) }} onConfirm={remove}
+        message={<><span className="block mb-2">{deleteTarget?.real_name}（{deleteTarget?.username}）</span>
+          <span className="block">仅删除未登录、未关联档案且没有使用记录的账号。已使用的账号请在编辑中停用。</span>
+          {deleteError && <span role="alert" className="block mt-3 text-error">{deleteError}</span>}</>} />
       <Modal open={!!pendingImportFile} title="确认正式导入" onClose={() => setPendingImportFile(null)} footer={(
         <>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPendingImportFile(null)}>取消</button>
@@ -336,7 +365,7 @@ export default function UsersPage() {
         {pendingImportFile && <div className="grid gap-3">
           <div className="text-sm">文件：<span className="font-medium break-all">{pendingImportFile.name}</span></div>
           <div className="text-sm">学生档案建档批次：<span className="font-medium">{batchId ? (batches.data?.items || []).find((batch) => String(batch.id) === String(batchId))?.name || `批次 ${batchId}` : "未指定，可使用文件中的批次名称"}</span></div>
-          <div className="alert alert-warning text-sm" role="alert">正式导入会创建文件中的用户/档案。新用户的初始密码通过加密 Excel 交付，文件只能下载一次，打开口令仅本次显示。建议先对同一文件执行预校验。</div>
+          <div className="alert alert-warning text-sm" role="alert">{isSso ? "正式导入会创建用户/档案，用户通过学校统一认证登录，不生成本地密码。建议先预校验。" : "正式导入会创建文件中的用户/档案。新用户的初始密码通过加密 Excel 交付，文件只能下载一次，打开口令仅本次显示。建议先对同一文件执行预校验。"}</div>
         </div>}
       </Modal>
       <Modal open={!!resetTarget} title="确认重置密码" onClose={() => { if (!resetting) setResetTarget(null) }} footer={(

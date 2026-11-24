@@ -13,7 +13,7 @@ export const pendingParseCount = (groups) => studentMaterials(groups).filter((ma
 // Match submit_package: a returned package gates on every confirmed issue;
 // an initial draft gates on non-rejected blocking issues.
 export function pendingStudentReplies(submission, issues = []) {
-  return issues.filter((issue) => issue.is_active !== false && !issue.response_type && (
+  return issues.filter((issue) => issue.is_active !== false && (issue.requires_response ?? !issue.response_type) && (
     submission?.status === "RETURNED"
       ? ["CONFIRMED", "MODIFIED"].includes(issue.review_status)
       : issue.severity === "BLOCK" && issue.review_status !== "REJECTED"
@@ -28,7 +28,7 @@ export function studentSubmitReason(submission, issues, { ready = true, taskPend
     return "请先完成有效的 AI 自查；材料或时间节点变更后需重新自查。"
   }
   const count = pendingStudentReplies(submission, issues).length
-  if (count) return `还有 ${count} 条${submission.status === "RETURNED" ? "已确认问题" : "阻断问题"}未回复，请逐条整改或填写情况说明。`
+  if (count) return `还有 ${count} 条${submission.status === "RETURNED" ? "已确认问题" : "关键问题"}未回复，请逐条整改或填写情况说明。`
   return ""
 }
 
@@ -37,3 +37,16 @@ export function issueMaterialId(issue) {
 }
 
 export const refreshStudentRequests = (...requests) => Promise.allSettled(requests.map((request) => request.reload()))
+
+// An outdated report remains evidence, not a current diagnosis. Confirmed
+// return obligations and manual findings must remain actionable until reviewed.
+export function studentIssueGroups(submission, issues = []) {
+  const current = [], previous = []
+  for (const issue of issues) {
+    const requiredReturn = submission?.status === "RETURNED" && ["CONFIRMED", "MODIFIED"].includes(issue.review_status)
+    const outdated = submission?.latest_report?.is_stale && ["AI_RULE", "AI_LLM"].includes(issue.source) && !requiredReturn
+    if (outdated) previous.push(issue)
+    else current.push(issue)
+  }
+  return { current, previous }
+}

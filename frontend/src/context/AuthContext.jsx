@@ -34,10 +34,6 @@ export function AuthProvider({ children }) {
   }, [applyMe])
 
   useEffect(() => {
-    if (!tokenStore.access) {
-      setReady(true)
-      return
-    }
     refresh().catch(() => {
       tokenStore.clear()
       setUser(null)
@@ -45,14 +41,14 @@ export function AuthProvider({ children }) {
   }, [refresh])
 
   const login = useCallback(async (username, password) => {
-    const data = await authApi.login(username, password)
     // A previous account's role must never become the new account's identity.
     tokenStore.clear()
-    tokenStore.setTokens(data.access_token, data.refresh_token)
+    const data = await authApi.login(username, password)
     try {
       const me = await refresh()
       return { ...data, me, needsIdentitySelection: (me.roles || []).length > 1 }
     } catch (error) {
+      try { await authApi.logout() } catch { /* preserve the original identity error */ }
       tokenStore.clear()
       setUser(null)
       setNeedsIdentitySelection(false)
@@ -61,7 +57,7 @@ export function AuthProvider({ children }) {
   }, [refresh])
 
   const logout = useCallback(async () => {
-    try { await authApi.logout() } catch { /* ignore */ }
+    await authApi.logout()
     tokenStore.clear()
     setUser(null)
     setNeedsIdentitySelection(false)

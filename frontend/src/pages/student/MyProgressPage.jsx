@@ -27,7 +27,7 @@ export default function MyProgressPage() {
   const visibleNodeCount = (timelineReq.data?.nodes || []).filter((node) => node.code !== "T01" && !/出生日期|出生年月/.test(node.name || "")).length
   return (
     <div>
-      <PageHeader title="我的发展进度" extra={sub?.id && <Link className="btn btn-primary btn-sm" to={`/my/self-check/${sub.id}`}>去自查</Link>}>
+      <PageHeader title="我的发展进度" extra={sub?.id && <Link className="btn btn-primary btn-sm" to={`/my/self-check/${sub.id}`}>{["DRAFT", "RETURNED"].includes(sub.status) ? "AI 自查与提交" : "自查报告"}</Link>}>
         {archive?.current_submission?.next_action || archive?.next_action}
       </PageHeader>
       <div className="surface-card mb-5 overflow-hidden">

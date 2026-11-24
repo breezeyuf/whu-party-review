@@ -1,3 +1,4 @@
+import { uiLabel } from "../../utils/interfaceLabels"
 import { saveBlob } from "../../api/client"
 import { exportNotice } from "../../api/notices"
 import { useState } from "react"
@@ -27,7 +28,7 @@ export default function NoticePreview({ notice }) {
         <p className="mt-1 text-xs text-base-content/55">
           {content.student?.name} · {content.student?.student_no} · {content.student?.branch} · {content.stage}
         </p>
-        <p className="text-xs text-base-content/55">截止日期 {notice.deadline || "—"} · {notice.status}</p>
+        <p className="text-xs text-base-content/55">截止日期 {notice.deadline || "—"} · {uiLabel(notice.status)}</p>
       </header>
       {content.intro && <p className="mt-3 text-sm">{content.intro}</p>}
       <ol className="mt-3 space-y-3">
@@ -35,7 +36,7 @@ export default function NoticePreview({ notice }) {
           <li key={it.no || it.issue_id} className="text-sm">
             <div className="flex flex-wrap items-center gap-2">
               <span className="mono text-xs">{it.no}.</span>
-              <SeverityBadge code={it.severity === "阻断" ? "BLOCK" : it.severity === "警告" ? "WARN" : it.severity} />
+              <SeverityBadge code={["阻断", "关键问题"].includes(it.severity) ? "BLOCK" : it.severity === "警告" ? "WARN" : it.severity} />
               <span>{it.material}</span>
               <span className="text-xs text-base-content/50">{it.location}</span>
             </div>

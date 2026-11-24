@@ -22,6 +22,8 @@ TEXT = (
 
 @pytest.fixture
 def model_endpoint(monkeypatch):
+    from services import model_network
+    monkeypatch.setattr(model_network, "_resolve", lambda *args: ["10.2.3.4"])
     requests = []
     settings = {"base_url": "https://model.example.invalid/v1", "model": "test-model", "api_key_enc": "synthetic-encrypted-key"}
     template = SimpleNamespace(system_prompt="核查材料并输出 JSON。", user_prompt="{rules}\n{text}")
@@ -37,7 +39,7 @@ def model_endpoint(monkeypatch):
 
     monkeypatch.setattr(
         llm.httpx, "Client",
-        lambda **kwargs: client_class(transport=httpx.MockTransport(respond), **kwargs),
+        lambda **kwargs: client_class(transport=httpx.MockTransport(respond), **{k:v for k,v in kwargs.items() if k != "transport"}),
     )
 
     def configure(*, use_template=True, extra_settings=None):

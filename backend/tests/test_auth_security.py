@@ -35,11 +35,12 @@ def login_case(monkeypatch, user_hash):
     query.first.return_value = user
     settings = {"max_failed_login": 5, "lock_minutes": 15, "access_token_minutes": 120, "refresh_token_days": 7}
     monkeypatch.setattr(auth, "get_setting", lambda *a: settings)
+    monkeypatch.setattr(auth, "require_demo", lambda db: None)
     monkeypatch.setattr(auth, "now", lambda: NOW)
     audit = Mock()
     monkeypatch.setattr(auth, "log", audit)
-    tokens = Mock(return_value=("access-token", "refresh-token", 7200))
-    monkeypatch.setattr(auth, "_tokens", tokens)
+    tokens = Mock(return_value=7200)
+    monkeypatch.setattr(auth, "create_session", tokens)
     monkeypatch.setattr(auth, "serialize_user_brief", lambda u: {"id": u.id})
     verify = Mock(wraps=verify_password)
     monkeypatch.setattr(auth, "verify_password", verify)
@@ -47,7 +48,7 @@ def login_case(monkeypatch, user_hash):
     app = FastAPI()
     app.include_router(auth.router, prefix="/api")
     app.dependency_overrides[get_db] = lambda: db
-    with TestClient(app, client=("10.0.0.2", 12345)) as client:
+    with TestClient(app, client=("10.0.0.2", 12345), headers={"X-Requested-With": "party-review"}) as client:
         yield SimpleNamespace(user=user, db=db, query=query, client=client, audit=audit, tokens=tokens, verify=verify)
 
 
@@ -111,7 +112,8 @@ def test_success_after_expired_lock_resets_failure_state(login_case):
     case.user.locked_until = NOW - timedelta(seconds=1)
     response = attempt(case, PASSWORD)
     assert response.status_code == 200
-    assert response.json()["data"]["access_token"] == "access-token"
+    assert response.json()["data"]["expires_in"] == 7200
+    assert "access_token" not in response.json()["data"]
     assert case.user.failed_login_count == 0 and case.user.locked_until is None
     assert case.user.last_login_at == NOW
     case.tokens.assert_called_once()

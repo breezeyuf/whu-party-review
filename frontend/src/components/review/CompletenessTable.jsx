@@ -14,7 +14,7 @@ export default function CompletenessTable({ data }) {
           <tbody>
             {items.map((it) => (
               <tr key={it.checklist_item_id || it.material_type?.code || it.material_type} className={it.missing > 0 && it.required ? "bg-error/5" : ""}>
-                <td>{it.material_type?.name || it.material_type}</td>
+                <td className="min-w-28">{it.material_type?.name || it.material_type}</td>
                 <td>{it.required ? "是" : "否"}</td>
                 <td className="mono">{it.expected}</td>
                 <td className="mono">{it.actual}</td>

@@ -128,7 +128,7 @@ export default function BatchUploadPage() {
           const draft = batchDraft(item, assigns[item.item_id])
           const done = ["IMPORTED", "SKIPPED"].includes(item.status)
           const options = new Map((archives.data?.items || []).map((archive) => [String(archive.id), archive]))
-          if (item.matched_archive) options.set(String(item.matched_archive.id), item.matched_archive)
+          if (item.matched_archive) options.set(String(item.matched_archive.id), { ...options.get(String(item.matched_archive.id)), student_no: item.parsed_student_no, ...item.matched_archive })
           if (assigns[item.item_id]?.archive) options.set(String(assigns[item.item_id].archive.id), assigns[item.item_id].archive)
           return <tr key={item.item_id}>
             <td className="max-w-xs break-all text-xs">{item.entry_path}</td>

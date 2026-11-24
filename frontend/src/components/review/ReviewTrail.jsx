@@ -1,4 +1,4 @@
-import { fmtDateTime, levelName } from "../../utils/format"
+import { fmtDateTime, levelName, roleName, statusName } from "../../utils/format"
 import { useMeta } from "../../context/MetaContext"
 import { StatusBadge } from "../common/Badges"
 import { Link } from "react-router-dom"
@@ -20,13 +20,13 @@ export default function ReviewTrail({ records = [] }) {
         return <li key={r.id != null ? `record:${r.id}` : `${r.time || r.created_at}:${r.kind}:${r.link_type}:${r.link_id}:${index}`} className="surface-card p-3 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{r.level ? levelName(meta, r.level) : KINDS[r.kind] || r.kind || "审核记录"}</span>
-            {action && <StatusBadge code={action} map={ACTIONS} />}
+            {action && <span className="text-xs text-base-content/65">{ACTIONS[action] || statusName(meta, action)}</span>}
             {r.to_status && <StatusBadge code={r.to_status} />}
             {r.is_batch && <span className="badge badge-ghost badge-xs">批量</span>}
             <span className="text-xs text-base-content/50">{fmtDateTime(r.created_at || r.time)}</span>
           </div>
           <div className="mt-1 text-xs text-base-content/70">
-            {r.reviewer_name || r.actor_name || ""} {r.reviewer_role ? `· ${r.reviewer_role}` : ""}
+            {r.reviewer_name || r.actor_name || ""} {r.reviewer_role ? `· ${roleName(meta, r.reviewer_role)}` : ""}
             {r.title && !(["REVIEW", "FILED"].includes(r.kind) && ACTIONS[r.title]) ? ` · ${r.title}` : ""}
             {r.report_no ? ` · 报告 #${r.report_no}` : ""}
             {r.round_no ? ` · 第 ${r.round_no} 轮` : ""}

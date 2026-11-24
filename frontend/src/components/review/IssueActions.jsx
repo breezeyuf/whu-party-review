@@ -29,12 +29,12 @@ export default function IssueActions({ issue, onChanged, disabled = false }) {
   return (
     <div className="w-full">
       <div className="flex flex-wrap gap-1">
-        {issue.review_status === "PENDING" && <button type="button" className="btn btn-primary btn-xs" disabled={busy || disabled} onClick={() => run("confirm")}>确认问题</button>}
+        {issue.review_status === "PENDING" && <button type="button" className="btn btn-outline btn-xs" disabled={busy || disabled} onClick={() => run("confirm")}>确认问题</button>}
         {issue.review_status !== "REJECTED" && <>
-          <button type="button" className="btn btn-ghost btn-xs" disabled={busy || disabled} onClick={() => { setError(""); setOpen(open === "reject" ? "" : "reject") }}>驳回误报</button>
-          <button type="button" className="btn btn-ghost btn-xs" disabled={busy || disabled} onClick={() => { setError(""); setOpen(open === "modify" ? "" : "modify") }}>修改并确认</button>
+          <button type="button" className="btn btn-outline btn-xs" disabled={busy || disabled} onClick={() => { setError(""); setOpen(open === "reject" ? "" : "reject") }}>驳回误报</button>
+          <button type="button" className="btn btn-outline btn-xs" disabled={busy || disabled} onClick={() => { setError(""); setOpen(open === "modify" ? "" : "modify") }}>修改并确认</button>
         </>}
-        {issue.review_status !== "PENDING" && <button type="button" className="btn btn-ghost btn-xs" disabled={busy || disabled} onClick={() => run("reset")}>{issue.review_status === "REJECTED" ? "撤销驳回" : "恢复待确认"}</button>}
+        {issue.review_status !== "PENDING" && <button type="button" className="btn btn-outline btn-xs" disabled={busy || disabled} onClick={() => run("reset")}>{issue.review_status === "REJECTED" ? "撤销驳回" : "恢复待确认"}</button>}
       </div>
       {open && (
         <div className="mt-2 space-y-2">
@@ -43,7 +43,7 @@ export default function IssueActions({ issue, onChanged, disabled = false }) {
             <ModifyFields issue={issue} busy={busy || disabled} onSave={(patch) => run("modify", { patch })} />
           )}
           {open === "reject" && (
-            <button type="button" className="btn btn-error btn-xs" disabled={busy || disabled || !note.trim()} onClick={() => run("reject")}>确认驳回（误报）</button>
+            <button type="button" className="btn btn-outline btn-xs" disabled={busy || disabled || !note.trim()} onClick={() => run("reject")}>确认驳回（误报）</button>
           )}
           <button type="button" className="btn btn-ghost btn-xs" disabled={busy} onClick={() => { setOpen(""); setError("") }}>取消</button>
         </div>
@@ -64,7 +64,7 @@ function ModifyFields({ issue, busy, onSave }) {
       <textarea aria-label="问题描述" disabled={busy} className="textarea textarea-bordered textarea-xs w-full" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
       <textarea aria-label="修改建议" disabled={busy} className="textarea textarea-bordered textarea-xs w-full" rows={2} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="修改建议" />
       <select aria-label="问题级别" disabled={busy} className="select select-bordered select-xs" value={severity} onChange={(e) => setSeverity(e.target.value)}>
-        <option value="BLOCK">阻断</option>
+        <option value="BLOCK">关键问题</option>
         <option value="WARN">警告</option>
         <option value="INFO">提示</option>
       </select>

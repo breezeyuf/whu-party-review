@@ -150,7 +150,7 @@ export default function TimeRulesPage() {
           <input className="input input-bordered input-sm" placeholder="编码" value={ruleEdit?.code || ""} disabled={!!ruleEdit?.id} onChange={(e) => setRuleEdit({ ...ruleEdit, code: e.target.value })} />
           <input className="input input-bordered input-sm" placeholder="名称" value={ruleEdit?.name || ""} onChange={(e) => setRuleEdit({ ...ruleEdit, name: e.target.value })} />
           <select className="select select-bordered select-sm" value={ruleEdit?.severity || "BLOCK"} onChange={(e) => setRuleEdit({ ...ruleEdit, severity: e.target.value })}>
-            <option value="BLOCK">阻断</option><option value="WARN">警告</option><option value="INFO">提示</option><option value="CALC">计算</option>
+            <option value="BLOCK">关键问题</option><option value="WARN">警告</option><option value="INFO">提示</option><option value="CALC">计算</option>
           </select>
           <input className="input input-bordered input-sm" placeholder="适用阶段 3,4,5" value={Array.isArray(ruleEdit?.applies_stages) ? ruleEdit.applies_stages.join(",") : (ruleEdit?.applies_stages || "")} onChange={(e) => setRuleEdit({ ...ruleEdit, applies_stages: e.target.value })} />
           <textarea className="textarea textarea-bordered text-xs sm:col-span-2" rows={2} placeholder="提示文案，可用 {T04} {实际值}" value={ruleEdit?.message_template || ""} onChange={(e) => setRuleEdit({ ...ruleEdit, message_template: e.target.value })} />

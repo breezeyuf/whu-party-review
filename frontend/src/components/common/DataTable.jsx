@@ -79,7 +79,7 @@ export default function DataTable({
   )
 }
 
-export function Pager({ page = 1, pageSize = 20, total = 0, onPage, onPageSize }) {
+export function Pager({ page = 1, pageSize = 20, total = 0, onPage, onPageSize, pageSizes = [10, 20, 50, 100], unit = "条" }) {
   const pages = Math.max(1, Math.ceil(total / pageSize))
   if (total === 0) return null
   const start = (page - 1) * pageSize + 1
@@ -91,10 +91,10 @@ export function Pager({ page = 1, pageSize = 20, total = 0, onPage, onPageSize }
   return (
     <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-base-300 px-2 pt-3 text-xs text-base-content/70">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="mono">显示 {start}–{end} 条，共 {total} 条</span>
+        <span className="mono">显示 {start}–{end} 条，共 {total} {unit}</span>
         {onPageSize && <label className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">每页
           <select className="select select-bordered select-xs" value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))} aria-label="每页显示条数">
-            {[10, 20, 50, 100].map((size) => <option key={size} value={size}>{size} 条</option>)}
+            {pageSizes.map((size) => <option key={size} value={size}>{size} {unit}</option>)}
           </select>
         </label>}
       </div>

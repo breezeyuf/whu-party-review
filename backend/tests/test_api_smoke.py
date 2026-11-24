@@ -19,7 +19,7 @@ def client():
             conn.execute(text("SELECT 1"))
     except Exception as e:
         pytest.skip(f"无法启动应用（通常是未配置 PostgreSQL）：{e}")
-    with TestClient(app) as client:
+    with TestClient(app, headers={"X-Requested-With": "party-review"}) as client:
         yield client
 
 
