@@ -1,18 +1,18 @@
 import { Link } from "react-router-dom"
 import FileUploader from "../common/FileUploader"
+import { uiLabel } from "../../utils/interfaceLabels"
 import { fmtDateTime } from "../../utils/format"
 
 function ParseStatus({ code }) {
   const labels = { PENDING: "等待解析", RUNNING: "解析中", DONE: "解析完成", FAILED: "解析失败" }
-  const styles = { PENDING: "badge-ghost", RUNNING: "badge-info", DONE: "badge-success", FAILED: "badge-error" }
-  return <span className={`badge badge-xs ${styles[code] || "badge-ghost"}`}>{labels[code] || code || "等待解析"}</span>
+  return <span className={code === "FAILED" ? "text-error" : "text-base-content/60"}>{labels[code] || uiLabel(code, "等待解析")}</span>
 }
 
 function MaterialRows({ materials, onPreview, onDelete, canUpload, uploadDisabled }) {
   return <ul className="mt-2 divide-y divide-base-200">{materials.map((material) => <li key={material.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
     <div className="min-w-0 flex-1 break-words">
       {onPreview ? <button type="button" className="link" onClick={() => onPreview(material)}>{material.title || `材料 #${material.id}`}</button> : <Link className="link" to={`/materials/${material.id}`}>{material.title || `材料 #${material.id}`}</Link>}
-      {["NEEDS_CONFIRM", "PENDING"].includes(material.type_status) && <span className="badge badge-warning badge-xs ml-2">待确认类型</span>}
+      {["NEEDS_CONFIRM", "PENDING"].includes(material.type_status) && <span className="ml-2 text-xs text-base-content/60">待确认类型</span>}
       <div className="mt-0.5 text-xs text-base-content/50">
         v{material.current_version?.version_no || 1} · <ParseStatus code={material.current_version?.parse_status} /> · {fmtDateTime(material.current_version?.uploaded_at)}
         {material.open_issue_count ? ` · 问题 ${material.open_issue_count}` : ""}
@@ -56,7 +56,7 @@ export default function ChecklistPanel({ groups = [], canUpload, uploadDisabled,
                     <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-primary/5 px-2.5 py-1.5 text-sm">
                       {item.material_type?.name || item.material_type}
                       {item.required && <span className="badge badge-outline badge-xs">必需</span>}
-                      {missing && <span className="badge badge-error badge-xs">缺 {item.missing_count}</span>}
+                      {missing && <span className="badge badge-error badge-soft badge-xs">缺 {item.missing_count}</span>}
                     </div>
                     <div className="mono mt-2 text-xs text-base-content/60">
                       应交 {item.expected_count ?? "—"} · 已交 {item.actual_count ?? 0}

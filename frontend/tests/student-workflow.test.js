@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { pendingParseCount, pendingStudentReplies, studentSubmitReason } from "../src/utils/studentWorkflow.js"
+import { pendingParseCount, pendingStudentReplies, studentIssueGroups, studentSubmitReason } from "../src/utils/studentWorkflow.js"
 
 import { studentFlowNotice, studentMaterialReturn } from "../src/utils/studentFlowGuide.js"
 
@@ -74,4 +74,25 @@ test("material return links preserve report or issue context and reject arbitrar
   assert.equal(link(101, "from=https://example.com"), "/my/materials")
   assert.equal(link(-1, "from=self-check"), "/my/materials")
   assert.equal(link(101, "from=self-check&report=bad"), "/my/self-check/101")
+})
+
+test("stale automatic findings move out of the current list without hiding manual/confirmed return obligations", () => {
+  const issues = [{id:1,source:"AI_RULE",severity:"BLOCK",review_status:"PENDING"},
+    {id:2,source:"MANUAL",review_status:"CONFIRMED"}, {id:3,source:"AI_RULE",review_status:"CONFIRMED"}]
+  const stale = {...draft,id:75,latest_report:{is_stale:true}}
+  assert.deepEqual(studentIssueGroups(stale,issues).current.map(i=>i.id),[2])
+  assert.deepEqual(studentIssueGroups(stale,issues).previous.map(i=>i.id),[1,3])
+  assert.deepEqual(studentIssueGroups({...stale,status:"RETURNED"},issues).current.map(i=>i.id),[2,3])
+  assert.deepEqual(studentIssueGroups(draft,issues).current,issues)
+  const notice=studentFlowNotice(stale,{issues})
+  assert.match(notice.title,/重新自查/)
+  assert.equal(notice.to,"/my/self-check/75")
+})
+
+test("a prior saved reply cannot satisfy the current return when the server requires renewal", () => {
+ const sub={...draft,status:"RETURNED"}
+ const issue={id:1,is_active:true,review_status:"CONFIRMED",response_type:"EXPLAINED",requires_response:true}
+ assert.equal(pendingStudentReplies(sub,[issue]).length,1)
+ assert.match(studentSubmitReason(sub,[issue]),/未回复/)
+ assert.equal(pendingStudentReplies(sub,[{...issue,requires_response:false}]).length,0)
 })

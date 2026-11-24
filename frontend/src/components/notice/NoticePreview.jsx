@@ -1,3 +1,4 @@
+import { uiLabel } from "../../utils/interfaceLabels"
 import { saveBlob } from "../../api/client"
 import { exportNotice } from "../../api/notices"
 import { useState } from "react"
@@ -27,7 +28,7 @@ export default function NoticePreview({ notice }) {
         <p className="mt-1 text-xs text-base-content/55">
           {content.student?.name} · {content.student?.student_no} · {content.student?.branch} · {content.stage}
         </p>
-        <p className="text-xs text-base-content/55">截止日期 {notice.deadline || "—"} · {notice.status}</p>
+        <p className="text-xs text-base-content/55">截止日期 {notice.deadline || "—"} · {uiLabel(notice.status)}</p>
       </header>
       {content.intro && <p className="mt-3 text-sm">{content.intro}</p>}
       <ol className="mt-3 space-y-3">

@@ -34,8 +34,8 @@ export default function TimelineView({ timeline, onCorrect, onLocate, hidePerson
       {!compact && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-base-300/70 bg-base-100 px-3 py-2 text-xs text-base-content/65">
         <span>共 {nodes.length + derived.length} 个时间节点</span>
         {conflictCount > 0
-          ? <span className="badge badge-error badge-sm">{conflictCount} 项需关注</span>
-          : <span className="badge badge-success badge-sm">暂未发现关键问题异常</span>}
+          ? <span className="badge badge-error badge-soft badge-sm">{conflictCount} 项需关注</span>
+          : <span className="badge badge-ghost badge-sm">暂未发现关键问题异常</span>}
       </div>}
       <ol className={compact ? "space-y-2" : "relative space-y-3 border-l-2 border-base-300/80 pl-4 sm:pl-5"}>
       {nodes.map((node) => {
@@ -50,8 +50,8 @@ export default function TimelineView({ timeline, onCorrect, onLocate, hidePerson
                     <span className="mono text-[11px] text-base-content/45">{node.code}</span>
                     <span className="text-sm font-semibold">{node.name}</span>
                     {node.locked && <span className="badge badge-ghost badge-xs">已锁定</span>}
-                    {node.has_conflict && <span className="badge badge-error badge-xs">取值冲突</span>}
-                    {node.corrected && <span className="badge badge-outline badge-xs">已校正</span>}
+                    {node.has_conflict && <span className="badge badge-error badge-soft badge-xs">取值冲突</span>}
+                    {node.corrected && <span className="text-xs text-base-content/60">已校正</span>}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 sm:justify-end">

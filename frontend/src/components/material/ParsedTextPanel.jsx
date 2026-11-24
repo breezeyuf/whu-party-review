@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { uiLabel, parsedWarning } from "../../utils/interfaceLabels"
 import { fmtDate } from "../../utils/format"
 import { getMeta } from "../../api/meta"
 import { useRequest } from "../../hooks/useRequest"
@@ -58,8 +59,8 @@ export default function ParsedTextPanel({ parsed, editable, onSave, allowRecheck
 
   return (
     <div className="space-y-3">
-      {(parsed.warnings || []).map((w, i) => <div key={i} className="alert alert-warning py-2 text-xs">{typeof w === "string" ? w : w.message}</div>)}
-      <div className="text-xs text-base-content/55">解析器 {parsed.parser || "—"} · OCR {parsed.ocr_engine || "未启用"} · {parsed.page_count || 0} 页</div>
+      {(parsed.warnings || []).map((w, i) => { const notice = parsedWarning(w); return <div key={i} role={notice.informational ? "status" : "alert"} className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${notice.informational ? "border-base-300 bg-base-200/40 text-base-content/65" : "border-warning/30 bg-warning/5 text-base-content"}`}>{notice.message}</div> })}
+      <div className="text-xs text-base-content/55">识别方式：{parsed.parser === "NONE" ? "暂无识别结果" : uiLabel(parsed.parser)} · 本地引擎：{uiLabel(parsed.ocr_engine, "未启用")} · {parsed.page_count || 0} 页</div>
       {pendingPages.length > 0 && <section className="space-y-2 rounded border border-warning p-3 text-xs" aria-label="OCR 待人工复核">
         <p>空白、照片、手写页均须核对原图，保存后生效。</p>
         {pendingPages.map((page) => <label key={page.page_no} className="flex items-center gap-2">
@@ -121,7 +122,7 @@ export default function ParsedTextPanel({ parsed, editable, onSave, allowRecheck
         </div> : <ul className="space-y-1 text-xs">
           {(parsed.extractions || []).map((ex) => (
             <li key={ex.id} className="mono">
-              {ex.node_code} · {fmtDate(ex.date)} · 第 {ex.page_no || "—"} 页 · {ex.method} · {ex.raw_text}
+              {ex.node_code} · {fmtDate(ex.date)} · 第 {ex.page_no || "—"} 页 · {uiLabel(ex.method)} · {ex.raw_text}
               {ex.usable === false && <span className="text-warning"> · 待人工确认，未用于计算</span>}
               {ex.invalid_reason && <span className="text-error"> · {ex.invalid_reason}</span>}
             </li>

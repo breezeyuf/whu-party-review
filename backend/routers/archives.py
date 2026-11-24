@@ -186,6 +186,13 @@ def create_archive(body: dict, db: Session = Depends(get_db), actor: Actor = Dep
     return ok(data)
 
 
+@router.delete("/archives/{aid}")
+def delete_archive(aid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
+    from services.unused_deletion import delete_empty_archive
+    delete_empty_archive(db, actor, aid, request)
+    return ok({"deleted": True, "student_account_retained": True})
+
+
 @router.get("/archives/{aid}")
 def get_archive(aid: int, request: Request, db: Session = Depends(get_db), actor: Actor = Depends(get_current_user)):
     a = ensure_archive_access(db, actor, aid, request)

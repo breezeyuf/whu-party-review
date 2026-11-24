@@ -13,7 +13,7 @@ import { getSubmission, submitSubmission } from "../../api/submissions"
 import { listIssues } from "../../api/issues"
 import { useToast } from "../../context/ToastContext"
 import StudentTaskProgress from "../../utils/student/StudentTaskProgress"
-import { isAiPending, issueMaterialId, refreshStudentRequests, studentSubmitReason } from "../../utils/studentWorkflow"
+import { isAiPending, studentIssueGroups, issueMaterialId, refreshStudentRequests, studentSubmitReason } from "../../utils/studentWorkflow"
 import { useStudentMaterials } from "../../utils/student/useStudentMaterials"
 
 export default function SelfCheckPage() {
@@ -51,7 +51,8 @@ export default function SelfCheckPage() {
   const historyReport = viewingHistoryReport && String(reportReq.data?.id) === String(reportId) ? reportReq.data : null
   const historyIssues = Object.values(historyReport?.issues_by_category || {}).flat()
   const snapshotMode = viewingHistoryReport
-  const shownIssues = snapshotMode ? historyIssues : issues
+  const issueGroups = studentIssueGroups(sub, issues)
+  const shownIssues = snapshotMode ? historyIssues : issueGroups.current
   const shownCompleteness = snapshotMode ? historyReport?.completeness : compReq.data
   const reportMismatch = !!historyReport && String(historyReport.submission_id) !== String(submissionId)
   const materialsReq = useStudentMaterials(sub?.archive?.id, sub?.stage_code, () => refreshStudentRequests(subReq, issueReq, compReq, ...(latestId ? [reportReq] : [])))
@@ -152,6 +153,7 @@ export default function SelfCheckPage() {
       </section>
       <section className="mt-4">
         <h2 className="mb-2 text-sm font-medium">问题与修改建议</h2>
+        {!snapshotMode && issueGroups.previous.length > 0 && <p role="status" className="surface-card mb-3 p-3 text-sm">上次报告的 {issueGroups.previous.length} 条自动检查问题已过期，未作为当前问题展示。请重新自查；旧记录可在整改中心回看。</p>}
         {issueReq.loading && !issueReq.data && !snapshotMode ? <Loading /> : issueReq.error && !snapshotMode ? <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} /> : <IssueList filtersDisabled={replyBusy} issues={shownIssues}
           readonlyNote={snapshotMode ? "这是报告生成当时的问题清单，只读；如需整改请返回最新报告。" : "逐条整改或填写情况说明；材料解析失败不代表检查通过。"}
           renderActions={(issue) => issueMaterialId(issue) && <Link className="btn btn-ghost btn-xs" to={`/materials/${issueMaterialId(issue)}?issue_id=${issue.id}&from=self-check${snapshotMode ? `&report=${reportId}` : ""}${snapshotMode ? `&version_id=${issue.material_version_id || issue.location?.version_id || historyReport.material_versions?.find((v) => String(v.material_id) === String(issueMaterialId(issue)))?.version_id || ""}` : ""}`}>查看问题材料</Link>}

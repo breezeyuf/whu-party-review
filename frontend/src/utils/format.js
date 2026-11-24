@@ -1,4 +1,5 @@
 import { severityCode } from "./reviewTerms.js"
+import { uiLabel } from "./interfaceLabels.js"
 import dayjs from "dayjs"
 
 export function fmtDate(v) {
@@ -39,11 +40,11 @@ export function stageShort(meta, code) {
 }
 
 export function roleName(meta, code) {
-  return labelOf(meta?.roles, code)
+  return uiLabel(labelOf(meta?.roles, code))
 }
 
 export function statusName(meta, code) {
-  return labelOf(meta?.submission_statuses, code)
+  return uiLabel(labelOf(meta?.submission_statuses, code))
 }
 
 export function severityName(meta, code) {
@@ -55,7 +56,7 @@ export function categoryName(meta, code) {
 }
 
 export function reviewStatusName(meta, code) {
-  return labelOf(meta?.review_statuses, code)
+  return uiLabel(labelOf(meta?.review_statuses, code))
 }
 
 export function recoName(meta, code) {
@@ -63,7 +64,7 @@ export function recoName(meta, code) {
 }
 
 export function handoverName(meta, code) {
-  return labelOf(meta?.handover_statuses, code)
+  return uiLabel(labelOf(meta?.handover_statuses, code))
 }
 
 export function levelName(meta, code) {

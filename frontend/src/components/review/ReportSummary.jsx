@@ -1,7 +1,10 @@
-import { RecoBadge, HandoverBadge } from "../common/Badges"
-import { fmtDateTime } from "../../utils/format"
+import { RecoBadge } from "../common/Badges"
+import { useMeta } from "../../context/MetaContext"
+import { uiLabel, handoverReasonLabel } from "../../utils/interfaceLabels"
+import { fmtDateTime, handoverName, recoName } from "../../utils/format"
 
 export default function ReportSummary({ report }) {
+  const meta = useMeta()
   if (!report) return <p className="text-sm text-base-content/50">还没有审核报告。发起 AI 校验后在此查看。</p>
   const s = report.summary || {}
   return (
@@ -12,11 +15,11 @@ export default function ReportSummary({ report }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-base-content/50">AI 建议</span>
         <RecoBadge code={report.recommendation} />
-        <HandoverBadge code={report.handover_status} />
+        <span className="text-xs text-base-content/65">{handoverName(meta, report.handover_status)}</span>
         {report.effective_recommendation && (report.handover_status === "DONE" || report.effective_recommendation !== report.recommendation) && (
-          <span className="inline-flex items-center gap-1 rounded-md border border-info/25 bg-info/5 px-2 py-1 text-xs">人工研判 <RecoBadge code={report.effective_recommendation} /></span>
+          <span className="text-xs text-base-content/65">人工研判：{recoName(meta, report.effective_recommendation)}</span>
         )}
-        {report.is_stale && <span className="badge badge-warning badge-sm">报告已过期，需重跑</span>}
+        {report.is_stale && <span className="text-xs text-warning">报告已过期，请重新检查</span>}
       </div>
       <div className="stats stats-vertical border border-base-300 bg-base-100 sm:stats-horizontal w-full">
         <div className="stat py-2 px-4">
@@ -32,13 +35,13 @@ export default function ReportSummary({ report }) {
           <div className="stat-value text-lg">{s.materials_checked ?? "—"}</div>
         </div>
       </div>
-      <p className="text-xs text-base-content/65">检查方式：{report.mode === "RULE_ONLY" ? "仅规则（未使用大模型）" : report.mode === "RULE_LLM" ? "规则与大模型" : report.mode || "未提供"}</p>
+      <p className="text-xs text-base-content/65">检查方式：{report.mode === "RULE_ONLY" ? "仅规则（未使用大模型）" : report.mode === "RULE_LLM" ? "规则与大模型" : uiLabel(report.mode, "未提供")}</p>
       <details className="service-inline-details"><summary>报告详情</summary>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-base-content/70 sm:grid-cols-3">
-        <div>模式 {report.mode === "RULE_ONLY" ? "仅规则" : report.mode || "—"}</div>
+        <div>模式 {report.mode === "RULE_ONLY" ? "仅规则" : uiLabel(report.mode)}</div>
         <div>规则版本 v{report.rule_version?.version_no ?? "—"}</div>
         <div>报告 #{report.report_no}</div>
-        <div>触发 {report.trigger_type || "—"}</div>
+        <div>触发 {uiLabel(report.trigger_type)}</div>
         <div>耗时 {report.duration_ms != null ? `${report.duration_ms} ms` : "—"}</div>
         <div>完成 {fmtDateTime(report.finished_at)}</div>
       </dl>
@@ -52,7 +55,7 @@ export default function ReportSummary({ report }) {
         </li>)}</ul>
       </details>}
       {(report.handover_reasons || []).length > 0 && (
-        <p className="text-xs">接管原因：{report.handover_reasons.join("、")}</p>
+        <p className="text-xs">接管原因：{report.handover_reasons.map(handoverReasonLabel).join("；")}</p>
       )}
     </div>
   )

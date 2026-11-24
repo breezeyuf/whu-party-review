@@ -40,6 +40,8 @@ def dashboard(db: Session, actor, batch_id=None) -> dict:
     today = now().date()
     by_stage = defaultdict(Counter)
     deadlines = []
+    review_status = {"BRANCH_REVIEWER": "BRANCH_REVIEW", "CROSS_REVIEWER": "CROSS_REVIEW",
+                     "COLLEGE_REVIEWER": "COLLEGE_REVIEW", "ORG_ADMIN": "ORG_FILING"}.get(actor.role)
     for s in subs:
         by_stage[s.stage_code][s.status] += 1
         if actor.role == "BRANCH_REVIEWER" and s.status == "BRANCH_REVIEW":
@@ -55,14 +57,14 @@ def dashboard(db: Session, actor, batch_id=None) -> dict:
         if s.ai_status in ("QUEUED", "RUNNING"):
             pending_ai += 1
         dl = _deadline_of(s)
-        if dl and s.status not in ("FILED",) and (dl - today).days <= 7:
+        if dl and s.status == review_status and (dl - today).days <= 7:
             deadlines.append({
                 "submission_id": s.id,
                 "student_name": s.archive.real_name if s.archive else None,
                 "deadline": dl.isoformat(),
                 "days_left": (dl - today).days,
             })
-    due_soon = sum(1 for d in deadlines if d["days_left"] >= 0)
+    due_soon = len(deadlines)  # Same scope as todo + due_within_days=7, including overdue items.
     deadlines.sort(key=lambda d: d["days_left"])
     deadlines = deadlines[:8]
     def scoped_issues(cols):

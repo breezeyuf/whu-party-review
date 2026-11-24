@@ -75,7 +75,7 @@ export async function runOcrReviewScenarios() {
   await test("保存失败保留待复核提醒和选中页号，允许重试", () => withPanel(async ({ saved }) => {
     await click(document.querySelector('input[type="checkbox"]'))
     await click(saveButton())
-    assert.match(document.querySelector('[role="alert"]').textContent, /保存核对失败/)
+    assert.match([...document.querySelectorAll('[role="alert"]')].map(node => node.textContent).join("；"), /保存核对失败/)
     assert.ok(pendingSection())
     assert.equal(document.querySelector('input[type="checkbox"]').checked, true)
     await click(saveButton())

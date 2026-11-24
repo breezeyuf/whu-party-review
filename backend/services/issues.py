@@ -132,3 +132,13 @@ def serialize_issue(iss: Issue) -> dict:
         "resolution": iss.resolution, "is_new_in_recheck": iss.is_new_in_recheck,
         "created_at": iss.created_at.isoformat() if iss.created_at else None,
     }
+
+
+def needs_student_response(issue, submission):
+    """A reply before this return is retained evidence, not a new rectification."""
+    if not issue.is_active or issue.review_status == "REJECTED":
+        return False
+    if not issue.response_type:
+        return True
+    return bool(submission.status == "RETURNED" and submission.level_entered_at
+                and issue.responded_at and issue.responded_at < submission.level_entered_at)

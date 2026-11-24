@@ -1,3 +1,4 @@
+import { uiLabel } from "../../utils/interfaceLabels"
 import ContentTabs from "../../components/common/ContentTabs"
 import { Suspense, useEffect, useRef, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
@@ -173,7 +174,7 @@ export default function MaterialDetailPage() {
 
   return <div>
     <PageHeader title={m.title || m.type?.name || "材料"} crumbs={[{ label: student ? "我的材料" : "档案", to: student ? "/my/materials" : `/archives/${m.archive_id}` }, { label: "材料" }]}>
-      {m.type?.name || "类型未确认"} · {m.type_status} · 置信度 {m.type_confidence ?? "—"} · 第 {selectedVersion?.version_no || "—"} 版 · {fmtSize(selectedVersion?.file_size)} · {selectedVersion?.page_count || 0} 页
+      {m.type?.name || "类型未确认"} · {uiLabel(m.type_status)} · 置信度 {m.type_confidence ?? "—"} · 第 {selectedVersion?.version_no || "—"} 版 · {fmtSize(selectedVersion?.file_size)} · {selectedVersion?.page_count || 0} 页
     </PageHeader>
     {student && <div className="surface-card mb-3 flex flex-wrap items-center justify-between gap-3 p-3">
       <p className="text-xs text-base-content/65">{historical ? "正在核对问题对应的历史版本；如需替换材料，请切换到当前版本后上传。" : canUpload ? "先对照原件查看问题。原件有误可上传新版本；仅识别文字有误，请在问题回复中说明，由审核人员核对校正。" : "材料已进入审核，当前仅可查看；处理进度可在发展进度中查询。"}</p>

@@ -198,8 +198,8 @@ export default function ReviewWorkspacePage() {
       >
         {sub.archive?.student_no} · {sub.archive?.branch_name} · 第 {sub.round_no} 轮<span className="mt-1 block">当前环节：{statusName(meta, sub.status)}</span>
       </PageHeader>
-      {activeRole?.role === "ORG_ADMIN" && !snapshotMode && <div className="surface-card mb-3 flex flex-wrap items-center justify-between gap-3 p-3 text-sm" role="status">
-        <div><p className="mb-1 text-xs text-base-content/60">关键问题须核实处理，未处理时不能通过或备案；确认问题不代表必须退回。</p><p>{passBlockReason(sub, issueReq.data?.items || [], !!issueReq.data && !issueReq.loading && !issueReq.error && !subReq.loading) || "报告与问题处置已满足前端备案条件，请核对原文后填写结论。"}</p></div><a className="btn btn-outline btn-sm shrink-0" href="#review-decision">填写备案结论</a>
+      {(sub.can?.review || sub.can?.file) && !snapshotMode && <div className="surface-card mb-3 flex flex-wrap items-center justify-between gap-3 p-3 text-sm" role="status">
+        <div><p className="mb-1 text-xs text-base-content/60">关键问题须核实处理，未处理时不能通过或备案；确认问题不代表必须退回。</p><p>{passBlockReason(sub, issueReq.data?.items || [], !!issueReq.data && !issueReq.loading && !issueReq.error && !subReq.loading) || "报告与问题处置已满足前端办理条件，请核对原文后填写结论。"}</p></div><a className="btn btn-outline btn-sm shrink-0" href="#review-decision">{activeRole?.role === "ORG_ADMIN" ? "填写备案结论" : "填写审核结论"}</a>
       </div>}
       {trackedJobId && <div className="mb-3"><Suspense fallback={<p className="text-xs text-base-content/60" role="status">正在加载任务状态…</p>}><ReviewJobStatus readonly={snapshotMode || !sub.can?.ai_check} jobId={trackedJobId} onDone={refreshAll} onRetry={refreshAll} /></Suspense></div>}
       {viewingHistoryReport && <div className="surface-card mb-3 flex flex-wrap items-center gap-3 p-3 text-sm" role="status">

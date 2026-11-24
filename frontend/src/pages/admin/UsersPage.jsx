@@ -2,10 +2,10 @@ import { useEffect, useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
 import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
-import { Modal } from "../../components/common/Modal"
+import { Modal, ConfirmDialog } from "../../components/common/Modal"
 import { usePagination } from "../../hooks/usePagination"
 import { useRequest } from "../../hooks/useRequest"
-import { createUser, downloadImportPasswords, importTemplate, importUsers, listUsers, resetPassword, updateUser } from "../../api/users"
+import { deleteUser, createUser, downloadImportPasswords, importTemplate, importUsers, listUsers, resetPassword, updateUser } from "../../api/users"
 import { saveBlob } from "../../api/client"
 import { listBatches } from "../../api/batches"
 import { listOrgs } from "../../api/orgs"
@@ -32,6 +32,25 @@ export default function UsersPage() {
   const req = useRequest(() => listUsers(query), [JSON.stringify(query)])
   const batches = useRequest(() => listBatches({ page_size: 200 }), [])
   const orgs = useRequest(() => listOrgs({ flat: true }), [])
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const remove = async () => {
+    if (deleting || !deleteTarget) return
+    setDeleting(true)
+    setDeleteError("")
+    try {
+      await deleteUser(deleteTarget.id)
+      setDeleteTarget(null)
+      toast.success("账号已删除")
+      if (req.data?.items?.length === 1 && query.page > 1) setPage(query.page - 1)
+      else req.reload().catch(() => {})
+    } catch (e) {
+      setDeleteError(e.message || "删除失败，请重试")
+    } finally {
+      setDeleting(false)
+    }
+  }
   const [edit, setEdit] = useState(null)
   const [saving, setSaving] = useState(false)
   const [resetTarget, setResetTarget] = useState(null)
@@ -316,6 +335,7 @@ export default function UsersPage() {
           { key: "op", title: "", render: (r) => (
             <>
               <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setFormError(""); setFieldErrors({}); const grants = (r.roles || []).map((x) => ({ role: x.role, org_id: x.org_id ?? r.org_id })); setEdit({ ...r, grants, original_grants: grants, is_active: r.is_active !== false, original_is_active: r.is_active !== false }) }}>编辑</button>
+              {Number(r.id) !== Number(user?.id) && <button type="button" className="btn btn-ghost btn-xs text-error" onClick={() => { setDeleteError(""); setDeleteTarget(r) }}>删除</button>}
               {!isSso && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setSecret(""); setResetTarget(r) }}>重置密码</button>}
             </>
           ) },
@@ -329,6 +349,11 @@ export default function UsersPage() {
         />}
       </div>
       {secret && <div className="alert mt-3 flex flex-wrap items-center justify-between gap-3 text-sm" role="status"><span>初始密码只显示这一次：<span className="mono font-medium select-all">{secret}</span></span><div className="flex items-center gap-1"><button type="button" className="btn btn-outline btn-xs" onClick={copySecret}>复制临时密码</button><button type="button" className="btn btn-ghost btn-xs" onClick={() => setSecret("")}>关闭密码提示</button></div></div>}
+      <ConfirmDialog open={!!deleteTarget} title="删除账号" danger busy={deleting} confirmText="确认删除"
+        onClose={() => { if (!deleting) setDeleteTarget(null) }} onConfirm={remove}
+        message={<><span className="block mb-2">{deleteTarget?.real_name}（{deleteTarget?.username}）</span>
+          <span className="block">仅删除未登录、未关联档案且没有使用记录的账号。已使用的账号请在编辑中停用。</span>
+          {deleteError && <span role="alert" className="block mt-3 text-error">{deleteError}</span>}</>} />
       <Modal open={!!pendingImportFile} title="确认正式导入" onClose={() => setPendingImportFile(null)} footer={(
         <>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPendingImportFile(null)}>取消</button>

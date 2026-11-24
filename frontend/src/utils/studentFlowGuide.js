@@ -11,6 +11,7 @@ export function studentFlowNotice(submission, { issues = [], groups = [], ready 
   if (failed.length) return { title: `${failed.length} 份材料解析失败`, description: "解析失败不表示材料已通过。请检查原件、重试解析或上传清晰的新版本。", to: `/materials/${failed[0].id}`, label: "处理解析失败" }
   const parsing = pendingParseCount(groups)
   if (parsing) return { title: `${parsing} 份材料正在解析`, description: "完成后会自动刷新；请勿重复上传相同文件。" }
+  if (submission.status === "DRAFT" && submission.latest_report?.is_stale) return { title: "材料已更新，需要重新自查", description: "上次报告已过期；请重新自查，生成当前材料的问题清单后再提交审核。", to: `/my/self-check/${submission.id}`, label: "重新自查" }
   const pending = pendingStudentReplies(submission, issues)
   if (pending.length) return { title: `还有 ${pending.length} 条问题待回复`, description: "对照原文修改材料并上传，或填写情况说明。回复保存后仍需审核人员复核。", to: "/my/rectification", label: "处理待回复问题" }
   if (!submission.can?.submit) return { title: "当前仅可查看", description: "可查看材料和报告；办理权限以当前身份和提交状态为准。" }

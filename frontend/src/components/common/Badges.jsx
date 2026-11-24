@@ -12,7 +12,7 @@ export function SeverityBadge({ code }) {
 export function StatusBadge({ code, map, soft = true }) {
   const meta = useMeta()
   if (!code) return <span className="text-base-content/40">—</span>
-  const name = map ? (map[code] || code) : statusName(meta, code)
+  const name = map ? (map[code] || statusName(meta, code)) : statusName(meta, code)
   return <span className={`badge badge-sm inline-flex shrink-0 whitespace-nowrap ${STATUS_BADGE[code] || "badge-ghost"} ${soft ? "badge-soft" : ""}`}>{name}</span>
 }
 

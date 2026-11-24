@@ -1,3 +1,4 @@
+import { uiLabel } from "../../utils/interfaceLabels"
 import { useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import StudentFlowGuide from "../../components/student/StudentFlowGuide"
@@ -15,7 +16,7 @@ import { getReport } from "../../api/reports"
 import { getSubmission, submitSubmission } from "../../api/submissions"
 import { useToast } from "../../context/ToastContext"
 import StudentTaskProgress from "../../utils/student/StudentTaskProgress"
-import { pendingStudentReplies, isAiPending, issueMaterialId, refreshStudentRequests, studentSubmitReason } from "../../utils/studentWorkflow"
+import { pendingStudentReplies, studentIssueGroups, isAiPending, issueMaterialId, refreshStudentRequests, studentSubmitReason } from "../../utils/studentWorkflow"
 import { useStudentMaterials } from "../../utils/student/useStudentMaterials"
 
 export default function RectificationPage() {
@@ -98,7 +99,9 @@ export default function RectificationPage() {
   const requiredReplies = pendingStudentReplies(sub, allIssues)
   const focusIssue = searchParams.get("issue_id")
   const onlyPending = returned && issueView === "pending" && !focusIssue
-  const shownIssues = onlyPending ? requiredReplies : allIssues
+  const { current, previous } = studentIssueGroups(sub, allIssues)
+  const viewingPrevious = previous.length > 0 && issueView === "previous"
+  const shownIssues = viewingPrevious ? previous : onlyPending ? requiredReplies : current
   const canReply = !!sub?.can?.submit && ["DRAFT", "RETURNED"].includes(sub?.status) && !taskPending && !isAiPending(sub)
 
   return (
@@ -116,6 +119,10 @@ export default function RectificationPage() {
       {reportReq.data?.recheck_summary && <div className="mb-4"><RecheckSummary summary={reportReq.data.recheck_summary} /></div>}
       <div className="grid gap-4 lg:grid-cols-5">
         <section className="lg:col-span-3">
+          {previous.length > 0 && <div className="surface-card mb-3 space-y-2 p-3 text-sm" role="status">
+            <p>材料已变更，上次报告的 {previous.length} 条自动检查问题已移出当前清单，尚不代表已解决。{returned ? "回复已确认的退回问题后，重新提交会自动复核。" : "请重新自查，以最新报告为准。"}</p>
+            <button type="button" className="btn btn-outline btn-sm" aria-pressed={viewingPrevious} onClick={() => setIssueView(viewingPrevious ? "pending" : "previous")}>{viewingPrevious ? "返回当前问题" : "查看上次问题"}</button>
+          </div>}
           {returned && <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="整改问题范围">
             <button type="button" className={`btn btn-sm ${onlyPending ? "btn-primary" : "btn-ghost"}`} disabled={replyBusy} onClick={() => { setIssueView("pending"); if (focusIssue) { const next = new URLSearchParams(searchParams); next.delete("issue_id"); setSearchParams(next, { replace: true }) } }}>待我回复（{requiredReplies.length}）</button>
             <button type="button" className={`btn btn-sm ${!onlyPending ? "btn-primary" : "btn-ghost"}`} disabled={replyBusy} onClick={() => setIssueView("all")}>全部问题（{allIssues.length}）</button>
@@ -124,14 +131,15 @@ export default function RectificationPage() {
           {issueReq.loading && !issueReq.data ? <Loading /> : issueReq.error ? <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} /> : <IssueList
             key={subId} filtersDisabled={replyBusy} issues={shownIssues} activeId={focusIssue}
             renderActions={(issue) => issueMaterialId(issue) && <Link className="btn btn-ghost btn-xs" to={`/materials/${issueMaterialId(issue)}?issue_id=${issue.id}&from=rectification`}>查看问题材料</Link>}
-            renderFooter={(issue) => canReply && issue.is_active !== false && issue.review_status !== "REJECTED" ? <IssueResponseForm compact issue={issue} drafts={replyDrafts.current} draftKey={`${subId}:${issue.id}`} onDone={() => { refresh(); materialsReq.reload().catch(() => {}) }} onBusyChange={(value) => setReplyWork((previous) => previous[issue.id] === value ? previous : { ...previous, [issue.id]: value })} /> : null}
+            readonlyNote={viewingPrevious ? "上次报告的问题仅供回看，不能在此回复或视为本次检查结论。" : undefined}
+            renderFooter={(issue) => !viewingPrevious && canReply && issue.is_active !== false && issue.review_status !== "REJECTED" ? <IssueResponseForm compact issue={issue} drafts={replyDrafts.current} draftKey={`${subId}:${issue.id}`} onDone={() => { refresh(); materialsReq.reload().catch(() => {}) }} onBusyChange={(value) => setReplyWork((previous) => previous[issue.id] === value ? previous : { ...previous, [issue.id]: value })} /> : null}
           />}
         </section>
         <aside className="lg:col-span-2 space-y-3">
           <h2 className="text-sm font-medium">整改通知</h2>
           {noticeReq.loading && !noticeReq.data ? <Loading /> : noticeReq.error ? <ErrorState error={noticeReq.error} onRetry={() => noticeReq.reload().catch(() => {})} /> : <>
             {!(noticeReq.data?.items || []).length && <p className="text-sm text-base-content/60">暂无整改通知。</p>}
-            <ul className="space-y-2">{(noticeReq.data?.items || []).map((n) => <li key={n.id}><button type="button" className="btn btn-ghost btn-sm h-auto w-full justify-start py-2 text-left" onClick={() => openNotice(n.id)}><span><span className="block">{n.title}</span><span className="text-xs text-base-content/50">{n.item_count} 条 · {n.status}</span></span></button></li>)}</ul>
+            <ul className="space-y-2">{(noticeReq.data?.items || []).map((n) => <li key={n.id}><button type="button" className="btn btn-ghost btn-sm h-auto w-full justify-start py-2 text-left" onClick={() => openNotice(n.id)}><span><span className="block">{n.title}</span><span className="text-xs text-base-content/50">{n.item_count} 条 · {uiLabel(n.status)}</span></span></button></li>)}</ul>
           </>}
           {noticeLoading && <Loading label="通知" />}
           {noticeError && <div className="alert alert-error text-sm">{noticeError}</div>}

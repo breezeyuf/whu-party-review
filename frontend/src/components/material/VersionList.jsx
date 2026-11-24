@@ -1,3 +1,4 @@
+import { uiLabel } from "../../utils/interfaceLabels"
 import { Link } from "react-router-dom"
 import { fmtDateTime, fmtSize } from "../../utils/format"
 
@@ -8,9 +9,9 @@ export default function VersionList({ versions = [], currentId, onSelect, report
       {versions.map((v) => (
         <li key={v.id} className={`surface-card flex items-center justify-between gap-2 p-3 text-sm ${String(currentId) === String(v.id) ? "border-primary" : ""}`}>
           <div>
-            <div className="font-medium">第 {v.version_no} 版 {v.is_current && <span className="badge badge-primary badge-xs ml-1">当前</span>}</div>
+            <div className="font-medium">第 {v.version_no} 版 {v.is_current && <span className="badge badge-ghost badge-xs ml-1">当前</span>}</div>
             <div className="text-xs text-base-content/55">
-              {v.original_filename} · {fmtSize(v.file_size)} · {v.parse_status} · {fmtDateTime(v.uploaded_at)}
+              {v.original_filename} · {fmtSize(v.file_size)} · {uiLabel(v.parse_status)} · {fmtDateTime(v.uploaded_at)}
             </div>
             {v.change_note && <div className="text-xs">{v.change_note}</div>}
             {!!v.report_ids?.length && <p className="text-xs text-base-content/60">关联报告：{v.report_ids.map((id, index) => (
