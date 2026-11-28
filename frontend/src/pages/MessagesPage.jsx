@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Mail, MailOpen } from "lucide-react"
 import PageHeader from "../components/layout/PageHeader"
@@ -6,7 +6,7 @@ import DataTable, { Pager } from "../components/common/DataTable"
 import { Loading } from "../components/common/States"
 import { useRequest } from "../hooks/useRequest"
 import { usePagination } from "../hooks/usePagination"
-import { listMessages, markAllRead, markRead } from "../api/messages"
+import { listMessages, markAllRead, markRead, UNREAD_CHANGED } from "../api/messages"
 import { fmtDateTime } from "../utils/format"
 import { useAuth } from "../context/AuthContext"
 import { useToast } from "../context/ToastContext"
@@ -24,13 +24,19 @@ export default function MessagesPage() {
     [query.page, query.page_size, filter],
   )
 
+  useEffect(() => {
+    const refresh = () => reload().catch(() => {})
+    window.addEventListener(UNREAD_CHANGED, refresh)
+    return () => window.removeEventListener(UNREAD_CHANGED, refresh)
+  }, [reload])
+
   // 后端 link_type 为小写（submission/notice/archive/job/material），且学生与审核端的落地页不同
   const navTarget = (row) => {
     const t = String(row.link_type || "").toLowerCase()
     const id = row.link_id
     if (!t || !id) return null
     if (t === "submission") return isStudent ? "/my/progress" : `/review/submissions/${id}`
-    if (t === "notice") return isStudent ? "/my/rectification" : "/notices"
+    if (t === "notice") return `${isStudent ? "/my/rectification" : "/notices"}?notice=${encodeURIComponent(id)}`
     if (t === "archive") return isStudent ? "/my/progress" : `/archives/${id}`
     if (t === "material") return `/materials/${id}`
     if (t === "job") return isStudent ? null : "/tasks/jobs"
@@ -47,7 +53,6 @@ export default function MessagesPage() {
     }
     const to = navTarget(row)
     if (to) nav(to)
-    else await reload().catch(() => {})
   }
 
   const readAll = async () => {
@@ -55,7 +60,6 @@ export default function MessagesPage() {
     try {
       await markAllRead()
       toast.success("全部消息已读")
-      await reload().catch(() => toast.info("消息已标记为已读，但列表刷新失败；请重新加载页面"))
     } catch (error) {
       toast.error(error.message || "操作失败，请重试")
     } finally {
@@ -82,6 +86,7 @@ export default function MessagesPage() {
       {loading && !data ? <Loading label="消息" /> : (
         <div className="surface-card p-2">
           <DataTable
+            scrollLabel="消息列表"
             loading={loading}
             error={error}
             onRetry={reload}

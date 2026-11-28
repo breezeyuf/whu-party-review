@@ -54,8 +54,6 @@ export default function ReviewWorkspacePage() {
   const subReq = useRequest(() => getSubmission(id), [id, roleKey])
   const sub = subReq.data
   const issueReq = useRequest(() => loadAllReviewIssues((params) => listIssues(id, params)), [id, roleKey])
-  const compReq = useRequest(() => completeness(id, { live: true }), [id, roleKey])
-  const trailReq = useRequest(() => reviewRecords(id), [id, roleKey])
   const latestReportId = sub?.latest_report?.id
   const requestedReportId = /^[1-9]\d*$/.test(searchParams.get("report") || "") ? Number(searchParams.get("report")) : null
   const reportId = requestedReportId || latestReportId
@@ -68,9 +66,43 @@ export default function ReviewWorkspacePage() {
   }
   const reportReq = useRequest(() => (reportId ? getReport(reportId) : null), [id, reportId, roleKey], { immediate: !!reportId })
   const archiveId = sub?.archive?.id
-  const timeReq = useRequest(() => (archiveId ? getTimeline(archiveId) : null), [id, archiveId, roleKey], { immediate: !!archiveId })
-
   const [tab, setTab] = useState("issues")
+  const [reference, setReference] = useState(null)
+  const referenceKey = `${roleKey}:${id}:${reportId || ""}`
+  const visited = reference?.key === referenceKey ? reference.tabs : []
+  const selectTab = next => {
+    setTab(next)
+    if (next !== "issues" && next !== "report" && !visited.includes(next)) {
+      setReference({ key: referenceKey, tabs: [...visited, next] })
+    }
+  }
+  const loadCompleteness = !viewingHistoryReport && visited.includes("complete")
+  const loadTimeline = !viewingHistoryReport && !!archiveId && visited.includes("timeline")
+  const loadTrail = visited.includes("trail")
+  const compReq = useRequest(() => completeness(id, { live: true }), [id, roleKey], { immediate: loadCompleteness })
+  const trailReq = useRequest(() => reviewRecords(id), [id, roleKey], { immediate: loadTrail })
+  const timeReq = useRequest(() => getTimeline(archiveId), [id, archiveId, roleKey], { immediate: loadTimeline })
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const previewToggle = useRef(null)
+  const previewOrigin = useRef(null)
+  const reviewIssues = useRef(null)
+  const showLocatedPreview = (trigger) => {
+    if (!previewToggle.current?.getClientRects().length) return
+    previewOrigin.current = trigger
+    setPreviewOpen(true)
+    previewToggle.current.focus({ preventScroll: true })
+    previewToggle.current.closest("section")?.scrollIntoView?.({ block: "start" })
+  }
+  const returnToReview = () => {
+    setPreviewOpen(false)
+    requestAnimationFrame(() => {
+      const trigger = previewOrigin.current
+      const target = trigger?.isConnected && trigger.getClientRects().length ? trigger : reviewIssues.current
+      previewOrigin.current = null
+      target?.focus({ preventScroll: true })
+      target?.scrollIntoView?.({ block: "center" })
+    })
+  }
   const [activeIssueId, setActiveIssueId] = useState(null)
   const [materialSelection, setMaterialSelection] = useState(null)
   const [locationNote, setLocationNote] = useState("")
@@ -85,9 +117,10 @@ export default function ReviewWorkspacePage() {
 
   useEffect(() => {
     locateSequence.current += 1
+    previewOrigin.current = null
     setActiveIssueId(null); setMaterialSelection(null); setPage(1)
     setJobId(null); setNoticeId(null); setLocationNote(""); setTimelineHighlight(null)
-    setAdding(false); setNewIssueLocation(null); setCorrecting(null); setTab("issues")
+    setAdding(false); setNewIssueLocation(null); setCorrecting(null); setTab("issues"); setPreviewOpen(false)
     return () => { locateSequence.current += 1 }
   }, [id, roleKey, reportId])
 
@@ -116,7 +149,7 @@ export default function ReviewWorkspacePage() {
   ], [shownIssues, currentMat, currentVersion, timelineHighlight])
   const trackedJobId = jobId || (["QUEUED", "RUNNING", "FAILED"].includes(sub?.ai_status) ? sub?.ai_job_id : null)
 
-  const selectIssue = (issue) => {
+  const selectIssue = (issue, trigger) => {
     locateSequence.current += 1
     setActiveIssueId(issue.id)
     setTimelineHighlight(null)
@@ -125,10 +158,17 @@ export default function ReviewWorkspacePage() {
     const resolved = issueLocation(issue, material)
     setMaterialSelection(resolved.materialId ? resolved : null)
     setPage(resolved.page)
+    if (material) showLocatedPreview(trigger)
     setLocationNote(!resolved.materialId ? "此问题未关联具体材料，可结合问题说明与时间轴核实。" : !material ? "问题所关联的材料已不在当前提交包中，请查看问题说明。" : !issue.location?.page_no ? "此问题未提供精确页码，已打开对应材料版本。" : "")
   }
 
-  const refreshAll = () => Promise.allSettled([subReq.reload(), issueReq.reload(), reportReq.reload(), trailReq.reload(), compReq.reload(), timeReq.reload()])
+  const refreshAll = () => Promise.allSettled([
+    subReq.reload(), issueReq.reload(),
+    ...(reportId ? [reportReq.reload()] : []),
+    ...(loadTrail ? [trailReq.reload()] : []),
+    ...(loadCompleteness ? [compReq.reload()] : []),
+    ...(loadTimeline ? [timeReq.reload()] : []),
+  ])
 
   const needsAiCheck = !!sub?.can?.ai_check && !!reportBlockReason(sub) && !["QUEUED", "RUNNING"].includes(sub?.ai_status)
   const startAiCheck = async () => {
@@ -144,7 +184,7 @@ export default function ReviewWorkspacePage() {
     finally { setAiBusy(false) }
   }
 
-  const locateTimeline = async (source) => {
+  const locateTimeline = async (source, trigger) => {
     const sequence = ++locateSequence.current
     try {
       const material = materials.find((m) => sameId(m.id, source.material_id))
@@ -162,6 +202,7 @@ export default function ReviewWorkspacePage() {
       setTimelineHighlight({ id: "timeline-source", materialId: material.id, versionId, page_no: source.page_no, bbox: source.bbox, title: source.raw_text || "时间轴来源" })
       setLocationNote(source.page_no ? "" : "该时间轴来源没有页码，已打开对应材料版本。")
       setPage(source.page_no || 1)
+      showLocatedPreview(trigger)
     } catch (error) { if (sequence === locateSequence.current) toast.error(error.message || "定位失败") }
   }
 
@@ -211,11 +252,18 @@ export default function ReviewWorkspacePage() {
       {noticeId && <div className="surface-card mb-3 p-3 text-sm">已生成并发送整改通知。<Link className="link ml-2" to={`/notices?notice=${noticeId}`}>查看整改通知</Link></div>}
       <div className="review-grid">
         <section id="review-materials" className="surface-card p-4 review-preview">
-          <h2 className="mb-3 text-base font-semibold">材料原文</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold">材料原文</h2>
+            <button ref={previewToggle} type="button" className="review-preview-toggle btn btn-outline btn-xs"
+              aria-expanded={previewOpen} aria-controls="review-preview-content" onClick={() => setPreviewOpen(!previewOpen)}>
+              {previewOpen ? "收起原文" : "展开原文"}
+            </button>
+          </div>
+          {locationNote && <p className="mt-2 text-xs text-warning" role="status">{locationNote}</p>}
+          <div id="review-preview-content" className={`review-preview-content mt-3 ${previewOpen ? "" : "is-collapsed"}`}>
           {materials.length > 0 && <select aria-label="选择预览材料" className="select select-bordered select-sm review-material-select" value={currentMat?.id || ""} onChange={(event) => { const material = materials.find((item) => sameId(item.id, event.target.value)); if (!material) return; locateSequence.current += 1; setMaterialSelection({ materialId: material.id, versionId: material.current_version_id }); setActiveIssueId(null); setTimelineHighlight(null); setLocationNote(""); setPage(1) }}>
             {materials.map((material) => <option key={material.id} value={material.id}>{material.title || material.type_name}{material.open_issue_count ? ` · ${material.open_issue_count} 个问题` : ""}</option>)}
           </select>}
-          {locationNote && <p className="mb-2 text-xs text-warning" role="status">{locationNote}</p>}
           {currentMat && <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
             <span>{snapshotMode ? `报告原文版本 #${currentVersion}` : sameId(currentVersion, currentMat.current_version_id) ? `当前版本 v${currentMat.version_no || "—"}` : `问题原文版本 #${currentVersion}（历史版本）`}</span>
             {!sameId(currentVersion, currentMat.current_version_id) && <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setMaterialSelection({ materialId: currentMat.id, versionId: currentMat.current_version_id }); setActiveIssueId(null); setTimelineHighlight(null); setPage(1) }}>查看当前版本</button>}
@@ -234,10 +282,13 @@ export default function ReviewWorkspacePage() {
               onSelectRegion={!snapshotMode && sub.can?.add_issue && sameId(currentVersion, currentMat.current_version_id) ? (location) => { setNewIssueLocation(location); setAdding(true) } : undefined}
             />
           ) : <p className="text-sm text-base-content/50">{materials.length ? "请选择当前提交包中的材料。" : "该提交包还没有材料。"}</p>}
-        </div></section>
+          </div>
+          <button type="button" className="review-preview-toggle btn btn-ghost btn-xs mt-2" onClick={returnToReview}>{activeIssue ? "返回当前问题" : "返回核对区"}</button>
+          </div>
+        </section>
         <div>
-        <section id="review-issues">
-          <ContentTabs items={TABS} value={tab} onChange={setTab} label="工作区内容" idPrefix="review-tabs" />
+        <section ref={reviewIssues} id="review-issues" tabIndex={-1}>
+          <ContentTabs items={TABS} value={tab} onChange={selectTab} label="工作区内容" idPrefix="review-tabs" />
           <div className="review-issues-pane">
           <div role="tabpanel" id="review-tabs-panel-issues" aria-labelledby="review-tabs-issues" hidden={tab !== "issues"}>
           {issueReq.error && !snapshotMode && <ErrorState error={issueReq.error} onRetry={() => issueReq.reload().catch(() => {})} />}

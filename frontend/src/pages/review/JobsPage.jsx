@@ -31,9 +31,26 @@ export default function JobsPage() {
   // 明细请求单独管理加载与失败；快速切换任务时只采用最后一次请求的结果
   const [detail, setDetail] = useState({ id: null, data: null, loading: false, error: null })
   const sequence = useRef(0)
+  const detailPanel = useRef(null)
+  const detailTrigger = useRef(null)
 
-  const open = async (jobId) => {
+  const closeDetail = () => {
+    sequence.current += 1
+    setDetail({ id: null, data: null, loading: false, error: null })
+    detailTrigger.current?.focus()
+    detailTrigger.current = null
+  }
+
+  const open = async (jobId, trigger) => {
     const request = ++sequence.current
+    if (trigger) {
+      detailTrigger.current = trigger
+      if (window.matchMedia?.("(max-width: 1023px)").matches) requestAnimationFrame(() => {
+        if (request !== sequence.current && detailTrigger.current !== trigger) return
+        detailPanel.current?.focus({ preventScroll: true })
+        detailPanel.current?.scrollIntoView?.({ block: "start" })
+      })
+    }
     setDetail((current) => ({ id: jobId, data: current.id === jobId ? current.data : null, loading: true, error: null }))
     try {
       const data = await getJob(jobId)
@@ -45,10 +62,11 @@ export default function JobsPage() {
 
   useEffect(() => {
     sequence.current += 1
+    detailTrigger.current = null
     setDetail({ id: null, data: null, loading: false, error: null })
   }, [JSON.stringify(query)])
   const columns = [
-    { key: "type", title: "类型", render: (r) => <button type="button" className="link" onClick={() => open(r.id)}>{JOB_TYPE_NAME[r.job_type] || r.job_type}</button> },
+    { key: "type", title: "类型", render: (r) => <button type="button" className="link" onClick={(event) => open(r.id, event.currentTarget)}>{JOB_TYPE_NAME[r.job_type] || r.job_type}</button> },
     { key: "status", title: "状态", render: (r) => <StatusBadge code={r.status} map={{ QUEUED: "排队", RUNNING: "运行中", SUCCEEDED: "成功", PARTIAL: "部分失败", FAILED: "失败" }}/> },
     { key: "prog", title: "进度", render: (r) => <span className="text-xs">{r.done_count || 0}/{r.total || "—"}{r.failed_count ? ` 失败 ${r.failed_count}` : ""}</span> },
     { key: "who", title: "发起", render: (r) => <span className="text-xs">{r.created_by_name || "系统 / 历史账号"}<br/>{fmtDateTime(r.created_at)}</span> },
@@ -90,7 +108,11 @@ export default function JobsPage() {
           </> : <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty="没有符合条件的任务" columns={columns}/>}
           {!req.error && <Pager page={req.data?.page ?? query.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} unit={grouped ? "人" : "条"} pageSizes={grouped ? [10,20,50] : [20,50,100]} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })}/>}
         </div>
-        <aside className={`space-y-3 lg:col-span-2 ${!detail.id ? "hidden" : ""}`} aria-label="任务明细">
+        <aside ref={detailPanel} tabIndex={-1} hidden={!detail.id} className="order-first scroll-mt-24 space-y-3 lg:order-none lg:col-span-2" aria-label="任务明细">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-medium">任务明细</h2>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={closeDetail}>关闭明细</button>
+          </div>
           {detail.loading && !job && <Loading label="任务明细" />}
           {detail.error && <ErrorState title="任务明细加载失败" error={detail.error} onRetry={() => open(detail.id)} />}
           {job && (
@@ -111,7 +133,6 @@ export default function JobsPage() {
               )}
             </>
           )}
-          {!detail.id && <p className="text-sm text-base-content/50">选择一条任务查看明细。</p>}
         </aside>
       </div>
     </div>

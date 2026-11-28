@@ -146,6 +146,15 @@ a.surface-card:hover {
   color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
 }
 
+/* ---- 统计摘要与图表 ---- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+  padding: 0.25rem;
+}
+.stat-grid > .stat { min-width: 0; padding: 0.75rem 1rem; border: 0; }
+.stats-chart-grid > section { min-width: 0; overflow-x: clip; }
+
 /* ---- 侧边栏菜单 ---- */
 .menu :where(li > a, li > .menu-title) {
   border-radius: 0.5rem;
@@ -258,12 +267,6 @@ main > * {
 .service-header-actions { display:flex; align-items:center; gap:12px; margin-left:auto; }
 .service-role-label { font-size:13px; color:#65717d; padding-right:14px; border-right:1px solid #d5dbe1; }
 .service-role-select { max-width:164px; }
-.service-account { position:relative; }
-.service-account > summary { list-style:none; display:flex; align-items:center; gap:8px; padding:8px; cursor:pointer; font-size:14px; }
-.service-account > summary::-webkit-details-marker { display:none; }
-.service-account-menu { position:absolute; top:100%; right:0; width:164px; padding:6px; border:1px solid #d5dbe1; border-radius:4px; background:#fff; box-shadow:0 5px 18px #24313e12; }
-.service-account-menu button { width:100%; display:flex; align-items:center; gap:8px; padding:10px; text-align:left; font-size:14px; cursor:pointer; border-radius:3px; }
-.service-account-menu button:hover { background:#f1f3f5; }
 .service-body { display:flex; align-items:flex-start; }
 .service-sidebar { width:208px; flex-shrink:0; min-height:calc(100vh - 72px); position:sticky; top:72px; max-height:calc(100vh - 72px); overflow-y:auto; background:#fff; border-right:1px solid #d5dbe1; display:flex; flex-direction:column; padding:22px 12px 0; }
 .service-nav-group { margin-bottom:16px; }
@@ -344,6 +347,11 @@ main > * {
 .review-preview .preview-scroll { max-height:calc(100vh - 250px); overflow:auto; }
 .review-issues-pane { max-height:65vh; overflow:auto; padding:2px 3px 8px 0; }
 .review-material-select { width:100%; margin-bottom:12px; }
+.review-preview .review-preview-toggle { display: none; }
+@media (max-width: 680px) {
+  .review-preview .review-preview-toggle { display: inline-flex; }
+  .review-preview-content.is-collapsed { display: none; }
+}
 .review-decision { scroll-margin-top:90px; margin-top:20px; }
 #review-materials, #review-issues { scroll-margin-top:90px; }
 .service-compact-upload { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:10px 0; text-align:left; }
@@ -380,6 +388,10 @@ main > * {
 /* Shared task tabs and neutral disclosure actions. */
 .content-tabs { display:flex; gap:4px; overflow-x:auto; padding:4px 0; margin-bottom:12px; }
 .content-tab { flex-shrink:0; border:0; border-radius:4px; padding:8px 12px; font-size:14px; line-height:1.5; color:color-mix(in oklab, var(--color-base-content) 75%, transparent); cursor:pointer; }
+@media (max-width: 680px) {
+  .content-tabs { flex-wrap: wrap; overflow-x: visible; }
+  .content-tab { padding-inline: 10px; }
+}
 .content-tab[aria-selected="true"] { background:color-mix(in oklab, var(--color-info) 8%, var(--color-base-100)); color:var(--color-base-content); font-weight:600; }
 .content-tab:focus-visible { outline:2px solid var(--color-info); outline-offset:2px; }
 .plain-disclosure > summary { list-style:none; }

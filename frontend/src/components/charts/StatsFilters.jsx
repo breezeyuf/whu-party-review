@@ -25,11 +25,12 @@ export default function StatsFilters({ value, onChange, exportMode = false }) {
     {options.error && <ErrorState error={options.error} onRetry={options.reload} />}
     <FilterBar values={value} onChange={(patch) => onChange({ ...value, ...patch, ...("college_id" in patch ? { branch_id: "" } : {}) })} onReset={() => onChange({})} fields={[
       { key: "batch_id", label: "批次", type: "select", options: (options.data?.batches || []).map((o) => ({ code: o.id, name: o.name })) },
+      { key: "stage_code", label: "阶段", type: "select", metaKey: "stages" },
+    ]} advancedFields={[
       { key: "college_id", label: "学院", type: "select", options: colleges.map((o) => ({ code: o.id, name: o.name })) },
       ...(!exportMode ? [{ key: "branch_id", label: "支部", type: "select", options: branches.map((o) => ({ code: o.id, name: o.name })) }] : []),
-      { key: "stage_code", label: "阶段", type: "select", metaKey: "stages" },
-      { key: "date_from", label: "开始日期", placeholder: "YYYY-MM-DD" },
-      { key: "date_to", label: "结束日期", placeholder: "YYYY-MM-DD" },
+      { key: "date_from", label: "开始日期", type: "date" },
+      { key: "date_to", label: "结束日期", type: "date" },
     ]} />
   </div>
 }

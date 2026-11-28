@@ -177,6 +177,7 @@ export default function ReviewTasksPage() {
         {!req.error && <div className="px-3 py-3 text-sm text-base-content/65" role="status" aria-live="polite">{req.loading ? "正在加载待办…" : `共 ${req.data?.total ?? 0} 份提交材料`}</div>}
         <fieldset disabled={busy} className="min-w-0">
         <DataTable
+          scrollLabel="审核任务列表"
           loading={req.loading}
           loadingLabel="正在加载待办…"
           error={loadError}
@@ -191,16 +192,16 @@ export default function ReviewTasksPage() {
           sort={query.sort}
           onSort={(key) => setQuery({ sort: query.sort === key ? `-${key}` : key })}
           columns={[
-            { key: "student", title: "学生", render: (r) => (
+            { key: "student", title: "学生", className: "min-w-36", render: (r) => (
               <div>
                 <Link className="link font-medium" to={`/review/submissions/${r.id}`}>{r.student_name}</Link>
                 <DemoBadge show={r.is_demo} />
                 <div className="mono text-xs text-base-content/50">{r.student_no} · {r.branch_name}</div>
               </div>
             ) },
-            { key: "stage", title: "阶段", render: (r) => r.stage_name || (meta.stages || []).find((s) => s.code === r.stage_code)?.name },
+            { key: "stage", title: "阶段", className: "min-w-24 whitespace-nowrap", render: (r) => r.stage_name || (meta.stages || []).find((s) => s.code === r.stage_code)?.name },
             { key: "status", title: "状态", render: (r) => <StatusBadge code={r.status} soft /> },
-            { key: "ai", title: "需要关注", sortKey: "issue_count", render: (r) => (
+            { key: "ai", title: "需要关注", className: "min-w-40", sortKey: "issue_count", render: (r) => (
               <div className="flex flex-col gap-1">
                 {["QUEUED", "RUNNING", "FAILED"].includes(r.ai_status) && <span className={`text-xs ${r.ai_status === "FAILED" ? "text-error" : "text-warning"}`}>{({ QUEUED: "检查排队中", RUNNING: "检查运行中", FAILED: "检查失败" })[r.ai_status]}</span>}
                 <RecoBadge code={r.effective_recommendation || r.recommendation} soft />
@@ -208,7 +209,7 @@ export default function ReviewTasksPage() {
                 <span className="text-xs text-base-content/65">{issueCountsText(r.issue_counts)}</span>
               </div>
             ) },
-            { key: "days", title: "截止", sortKey: "days_left", render: (r) => <span className={`text-xs ${r.days_left < 0 ? "text-error" : ""}`}>{daysLeftText(r.days_left)}</span> },
+            { key: "days", title: "截止", className: "whitespace-nowrap", sortKey: "days_left", render: (r) => <span className={`text-xs ${r.days_left < 0 ? "text-error" : ""}`}>{daysLeftText(r.days_left)}</span> },
             { key: "action", title: "办理", render: (r) => <Link className="quiet-link whitespace-nowrap" to={`/review/submissions/${r.id}`}>打开材料</Link> },
           ]}
         />

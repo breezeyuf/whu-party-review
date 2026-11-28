@@ -1,7 +1,6 @@
 import { CATEGORY_COLORS, SEVERITY_COLORS, COLORS } from "../../components/charts/chartTheme"
 import { useState } from "react"
 import PageHeader from "../../components/layout/PageHeader"
-import FilterBar from "../../components/common/FilterBar"
 import { BarChart, LineChart, PieChart } from "../../components/charts/LazyCharts"
 import { Loading, ErrorState, EmptyState } from "../../components/common/States"
 import { useRequest } from "../../hooks/useRequest"
@@ -39,15 +38,15 @@ export default function StatsOverviewPage() {
       <StatsFilters value={filters} onChange={setFilters} />
       {dataReq.loading && !dataReq.data ? <Loading /> : dataReq.error ? <ErrorState error={dataReq.error} onRetry={dataReq.reload} /> : (
         <>
-          <div className="stats stats-vertical mb-4 w-full border border-base-300 bg-base-100 sm:stats-horizontal">
+          <section aria-label="审核统计概览" className="surface-card stat-grid mb-4">
             <Card title="档案" value={d.archives} />
             <Card title="提交包" value={d.submissions} />
             <Card title="材料" value={d.materials} />
             <Card title="问题" value={d.issues_total} />
             <Card title="退回率" value={d.return_rate != null ? `${Math.round(d.return_rate * 100)}%` : "—"} />
             <Card title="平均整改轮次" value={d.avg_rectification_rounds != null ? Number(d.avg_rectification_rounds).toFixed(1) : "—"} />
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
+          </section>
+          <div className="stats-chart-grid grid grid-cols-1 gap-4 lg:grid-cols-2">
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">问题类别</h2>
               <PieChart data={pie} />
@@ -76,7 +75,7 @@ export default function StatsOverviewPage() {
             <label className="text-xs">分组方式<select aria-label="高频问题分组" className="select select-bordered select-sm m-2" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}><option value="rule">按规则</option><option value="category">按类别</option><option value="material_type">按材料类型</option></select></label>
             {topReq.loading && !topReq.data ? <Loading label="高频问题" /> : topReq.error ? <ErrorState error={topReq.error} onRetry={topReq.reload} /> : !(topReq.data || []).length ? <EmptyState title="所选范围内没有问题记录" /> : (
               <table className="table table-sm">
-                <thead><tr><th>规则</th><th>次数</th><th>占比</th><th>已确认</th></tr></thead>
+                <thead><tr><th>{{ rule: "规则", category: "类别", material_type: "材料类型" }[groupBy]}</th><th>次数</th><th>占比</th><th>已确认</th></tr></thead>
                 <tbody>
                   {(topReq.data || []).map((r) => (
                     <tr key={r.key}><td className="text-xs" title={r.key}>{r.name}</td><td className="mono">{r.count}</td><td className="mono">{r.ratio != null ? `${Math.round(r.ratio * 100)}%` : "—"}</td><td className="mono">{r.confirmed_count ?? "—"}</td></tr>

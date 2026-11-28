@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react"
-import { useLocation, useNavigate } from "react-router-dom"
+import { useEffect, useRef, useState } from "react"
+import { useBeforeUnload, useBlocker, useLocation, useNavigate } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
 import { Loading, ErrorState } from "../../components/common/States"
 import { getSettings, putSettings, seedDemo, testAi, testDelivery } from "../../api/settings"
@@ -12,7 +12,7 @@ const CATEGORIES = [
   ["models", "模型与识别", ["ai", "ocr", "ocr_vision"]],
   ["business", "材料与业务", ["upload", "retention", "calendar"]],
   ["messages", "消息与通知", ["notification", "delivery"]],
-  ["runtime", "账号与运行", ["security", "worker"]],
+  ["runtime", "账号与运行", ["auth", "security", "worker"]],
 ]
 
 export default function CompleteSettingsPage() {
@@ -29,6 +29,7 @@ export default function CompleteSettingsPage() {
   const visibleKeys = categoryKeys.filter(key => isAdmin || activeSection === "technical" || !SETTING_GROUPS.find(([k]) => k === key)?.[2])
   const selectSection = (section) => { const params = new URLSearchParams(location.search); params.set("section", section); navigate({ pathname: location.pathname, search: params.toString(), hash: "" }, { replace: true }) }
   const [data, setData] = useState(null)
+  const saved = useRef(null)
   const [loadError, setLoadError] = useState(null)
   const [busy, setBusy] = useState("")
   const [messages, setMessages] = useState({})
@@ -39,8 +40,33 @@ export default function CompleteSettingsPage() {
   const [reset, setReset] = useState(false)
   const [deliverySecrets,setDeliverySecrets]=useState({})
   const [clearDeliverySecrets,setClearDeliverySecrets]=useState({})
-  const load = () => { setLoadError(null); getSettings().then(setData).catch(setLoadError) }
-  useEffect(load, [])
+  const changedSecrets = {
+    ai: apiKey || clearKey,
+    ocr_vision: visionKey || clearVisionKey,
+    delivery: Object.values(deliverySecrets).some(Boolean) || Object.values(clearDeliverySecrets).some(Boolean),
+  }
+  const changedGroups = SETTING_GROUPS.filter(([key]) => data &&
+    (changedSecrets[key] || JSON.stringify(data[key]) !== JSON.stringify(saved.current?.[key])))
+  const dirty = changedGroups.length > 0
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && currentLocation.pathname !== nextLocation.pathname)
+  useBeforeUnload(event => { if (dirty) { event.preventDefault(); event.returnValue = "" } })
+  const loadSequence = useRef(0)
+  const load = async () => {
+    const request = ++loadSequence.current
+    setLoadError(null)
+    try {
+      const settings = await getSettings()
+      if (request !== loadSequence.current) return
+      saved.current = settings
+      setData(settings)
+    } catch (error) {
+      if (request === loadSequence.current) setLoadError(error)
+    }
+  }
+  useEffect(() => {
+    load()
+    return () => { loadSequence.current += 1 }
+  }, [])
   const message = (key, text, error = false) => setMessages((m) => ({ ...m, [key]: { text, error } }))
   const set = (group, field, value) => setData((d) => ({ ...d, [group]: { ...d[group], [field]: value } }))
   const save = async (key) => {
@@ -54,6 +80,7 @@ export default function CompleteSettingsPage() {
       }
       setBusy(key)
       const result = await putSettings({ [key]: patch })
+      saved.current = { ...saved.current, [key]: result[key] }
       setData((d) => ({ ...d, [key]: result[key] }))
       if (key === "ai") { setApiKey(""); setClearKey(false) }
       if (key === "ocr_vision") { setVisionKey(""); setClearVisionKey(false) }
@@ -88,6 +115,7 @@ export default function CompleteSettingsPage() {
   return <div className="space-y-4">
     <PageHeader title="系统配置" extra={<button type="button" className="btn btn-outline btn-sm" onClick={() => selectSection("maintenance")}>维护工具</button>}>选择配置类别，各组独立保存。切换类别会保留当前输入。</PageHeader>
     <nav aria-label="配置分类" className="surface-card flex flex-wrap gap-2 p-3">{CATEGORIES.filter(([key]) => isAdmin || ["business", "messages"].includes(key)).map(([key, title]) => <button key={key} type="button" className={`btn btn-sm ${activeSection === key ? "btn-primary" : "btn-ghost"}`} aria-pressed={activeSection === key} onClick={() => selectSection(key)}>{title}</button>)}{!isAdmin && <button type="button" className={`btn btn-sm ${activeSection === "technical" ? "btn-primary" : "btn-ghost"}`} aria-pressed={activeSection === "technical"} onClick={() => selectSection("technical")}>技术配置（只读）</button>}</nav>
+    {dirty && <p className="text-sm text-base-content/65" role="status">尚未保存：{changedGroups.map(([, title]) => title).join("、")}</p>}
     {activeSection === "technical" && <p className="text-sm text-base-content/65">技术配置由系统管理员维护。此处仅展示已获授权的配置信息，密钥不回显。</p>}
     <div hidden={activeSection !== "business"}><RetentionReview /></div>
     {SETTING_GROUPS.map(([key,title,adminOnly,fields]) => adminOnly && !isAdmin ? <section key={key} hidden={!visibleKeys.includes(key)} id={`settings-${key}`} className="surface-card p-4 sm:p-6" aria-label={title}>
@@ -114,6 +142,9 @@ export default function CompleteSettingsPage() {
       {messages[key] && <p role="status" className={`mt-2 text-xs ${messages[key].error ? "text-error" : "text-success"}`}>{messages[key].text}</p>}
     </section>)}
     <section hidden={activeSection !== "maintenance"} className="surface-card space-y-3 p-4" aria-label="维护工具"><h2 className="text-sm font-medium">演示数据</h2><p className="text-xs">生成独立标记的虚构组织、账号和材料。</p><div className="flex gap-2"><button type="button" className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => seed(false)}>初始化</button><button type="button" className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => setReset(true)}>清理并重建</button></div>{messages.demo && <p role="status" className={messages.demo.error ? "text-error" : "text-success"}>{messages.demo.text}</p>}</section>
+    <ConfirmDialog open={blocker.state === "blocked"} title="配置尚未保存" confirmText="放弃修改并离开"
+      message="离开会丢失尚未保存的配置。可取消并返回保存。" danger
+      onClose={() => blocker.reset?.()} onConfirm={() => blocker.proceed?.()} />
     <ConfirmDialog open={reset} danger title="重建演示数据" confirmText="确认重建" busy={!!busy} message="仅删除并重建标记为演示的数据，真实账号和真实材料不会被清理。操作不可撤销，确认继续？" onClose={() => setReset(false)} onConfirm={() => seed(true)} />
   </div>
 }

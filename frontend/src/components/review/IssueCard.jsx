@@ -15,17 +15,15 @@ export default function IssueCard({ issue, active, onSelect, actions, footer }) 
     issue.needs_human_judgement ? "需人工核实" : "", issue.is_new_in_recheck ? "本轮新增" : ""].filter(Boolean)
   return (
     <article id={`issue-${issue.id}`}
-      className={`surface-card cursor-pointer p-3 ${active ? "border-primary" : ""}`}
-      onClick={() => onSelect?.(issue)}
-      tabIndex={onSelect ? 0 : undefined}
-      onKeyDown={(event) => { if (event.target === event.currentTarget && ["Enter", " "].includes(event.key)) { event.preventDefault(); onSelect?.(issue) } }}
+      className={`surface-card p-3 ${onSelect ? "cursor-pointer" : ""} ${active ? "border-primary" : ""}`}
+      onClick={onSelect ? (event) => onSelect(issue, event.currentTarget.querySelector("button[aria-pressed]")) : undefined}
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <SeverityBadge code={issue.severity} />
         <span className="text-xs leading-relaxed text-base-content/60">{notes.join(" · ")}</span>
       </div>
       {onSelect ? (
-        <button type="button" className="mt-2 text-left text-sm font-medium hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-pressed={Boolean(active)} onClick={e => { e.stopPropagation(); onSelect(issue) }}>
+        <button type="button" className="mt-2 text-left text-sm font-medium hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" aria-pressed={Boolean(active)} onClick={e => { e.stopPropagation(); onSelect(issue, e.currentTarget) }}>
           {display.title}
         </button>
       ) : <h3 className="mt-2 text-sm font-medium">{display.title}</h3>}

@@ -11,7 +11,7 @@ export default function FilterBar({ fields, advancedFields = [], values, onChang
       {field.type === "select" ? <select className="select select-bordered select-sm w-full sm:w-40" value={values[field.key] ?? ""} onChange={(event) => onChange({ [field.key]: event.target.value })}>
         <option value="">{field.placeholder || "全部"}</option>
         {(options || []).map((option) => <option key={option.code ?? option.id ?? option.value} value={option.code ?? option.id ?? option.value}>{option.name || option.label}</option>)}
-      </select> : <input className="input input-bordered input-sm w-full sm:w-44" placeholder={field.placeholder || ""} value={values[field.key] ?? ""} onChange={(event) => onChange({ [field.key]: event.target.value })} />}
+      </select> : <input type={field.type === "date" ? "date" : "text"} className="input input-bordered input-sm w-full sm:w-44" placeholder={field.placeholder || ""} aria-invalid={field.invalid || undefined} aria-describedby={field.describedBy} value={values[field.key] ?? ""} onChange={(event) => onChange({ [field.key]: event.target.value })} />}
     </label>
   }
   return <div className="service-filter-panel">

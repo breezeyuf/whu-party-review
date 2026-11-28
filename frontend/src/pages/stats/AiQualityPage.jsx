@@ -30,7 +30,7 @@ export default function AiQualityPage() {
       {req.loading && !req.data ? <Loading /> : req.error ? <ErrorState error={req.error} onRetry={req.reload} /> : (
         <>
           {!hasReviewed && <div className="surface-card mb-4 p-4 text-sm" role="status">暂无人工核验样本，确认率与误报率暂不能评价。请先在审核工作区确认、修改或驳回问题。</div>}
-          <div className="stats stats-vertical mb-4 w-full border border-base-300 bg-base-100 sm:stats-horizontal">
+          <section aria-label="审核成效概览" className="surface-card stat-grid mb-4">
             <div className="stat"><div className="stat-title text-xs">已核对问题</div><div className="stat-value text-2xl">{d.reviewed ?? 0}</div></div>
 
 
@@ -38,8 +38,8 @@ export default function AiQualityPage() {
             <div className="stat"><div className="stat-title text-xs">误报率</div><div className="stat-value text-2xl">{hasReviewed ? pct(d.false_positive_rate) : "—"}</div></div>
             <div className="stat"><div className="stat-title text-xs">人工新增</div><div className="stat-value text-2xl">{d.manual_added ?? "—"}</div><div className="stat-desc">漏报线索</div></div>
 
-          </div>
-          <div className="grid gap-4 lg:grid-cols-2">
+          </section>
+          <div className="stats-chart-grid grid grid-cols-1 gap-4 lg:grid-cols-2">
             <section className="surface-card p-4">
               <h2 className="mb-2 text-sm font-medium">按类别</h2>
               {byCat.length ? <BarChart data={byCat} /> : <p className="text-sm text-base-content/60">所选范围暂无问题类别数据。</p>}

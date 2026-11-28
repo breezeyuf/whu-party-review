@@ -287,7 +287,7 @@ export default function UsersPage() {
             {(batches.data?.items || []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
           <label className={`btn btn-outline btn-xs ${importing ? "pointer-events-none opacity-50" : ""}`} aria-disabled={importing}>{importing ? "处理中…" : "预校验"}<input type="file" accept=".xlsx" className="hidden" disabled={importing} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) doImport(file, true) }} /></label>
-          <label className={`btn btn-primary btn-xs ${importing ? "pointer-events-none opacity-50" : ""}`} aria-disabled={importing}>{importing ? "处理中…" : "正式导入"}<input type="file" accept=".xlsx" className="hidden" disabled={importing} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) { setImportResult(null); setPendingImportFile(file) } }} /></label>
+          <label className={`btn btn-primary btn-xs ${importing ? "pointer-events-none opacity-50" : ""}`} aria-disabled={importing}>{importing ? "处理中…" : "正式导入"}<input type="file" accept=".xlsx" className="hidden" disabled={importing} onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) setPendingImportFile(file) }} /></label>
           {importing && <span className="flex items-center gap-2 text-xs text-base-content/60" role="status"><span className="loading loading-spinner loading-xs" />正在上传并校验文件，请勿关闭页面</span>}
         </div>
         {importResult && (
@@ -322,17 +322,17 @@ export default function UsersPage() {
         )}
       </section>
       <div className="surface-card p-2">
-        <DataTable loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty={query.q || query.role || query.org_id || query.is_active ? "没有符合条件的用户" : "暂无用户"} columns={[
-          { key: "name", title: "用户", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },
-          { key: "org", title: "组织", render: (r) => r.org_name },
-          { key: "roles", title: "角色", render: (r) => <span className="text-xs">{(r.roles || []).map((x) => roleName(meta, x.role || x)).join("、")}</span> },
+        <DataTable scrollLabel="用户列表" loading={req.loading} error={req.error} onRetry={req.reload} rows={req.data?.items || []} empty={query.q || query.role || query.org_id || query.is_active ? "没有符合条件的用户" : "暂无用户"} columns={[
+          { key: "name", title: "用户", className: "min-w-32", render: (r) => <><div>{r.real_name} {r.is_demo && <span className="badge badge-outline badge-xs">演示</span>}</div><div className="mono text-xs text-base-content/50">{r.username}</div></> },
+          { key: "org", title: "组织", className: "min-w-28", render: (r) => r.org_name },
+          { key: "roles", title: "角色", className: "min-w-32", render: (r) => <span className="text-xs">{(r.roles || []).map((x) => roleName(meta, x.role || x)).join("、")}</span> },
           { key: "st", title: "状态", className: "min-w-[6.5rem] whitespace-nowrap", render: (r) => r.is_active === false
             ? <span className="badge badge-error badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap">已停用</span>
             : r.locked_until
               ? <span className="badge badge-warning badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap" title={`锁定至 ${fmtDateTime(r.locked_until)}`}>登录锁定</span>
               : <span className="badge badge-success badge-outline badge-sm inline-flex shrink-0 whitespace-nowrap">正常</span> },
-          { key: "login", title: "最近登录", render: (r) => <span className="text-xs">{fmtDateTime(r.last_login_at)}</span> },
-          { key: "op", title: "", render: (r) => (
+          { key: "login", title: "最近登录", className: "whitespace-nowrap", render: (r) => <span className="text-xs">{fmtDateTime(r.last_login_at)}</span> },
+          { key: "op", title: "操作", className: "whitespace-nowrap", render: (r) => (
             <>
               <button type="button" className="btn btn-ghost btn-xs" onClick={() => { setFormError(""); setFieldErrors({}); const grants = (r.roles || []).map((x) => ({ role: x.role, org_id: x.org_id ?? r.org_id })); setEdit({ ...r, grants, original_grants: grants, is_active: r.is_active !== false, original_is_active: r.is_active !== false }) }}>编辑</button>
               {Number(r.id) !== Number(user?.id) && <button type="button" className="btn btn-ghost btn-xs text-error" onClick={() => { setDeleteError(""); setDeleteTarget(r) }}>删除</button>}

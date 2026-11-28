@@ -10,6 +10,7 @@ import { useRequest } from "../../hooks/useRequest"
 import { useMeta } from "../../context/MetaContext"
 import { useToast } from "../../context/ToastContext"
 import { ErrorState } from "../../components/common/States"
+import Pager from "../../components/common/Pager"
 import { stageShort } from "../../utils/format"
 import { batchAssignmentBody, batchDraft, JOB_TERMINAL, mergeBatchItems } from "../../utils/materialWorkflow"
 
@@ -35,10 +36,13 @@ export default function BatchUploadPage() {
   const [search, setSearch] = useState("")
   const [query, setQuery] = useState("")
   const [archivePageSize, setArchivePageSize] = useState(50)
+  const [filePage, setFilePage] = useState(1)
+  const [filePageSize, setFilePageSize] = useState(20)
   const archives = useRequest(() => listArchives({ batch_id: batchId || undefined, q: query || undefined, page_size: archivePageSize }), [batchId, query, archivePageSize])
   const { job, error: pollingError } = useJobPolling(jobId, { onDone: (completed) => setSettledItems(completed.result?.items || []) })
   const currentJob = Number(job?.id) === Number(jobId) ? job : null
   const items = settledItems ?? currentJob?.result?.items ?? []
+  const visibleItems = items.slice((filePage - 1) * filePageSize, filePage * filePageSize)
   const ready = currentJob && JOB_TERMINAL.has(currentJob.status)
   const locked = uploading || saving || (jobId && !ready)
   const body = batchAssignmentBody(items, assigns, importStage)
@@ -53,6 +57,7 @@ export default function BatchUploadPage() {
     try {
       const res = await batchUpload(file, { batch_id: batchId || undefined, stage_code: stage || undefined }, setProgress)
       setSettledItems(null)
+      setFilePage(1)
       setAssigns({})
       setLastResult(null)
       setUploadStage(stage)
@@ -105,7 +110,7 @@ export default function BatchUploadPage() {
       {pollingError && <p className="mt-2 text-xs text-error">任务状态获取失败，正在重试：{pollingError.message}</p>}
       {ready && !items.length && <p className="mt-2 text-xs">未识别到可导入的文件。可检查 ZIP 内容后重新上传。</p>}
     </div>}
-    {items.length > 0 && <div className="surface-card mt-4 overflow-x-auto">
+    {items.length > 0 && <div className="surface-card mt-4">
       <div className="space-y-2 p-3 text-xs">
         <p>共 {items.length} 个文件 · 已导入 {imported} 个 · 待处理 {pending} 个 · 失败 {failed} 个</p>
         {lastResult && <p role="status" className="font-medium">上次确认：本次导入 {lastResult.imported} 个 · 此前已入库 {lastResult.already} 个 · 跳过 {lastResult.skipped} 个 · 失败 {lastResult.failed} 个</p>}
@@ -113,7 +118,7 @@ export default function BatchUploadPage() {
         <form className="flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); setQuery(search.trim()) }}>
           <input aria-label="搜索归属档案" className="input input-bordered input-sm" placeholder="输入姓名或学号查找档案" value={search} onChange={(e) => setSearch(e.target.value)} />
           <button type="submit" className="btn btn-outline btn-sm" disabled={archives.loading}>查找归属档案</button>
-          <label className="flex items-center gap-2 text-xs text-base-content/70">每次显示
+          <label className="flex items-center gap-2 text-xs text-base-content/70">候选档案每次显示
             <select aria-label="每次显示档案条数" className="select select-bordered select-sm" value={archivePageSize} onChange={(e) => setArchivePageSize(Number(e.target.value))}>
               {[20, 50, 100, 200].map((size) => <option key={size} value={size}>{size} 条</option>)}
             </select>
@@ -122,9 +127,10 @@ export default function BatchUploadPage() {
         {archives.error && <ErrorState title="档案查询失败" error={archives.error} onRetry={archives.reload} />}
         {query && !archives.loading && !archives.error && !archives.data?.items?.length && <p>未找到匹配档案，请更换姓名或学号。</p>}
       </div>
-      <table className="table table-sm">
+      <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="归属确认列表">
+      <table className="table table-sm min-w-[48rem]">
         <thead><tr><th>文件</th><th>识别学号</th><th>归属档案</th><th>材料类型</th><th>跳过</th><th>状态</th></tr></thead>
-        <tbody>{items.map((item) => {
+        <tbody>{visibleItems.map((item) => {
           const draft = batchDraft(item, assigns[item.item_id])
           const done = ["IMPORTED", "SKIPPED"].includes(item.status)
           const options = new Map((archives.data?.items || []).map((archive) => [String(archive.id), archive]))
@@ -155,6 +161,11 @@ export default function BatchUploadPage() {
           </tr>
         })}</tbody>
       </table>
+      </div>
+      {items.length > 20 && <div className="px-3 pb-2">
+        <Pager page={filePage} pageSize={filePageSize} total={items.length} pageSizes={[20, 50, 100]}
+          onPage={setFilePage} onPageSize={(size) => { setFilePageSize(size); setFilePage(1) }} />
+      </div>}
       {ready && pending > 0 && <div className="flex flex-wrap items-end gap-3 p-3">
         <label className="form-control">
           <span className="label-text mb-1 text-xs">导入阶段</span>
@@ -166,6 +177,7 @@ export default function BatchUploadPage() {
         <button type="button" className="btn btn-primary btn-sm" disabled={saving || (!body.assignments.length && !body.skip_item_ids.length)} onClick={saveAssign}>
           {saving ? "正在导入…" : `确认导入 ${body.assignments.length} 个文件${body.skip_item_ids.length ? `，跳过 ${body.skip_item_ids.length} 个` : ""}`}
         </button>
+        {items.length > filePageSize && <p className="w-full text-xs text-base-content/65">确认时处理整个 ZIP，包含其他页的匹配和跳过项。</p>}
         {pending > body.assignments.length + body.skip_item_ids.length && <p className="w-full text-xs text-warning">未指定归属的文件会保留，待选择档案后再导入。</p>}
       </div>}
       {saveError && <p role="alert" className="p-3 text-xs text-error">{saveError}</p>}

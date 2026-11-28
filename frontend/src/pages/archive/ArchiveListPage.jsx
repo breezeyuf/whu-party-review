@@ -114,6 +114,7 @@ export default function ArchiveListPage() {
       {!req.error && (
       <div className="surface-card p-2">
         <DataTable
+          scrollLabel="发展档案列表"
           loading={req.loading}
           rows={req.data?.items || []}
           columns={[
@@ -123,14 +124,14 @@ export default function ArchiveListPage() {
                 <div className="mono text-xs text-base-content/50">{r.student_no}</div>
               </div>
             ) },
-            { key: "org", title: "组织", render: (r) => <span className="text-xs">{r.college_name}<br />{r.branch_name}</span> },
-            { key: "stage", title: "阶段", render: (r) => r.stage_name || stageShort(meta, r.current_stage) },
+            { key: "org", title: "组织", className: "min-w-32", render: (r) => <span className="text-xs">{r.college_name}<br />{r.branch_name}</span> },
+            { key: "stage", title: "阶段", className: "whitespace-nowrap", render: (r) => r.stage_name || stageShort(meta, r.current_stage) },
             { key: "sub", title: "当前提交", className: "min-w-[8rem] whitespace-nowrap", render: (r) => r.submission ? (
               <Link className="link inline-flex max-w-full no-underline hover:no-underline" to={`/review/submissions/${r.submission.id}`}><StatusBadge code={r.submission.status} soft /></Link>
             ) : "—" },
             { key: "ai", title: "AI", className: "min-w-[7rem] whitespace-nowrap", render: (r) => <RecoBadge code={r.submission?.recommendation} soft /> },
             ...(canCreate ? [{ key: "op", title: "操作", render: (r) => <button type="button" className="btn btn-ghost btn-xs text-error whitespace-nowrap" onClick={() => { setDeleteError(""); setDeleteTarget(r) }}>删除空档案</button> }] : []),
-            { key: "issues", title: "问题", render: (r) => <span className="text-xs">{issueCountsText(r.submission?.issue_counts)}</span> },
+            { key: "issues", title: "问题", className: "min-w-36", render: (r) => <span className="text-xs">{issueCountsText(r.submission?.issue_counts)}</span> },
           ]}
         />
         <div className="px-2"><Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} /></div>

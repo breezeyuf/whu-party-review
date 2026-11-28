@@ -1,5 +1,5 @@
 import { uiLabel } from "../../utils/interfaceLabels"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import StudentFlowGuide from "../../components/student/StudentFlowGuide"
 import PageHeader from "../../components/layout/PageHeader"
@@ -29,9 +29,11 @@ export default function RectificationPage() {
   const subReq = useRequest(() => (subId ? getSubmission(subId) : null), [subId], { immediate: !!subId })
   const issueReq = useRequest(() => (subId ? listIssues(subId) : { items: [] }), [subId], { immediate: !!subId })
   const noticeReq = useRequest(() => listNotices({ submission_id: subId, notice_type: "RECTIFICATION", page_size: 20 }), [subId], { immediate: !!subId })
-  const [notice, setNotice] = useState(null)
-  const [noticeLoading, setNoticeLoading] = useState(false)
-  const [noticeError, setNoticeError] = useState("")
+  const requestedNotice = searchParams.get("notice")
+  const noticeId = requestedNotice && /^[1-9]\d*$/.test(requestedNotice) && Number.isSafeInteger(Number(requestedNotice))
+    ? Number(requestedNotice) : null
+  const noticeDetail = useRequest(() => getNotice(noticeId), [noticeId], { immediate: !!noticeId })
+  const noticeRegion = useRef(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [startedTask, setStartedTask] = useState(null)
@@ -39,7 +41,6 @@ export default function RectificationPage() {
   const [replyWork, setReplyWork] = useState({})
   const replyDrafts = useRef(new Map())
   const requestLock = useRef(false)
-  const noticeSequence = useRef(0)
   const sub = subReq.data
   const reportId = sub?.latest_report?.id
   const reportReq = useRequest(() => (reportId ? getReport(reportId) : null), [reportId], { immediate: !!reportId })
@@ -51,20 +52,29 @@ export default function RectificationPage() {
   const materialBusy = materialsReq.loading || !materialsReq.data || !!materialsReq.error || materialsReq.pending > 0
   const submitReason = materialBusy ? (materialsReq.pending ? "材料正在解析，请完成后再重新提交。" : "正在核对材料状态，请稍候；加载失败时请重试。") : studentSubmitReason(sub, issueReq.data?.items || [], { ready: !!issueReq.data && !issueReq.loading && !issueReq.error && !subReq.loading, taskPending: taskPending || replyBusy })
 
-  const openNotice = async (id) => {
-    const sequence = ++noticeSequence.current
-    setNotice(null)
-    setNoticeError("")
-    setNoticeLoading(true)
-    try {
-      const data = await getNotice(id)
-      if (sequence === noticeSequence.current) setNotice(data)
-    } catch (e) {
-      if (sequence === noticeSequence.current) setNoticeError(e.message || "通知加载失败")
-    } finally {
-      if (sequence === noticeSequence.current) setNoticeLoading(false)
-    }
+  const selectNotice = (id) => {
+    const next = new URLSearchParams(searchParams)
+    if (id) next.set("notice", String(id))
+    else next.delete("notice")
+    setSearchParams(next, { replace: true })
   }
+
+  const notice = Number(noticeDetail.data?.id) === noticeId ? noticeDetail.data : null
+  useEffect(() => {
+    if (notice && noticeRegion.current) {
+      noticeRegion.current.focus({ preventScroll: true })
+      noticeRegion.current.scrollIntoView?.({ block: "start" })
+    }
+  }, [notice, sub?.id, archiveReq.loading, subReq.loading])
+  const noticePreview = requestedNotice && <section ref={noticeRegion} className="mb-4 scroll-mt-24" tabIndex={-1} aria-label="通知详情">
+    <div className="mb-2 flex items-center justify-between">
+      <h2 className="text-sm font-medium">通知详情</h2>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={() => selectNotice(null)}>关闭通知</button>
+    </div>
+    {!noticeId ? <p role="alert" className="text-sm text-error">通知编号无效，请从消息中心重新打开。</p>
+      : noticeDetail.error ? <ErrorState title="通知加载失败" error={noticeDetail.error} onRetry={() => noticeDetail.reload().catch(() => {})} />
+      : notice ? <NoticePreview key={notice.id} notice={notice} /> : <Loading label="通知" />}
+  </section>
 
   const resubmit = async () => {
     if (requestLock.current || submitReason || sub?.status !== "RETURNED") return
@@ -90,10 +100,10 @@ export default function RectificationPage() {
   }
 
   if (archiveReq.loading && !archive) return <Loading />
-  if (archiveReq.error) return <ErrorState error={archiveReq.error} onRetry={() => archiveReq.reload().catch(() => {})} />
-  if (!subId) return <div><PageHeader title="整改中心" /><p className="text-sm text-base-content/60">当前没有待整改的提交。</p></div>
+  if (archiveReq.error) return <div>{noticePreview}<ErrorState error={archiveReq.error} onRetry={() => archiveReq.reload().catch(() => {})} /></div>
+  if (!subId) return <div><PageHeader title="整改中心" />{noticePreview}<p className="text-sm text-base-content/60">当前没有待整改的提交。</p></div>
   if (subReq.loading && !sub) return <Loading />
-  if (subReq.error) return <ErrorState error={subReq.error} onRetry={() => subReq.reload().catch(() => {})} />
+  if (subReq.error) return <div>{noticePreview}<ErrorState error={subReq.error} onRetry={() => subReq.reload().catch(() => {})} /></div>
   const returned = sub?.status === "RETURNED"
   const allIssues = issueReq.data?.items || []
   const requiredReplies = pendingStudentReplies(sub, allIssues)
@@ -109,6 +119,7 @@ export default function RectificationPage() {
       <PageHeader title="整改中心" extra={returned && <button type="button" className="btn btn-primary btn-sm" disabled={busy || !!submitReason} onClick={resubmit}>{busy ? "重新提交中…" : "重新提交"}</button>}>
         {returned ? "逐条回复已确认的问题。全部处理后重新提交，系统会自动复核。" : "查看整改回复与复核记录；当前办理状态以页面提示为准。"}
       </PageHeader>
+      {noticePreview}
       <StudentFlowGuide submission={sub} issues={allIssues} groups={materialsReq.data || []} ready={!!issueReq.data && !!materialsReq.data && !issueReq.error && !materialsReq.error && !subReq.loading} taskPending={taskPending || replyBusy} source="rectification" blockedReason={returned ? (replyBusy ? "正在保存整改或解析新版本，请等待完成。" : submitReason) : ""}/>
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
       {materialsReq.error && <ErrorState error={materialsReq.error} onRetry={() => materialsReq.reload().catch(() => {})} />}
@@ -139,11 +150,8 @@ export default function RectificationPage() {
           <h2 className="text-sm font-medium">整改通知</h2>
           {noticeReq.loading && !noticeReq.data ? <Loading /> : noticeReq.error ? <ErrorState error={noticeReq.error} onRetry={() => noticeReq.reload().catch(() => {})} /> : <>
             {!(noticeReq.data?.items || []).length && <p className="text-sm text-base-content/60">暂无整改通知。</p>}
-            <ul className="space-y-2">{(noticeReq.data?.items || []).map((n) => <li key={n.id}><button type="button" className="btn btn-ghost btn-sm h-auto w-full justify-start py-2 text-left" onClick={() => openNotice(n.id)}><span><span className="block">{n.title}</span><span className="text-xs text-base-content/50">{n.item_count} 条 · {uiLabel(n.status)}</span></span></button></li>)}</ul>
+            <ul className="space-y-2">{(noticeReq.data?.items || []).map((n) => <li key={n.id}><button type="button" className="btn btn-ghost btn-sm h-auto w-full justify-start py-2 text-left" aria-pressed={Number(n.id) === noticeId} onClick={() => selectNotice(n.id)}><span><span className="block">{n.title}</span><span className="text-xs text-base-content/50">{n.item_count} 条 · {uiLabel(n.status)}</span></span></button></li>)}</ul>
           </>}
-          {noticeLoading && <Loading label="通知" />}
-          {noticeError && <div className="alert alert-error text-sm">{noticeError}</div>}
-          <NoticePreview notice={notice} />
         </aside>
       </div>
     </div>

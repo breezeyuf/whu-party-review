@@ -267,12 +267,12 @@ export async function runUiScenarios() {
   await test("AI成效零样本不呈现准确率，核验数据出现后展示真实比例", async () => {
     await mount(<AiQualityPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/stats/ai-quality" ? { reviewed: 0, confirm_rate: 0, false_positive_rate: 0 } : undefined })
     assert.match(text(), /暂无人工核验样本/)
-    const metrics = document.querySelector(".stats")
+    const metrics = document.querySelector('[aria-label="审核成效概览"]')
     assert.doesNotMatch(metrics.textContent, /0%/)
     assert.equal([...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "详细分类与规则分析").open, false)
     await mount(<AiQualityPage />, { roleCode: "SYS_ADMIN", handler: c => c.url === "/stats/ai-quality" ? { reviewed: 10, confirm_rate: 0.8, false_positive_rate: 0.2 } : undefined })
-    assert.match(document.querySelector(".stats").textContent, /80%/)
-    assert.match(document.querySelector(".stats").textContent, /20%/)
+    assert.match(document.querySelector('[aria-label="审核成效概览"]').textContent, /80%/)
+    assert.match(document.querySelector('[aria-label="审核成效概览"]').textContent, /20%/)
   })
 
   await test("两类管理员首页去掉辅助工具和规则维护块，菜单功能仍保留", async () => {
@@ -952,23 +952,31 @@ export async function runUiScenarios() {
     assert.match(text(), /数据导出 · 运行中/)
   })
 
-  await test("通知补全去重提交包编号并在成功后清空旧表单", async () => {
+  await test("通知可按学生搜索，勾选与手填提交去重并在发送成功后清空", async () => {
     await mount(<NoticesPage />, {
       path: "/notices",
       roleCode: "ORG_ADMIN",
       handler: (config) => {
         if (config.url === "/notices") return { items: [], total: 0, page: 1, page_size: 20 }
+        if (config.url === "/submissions") return { items: [{ id: 10, student_name: "测试学生", student_no: "00010", stage_name: "申请入党" }], total: 1 }
         if (config.url === "/submissions/completion-notices") return { created: [{ id: 1 }, { id: 2 }], skipped: [] }
         return undefined
       },
     })
     await click(button("批量补全提示"))
-    await input(document.querySelector(".modal input"), "10, 10, 11")
+    await input(document.querySelector(".modal form input"), "00010")
+    await click(button("查找学生"))
+    assert.equal(requests.find((request) => request.url === "/submissions").params.q, "00010")
+    await click(document.querySelector('.modal input[type="checkbox"]'))
+    assert.match(text(), /已选 1 份提交/)
+    await click(document.querySelector(".modal details summary"))
+    await input(document.querySelector(".modal details input"), "10, 11")
     await click(button("生成并推送"))
     const body = JSON.parse(requests.find((request) => request.url === "/submissions/completion-notices").data)
     assert.deepEqual(body.submission_ids, [10, 11])
     await click(button("批量补全提示"))
-    assert.equal(document.querySelector(".modal input").value, "")
+    assert.equal(document.querySelector(".modal details input").value, "")
+    assert.match(text(), /已选 0 份提交/)
   })
 
   await test("通知列表校验提交包 ID，非法输入不发送查询", async () => {
