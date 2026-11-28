@@ -71,7 +71,7 @@ export default function TimelineView({ timeline, onCorrect, onLocate, hidePerson
                       {s.page_no && <span className="ml-2">第 {s.page_no} 页</span>}
                       {s.raw_text && <span className="ml-2 text-base-content/50">“{s.raw_text}”</span>}
                       {onLocate && s.material_id && (
-                        <button type="button" className="btn btn-ghost btn-xs ml-1" onClick={() => onLocate(s)}>定位</button>
+                        <button type="button" className="btn btn-ghost btn-xs ml-1" onClick={event => onLocate(s, event.currentTarget)}>定位</button>
                       )}
                     </li>
                   ))}

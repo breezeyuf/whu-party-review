@@ -4,8 +4,8 @@ import { getJob } from "../api/jobs"
 const DONE = new Set(["SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"])
 
 export function useJobPolling(jobId, { interval = 1500, onDone, restartKey = 0 } = {}) {
-  const [job, setJob] = useState(null)
-  const [error, setError] = useState(null)
+  const [result, setResult] = useState(null)
+  const current = result?.jobId === jobId && result?.restartKey === restartKey ? result : null
   const doneRef = useRef(onDone)
 
   useEffect(() => {
@@ -13,26 +13,24 @@ export function useJobPolling(jobId, { interval = 1500, onDone, restartKey = 0 }
   }, [onDone])
 
   useEffect(() => {
-    if (!jobId) {
-      setJob(null)
-      setError(null)
-      return undefined
-    }
+    if (!jobId) { setResult(null); return undefined }
     let alive = true
     let timer = null
     const tick = async () => {
       try {
         const data = await getJob(jobId)
         if (!alive) return
-        setJob(data)
-        setError(null)
+        setResult({ jobId, restartKey, job: data, error: null })
         if (DONE.has(data.status)) {
           doneRef.current?.(data)
           return
         }
       } catch (e) {
         if (!alive) return
-        setError(e)
+        setResult(previous => ({
+          jobId, restartKey, error: e,
+          job: previous?.jobId === jobId && previous.restartKey === restartKey ? previous.job : null,
+        }))
       }
       timer = setTimeout(tick, interval)
     }
@@ -43,5 +41,6 @@ export function useJobPolling(jobId, { interval = 1500, onDone, restartKey = 0 }
     }
   }, [jobId, interval, restartKey])
 
-  return { job, error }
+  const job = current?.job ?? null
+  return { job, error: current?.error ?? null, pending: !!jobId && !DONE.has(job?.status) }
 }

@@ -204,6 +204,7 @@ export async function runIdentityScenarios() {
   await test("退出后重新登录另一身份，不残留前一个身份的页面和菜单", async () => {
     await mount({ roles: [{ role: "SYS_ADMIN", org_id: 1 }], session: true })
     assert.match(nav(), /组织与系统管理/)
+    await click(document.querySelector('button[aria-label="个人菜单"]'))
     await click(button("退出登录"))
     assert.equal(router.state.location.pathname, "/login")
     assert.equal(document.querySelector('nav[aria-label="主要导航"]'), null)
@@ -225,6 +226,7 @@ export async function runIdentityScenarios() {
   })
   await test("退出失败保留当前界面并提示重试", async () => {
     await mount({ session: true, failLogout: true })
+    await click(document.querySelector('button[aria-label="个人菜单"]'))
     await click(button("退出登录"))
     assert.ok(auth.user)
     assert.notEqual(router.state.location.pathname, "/login")

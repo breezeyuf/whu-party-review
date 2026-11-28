@@ -9,17 +9,20 @@ export default function CompletenessTable({ data }) {
       <div className="overflow-x-auto">
         <table className="table table-sm">
           <thead>
-            <tr><th>材料</th><th>必需</th><th>应交</th><th>实交</th><th>缺少</th><th>要求</th></tr>
+            <tr><th scope="col">材料与要求</th><th scope="col" className="whitespace-nowrap">应交</th><th scope="col" className="whitespace-nowrap">实交</th><th scope="col" className="whitespace-nowrap">缺少</th></tr>
           </thead>
           <tbody>
             {items.map((it) => (
               <tr key={it.checklist_item_id || it.material_type?.code || it.material_type} className={it.missing > 0 && it.required ? "bg-error/5" : ""}>
-                <td className="min-w-28">{it.material_type?.name || it.material_type}</td>
-                <td>{it.required ? "是" : "否"}</td>
-                <td className="mono">{it.expected}</td>
-                <td className="mono">{it.actual}</td>
-                <td className="mono">{it.missing}</td>
-                <td className="text-xs text-base-content/60">{it.requirement_text || ""}</td>
+                <th scope="row" className="font-medium whitespace-normal [overflow-wrap:anywhere]">
+                  <div>{it.material_type?.name || it.material_type}</div>
+                  <div className="mt-1 text-xs font-normal text-base-content/65">
+                    {it.required ? "必需" : "选交"}{it.requirement_text && ` · ${it.requirement_text}`}
+                  </div>
+                </th>
+                <td className="mono whitespace-nowrap">{it.expected}</td>
+                <td className="mono whitespace-nowrap">{it.actual}</td>
+                <td className="mono whitespace-nowrap">{it.missing}</td>
               </tr>
             ))}
           </tbody>

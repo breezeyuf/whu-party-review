@@ -140,7 +140,7 @@ export default function SelfCheckPage() {
       {error && <div className="alert alert-error mb-3 text-sm">{error}</div>}
       {materialsReq.error && <ErrorState error={materialsReq.error} onRetry={() => materialsReq.reload().catch(() => {})} />}
       <section aria-label="自查报告与材料清单" className="mb-5">
-      <div className="grid gap-5 lg:grid-cols-2 student-report-grid">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <section className="surface-card p-4">
           <h2 className="mb-3 text-sm font-medium">材料完整性</h2>
           {compReq.loading && !compReq.data && !snapshotMode ? <Loading /> : compReq.error && !snapshotMode ? <ErrorState error={compReq.error} onRetry={() => compReq.reload().catch(() => {})} /> : <CompletenessTable data={shownCompleteness} />}

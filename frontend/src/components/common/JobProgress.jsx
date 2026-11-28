@@ -9,6 +9,7 @@ const JOB_TYPE_NAME = {
   BATCH_AI_CHECK: "批量 AI 校验",
   BATCH_UPLOAD: "批量上传",
   EXPORT: "数据导出",
+  NOTICE_BATCH: "批量补全通知",
 }
 const JOB_STATUS_NAME = { QUEUED: "排队中", RUNNING: "运行中", SUCCEEDED: "已完成", PARTIAL: "部分失败", FAILED: "失败" }
 
@@ -18,9 +19,13 @@ export default function JobProgress({ job, onRetry }) {
   const meta = useMeta()
   if (!job) return null
   const total = job.total || 0
-  const done = (job.done_count || 0) + (job.failed_count || 0)
-  const pct = job.progress != null ? job.progress : (total ? Math.round((done / total) * 100) : (job.status === "SUCCEEDED" ? 100 : 8))
+  const counted = (job.done_count || 0) + (job.failed_count || 0)
+  const succeeded = job.status === "SUCCEEDED"
   const failed = job.status === "FAILED" || job.status === "PARTIAL"
+  const done = succeeded && total ? total : counted
+  const pct = succeeded ? 100 : job.progress ?? (total ? Math.round((done / total) * 100) : 8)
+  const typeLabel = JOB_TYPE_NAME[job.job_type] || "任务"
+  const heading = succeeded || failed ? typeLabel : job.stage_text || typeLabel
 
   // 重试接口只在这里调用一次；失败时就地显示原因，成功后再通知页面刷新
   const retry = async () => {
@@ -40,7 +45,7 @@ export default function JobProgress({ job, onRetry }) {
   return (
     <div className="surface-card p-3">
       <div className="mb-2 flex items-center justify-between text-xs">
-        <span>{job.stage_text || JOB_TYPE_NAME[job.job_type] || "任务"} · {JOB_STATUS_NAME[job.status] || statusName(meta, job.status)}</span>
+        <span>{heading} · {JOB_STATUS_NAME[job.status] || statusName(meta, job.status)}</span>
         <span className="mono">{total ? `${done}/${total}` : `${pct}%`}</span>
       </div>
       <progress className={`progress w-full ${failed ? "progress-error" : "progress-primary"}`} value={pct} max="100" />

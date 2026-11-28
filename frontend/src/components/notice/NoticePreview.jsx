@@ -6,6 +6,7 @@ import { SeverityBadge } from "../common/Badges"
 
 export default function NoticePreview({ notice }) {
   const [busy, setBusy] = useState("")
+  const [error, setError] = useState("")
   if (!notice) return <p className="text-sm text-base-content/50">选择一条通知查看。</p>
   const content = notice.content || {}
   const items = content.items || []
@@ -13,9 +14,12 @@ export default function NoticePreview({ notice }) {
 
   const download = async (format) => {
     setBusy(format)
+    setError("")
     try {
       const file = await exportNotice(notice.id, format)
       saveBlob(file)
+    } catch (failure) {
+      setError(failure.message || "导出失败，请重试。")
     } finally {
       setBusy("")
     }
@@ -55,6 +59,7 @@ export default function NoticePreview({ notice }) {
         </div>
       )}
       {content.note && <p className="mt-3 whitespace-pre-wrap text-sm">审核意见：{content.note}</p>}
+      {error && <p className="mt-3 text-sm text-error" role="alert">{error}</p>}
       <div className="mt-4 flex gap-2">
         <button type="button" className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => download("pdf")}>{busy === "pdf" ? "导出中" : "导出 PDF"}</button>
         <button type="button" className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => download("docx")}>{busy === "docx" ? "导出中" : "导出 Word"}</button>

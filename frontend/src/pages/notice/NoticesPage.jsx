@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import PageHeader from "../../components/layout/PageHeader"
+import SubmissionPicker from "../../components/notice/SubmissionPicker"
+import { useAuth } from "../../context/AuthContext"
 import FilterBar from "../../components/common/FilterBar"
 import DataTable, { Pager } from "../../components/common/DataTable"
 import NoticePreview from "../../components/notice/NoticePreview"
@@ -18,7 +20,11 @@ const isPositiveIntegerId = (value) => /^\d+$/.test(value) && Number.isSafeInteg
 
 export default function NoticesPage() {
   const toast = useToast()
+  const { activeRole } = useAuth()
+  const canGenerate = ["BRANCH_REVIEWER", "COLLEGE_REVIEWER", "ORG_ADMIN"].includes(activeRole?.role)
   const [sp] = useSearchParams()
+  const noticeId = sp.get("notice")
+  const preview = useRef(null)
   const { query, setQuery, setPage } = usePagination()
   const querySubmissionId = String(query.submission_id ?? "")
   const querySubmissionIdValid = !querySubmissionId || isPositiveIntegerId(querySubmissionId)
@@ -32,6 +38,8 @@ export default function NoticesPage() {
   const sequence = useRef(0)
   const [open, setOpen] = useState(false)
   const [ids, setIds] = useState("")
+  const [selected, setSelected] = useState([])
+  const [generateError, setGenerateError] = useState("")
   const [submissionIdDraft, setSubmissionIdDraft] = useState(querySubmissionId)
   const [deadline, setDeadline] = useState("")
   const [generating, setGenerating] = useState(false)
@@ -65,30 +73,35 @@ export default function NoticesPage() {
   }
 
   useEffect(() => {
-    const nid = sp.get("notice")
-    if (nid) openOne(nid)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sp])
+    if (noticeId) {
+      openOne(noticeId)
+      preview.current?.focus({ preventScroll: true })
+      preview.current?.scrollIntoView?.({ block: "start" })
+    }
+  }, [noticeId])
 
   const generate = async () => {
-    if (generating) return
-    const rawIds = ids.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean)
-    const submission_ids = [...new Set(rawIds.map(Number))]
-    if (rawIds.some((value) => !/^\d+$/.test(value) || Number(value) < 1)) {
-      toast.error("提交包 ID 只能填写正整数，并用逗号或空格分隔")
+    if (!canGenerate || generating) return
+    setGenerateError("")
+    const rawIds = ids.split(/[,，\s]+/).filter(Boolean)
+    if (rawIds.some(value => !isPositiveIntegerId(value))) {
+      setGenerateError("提交包 ID 只能填写正整数，并用逗号或空格分隔。")
       return
     }
-    if (!submission_ids.length) { toast.error("请填写提交包 ID"); return }
+    const submission_ids = [...new Set([...selected.map(row => row.id), ...rawIds].map(Number))]
+    if (!submission_ids.length) { setGenerateError("请先查找并勾选要通知的学生提交。"); return }
+    if (submission_ids.length > 500) { setGenerateError("每批最多通知 500 份提交。"); return }
     setGenerating(true)
     try {
       const res = await completionNotices({ submission_ids, deadline: deadline || undefined, send: true })
       toast.success(`生成 ${res.created?.length || 0} 条，跳过 ${res.skipped?.length || 0} 条`)
       setOpen(false)
       setIds("")
+      setSelected([])
       setDeadline("")
       req.reload().catch(() => {})
     } catch (e) {
-      toast.error(e.message || "生成失败")
+      setGenerateError(e.message || "生成失败，请重试。")
     } finally {
       setGenerating(false)
     }
@@ -112,17 +125,17 @@ export default function NoticesPage() {
 
   return (
     <div>
-      <PageHeader title="通知与补件" extra={<button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>批量补全提示</button>} />
+      <PageHeader title="通知与补件" extra={canGenerate && <button type="button" className="btn btn-primary btn-sm" onClick={() => { setGenerateError(""); setOpen(true) }}>批量补全提示</button>} />
       <FilterBar
         values={{ ...query, submission_id: submissionIdDraft }}
         onChange={updateFilters}
         fields={[
           { key: "notice_type", label: "类型", type: "select", options: [{ code: "COMPLETION", name: "补全提示" }, { code: "RECTIFICATION", name: "整改通知" }] },
           { key: "status", label: "状态", type: "select", options: [{ code: "DRAFT", name: "草稿" }, { code: "SENT", name: "已发送" }] },
-          { key: "submission_id", label: "提交包 ID" },
+          { key: "submission_id", label: "提交包 ID", invalid: submissionIdInvalid, describedBy: submissionIdInvalid ? "notice-submission-error" : undefined },
         ]}
       />
-      {submissionIdInvalid && <p className="mt-2 text-sm text-error" role="alert">提交包 ID 只能填写正整数；当前列表仍按上次有效条件显示。</p>}
+      {submissionIdInvalid && <p id="notice-submission-error" className="mt-2 text-sm text-error" role="alert">提交包 ID 只能填写正整数；当前列表仍按上次有效条件显示。</p>}
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="surface-card p-2">
           <DataTable
@@ -140,31 +153,39 @@ export default function NoticesPage() {
           />
           {!req.error && <Pager page={req.data?.page} pageSize={req.data?.page_size ?? query.page_size} total={req.data?.total} onPage={setPage} onPageSize={(page_size) => setQuery({ page_size })} />}
         </div>
-        <div>
+        <section ref={preview} tabIndex={-1} className="min-w-0 scroll-mt-24" aria-label="通知详情">
           {noticeState.loading && <Loading label="通知" />}
           {noticeState.error && <ErrorState title="通知加载失败" error={noticeState.error} onRetry={() => openOne(noticeState.id)} />}
           {!noticeState.loading && !noticeState.error && <>
-            <NoticePreview notice={current} />
+            <NoticePreview key={current?.id} notice={current} />
             {current?.status === "DRAFT" && (
               <button type="button" className="btn btn-primary btn-sm mt-3" disabled={sendingId != null} onClick={() => doSend(current)}>{sendingId === current.id ? "发送中…" : "发送"}</button>
             )}
           </>}
-        </div>
+        </section>
       </div>
-      <Modal open={open} title="生成材料补全提示" onClose={() => setOpen(false)} footer={
+      <Modal open={open} wide title="生成材料补全提示" onClose={() => { if (!generating) setOpen(false) }} footer={
         <>
           <button type="button" className="btn btn-ghost btn-sm" disabled={generating} onClick={() => setOpen(false)}>取消</button>
           <button type="button" className="btn btn-primary btn-sm" disabled={generating} onClick={generate}>{generating ? "生成中…" : "生成并推送"}</button>
         </>
       }>
-        <label className="form-control">
-          <span className="label-text text-xs">提交包 ID，逗号分隔</span>
-          <input className="input input-bordered input-sm" value={ids} onChange={(e) => setIds(e.target.value)} />
-        </label>
-        <label className="form-control mt-2">
-          <span className="label-text text-xs">截止日期</span>
-          <input type="date" className="input input-bordered input-sm" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
-        </label>
+        {open && <fieldset className="space-y-3" disabled={generating}>
+          <SubmissionPicker selected={selected} onChange={(rows) => { setSelected(rows); setGenerateError("") }} />
+          <details className="service-inline-details">
+            <summary>{ids.trim() ? "手动填写提交包编号（已填写）" : "手动填写提交包编号"}</summary>
+            <label className="form-control details-content">
+              <span className="label-text text-xs">提交包 ID，逗号分隔</span>
+              <input className="input input-bordered input-sm w-full" value={ids}
+                onChange={(e) => { setIds(e.target.value); setGenerateError("") }} />
+            </label>
+          </details>
+          <label className="form-control">
+            <span className="label-text text-xs">截止日期</span>
+            <input type="date" className="input input-bordered input-sm" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          </label>
+        </fieldset>}
+        {generateError && <p role="alert" className="mt-3 text-sm text-error">{generateError}</p>}
       </Modal>
     </div>
   )

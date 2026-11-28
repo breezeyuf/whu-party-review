@@ -6,14 +6,18 @@ import { positiveInteger, validBbox } from "../../utils/materialWorkflow"
 import { pagePoint, regionBox } from "../../utils/regionSelection"
 
 export default function MaterialViewer({ materialId, versionId, page, onPage, pageCount: knownPageCount, highlights = [], activeId, refreshKey, onSelectRegion }) {
-  const [scale, setScale] = useState(1.2)
+  const [scale, setScale] = useState(1)
   const [pageNo, setPageNo] = useState(positiveInteger(page) || 1)
   const [retryKey, setRetryKey] = useState(0)
+  const [jumpDraft, setJumpDraft] = useState(null)
   const [selecting, setSelecting] = useState(false)
   const [selection, setSelection] = useState(null)
   const drag = useRef(null)
 
-  useEffect(() => { setPageNo(positiveInteger(page) || 1) }, [materialId, versionId, page])
+  useEffect(() => {
+    setPageNo(positiveInteger(page) || 1)
+    setJumpDraft(null)
+  }, [materialId, versionId, page])
   const requestedPage = Math.min(pageNo, positiveInteger(knownPageCount) || pageNo)
 
   const { url, meta, loading, error } = useBlobUrl(
@@ -78,6 +82,7 @@ export default function MaterialViewer({ materialId, versionId, page, onPage, pa
   const go = (n) => {
     const next = Math.min(Math.max(1, n), pageCount)
     setPageNo(next)
+    setJumpDraft(null)
     onPage?.(next)
   }
 
@@ -89,7 +94,16 @@ export default function MaterialViewer({ materialId, versionId, page, onPage, pa
         <button type="button" className="btn btn-xs" disabled={loading || requestedPage <= 1} onClick={() => go(requestedPage - 1)}>上一页</button>
         <span className="mono">第 {requestedPage} / {pageCount} 页</span>
         <button type="button" className="btn btn-xs" disabled={loading || requestedPage >= pageCount} onClick={() => go(requestedPage + 1)}>下一页</button>
-        <label className="flex items-center gap-1">跳至<input aria-label="跳转预览页码" type="number" min="1" max={pageCount} className="input input-bordered input-xs w-16" value={requestedPage} disabled={loading} onChange={(event) => { const next = positiveInteger(event.target.value); if (next) go(next) }} />页</label>
+        <form className="flex items-center gap-1" onSubmit={(event) => {
+          event.preventDefault()
+          const next = positiveInteger(jumpDraft ?? requestedPage)
+          if (next) go(next)
+        }}>
+          <input aria-label="跳转预览页码" type="number" min="1" max={pageCount} required
+            className="input input-bordered input-xs w-16" value={jumpDraft ?? requestedPage} disabled={loading}
+            onChange={(event) => setJumpDraft(event.target.value)} />
+          <button type="submit" className="btn btn-xs" disabled={loading}>跳转</button>
+        </form>
         <button type="button" className="btn btn-ghost btn-xs" onClick={() => setScale((s) => Math.max(0.6, +(s - 0.2).toFixed(1)))}>缩小</button>
         <span className="mono">{Math.round(scale * 100)}%</span>
         <button type="button" className="btn btn-ghost btn-xs" onClick={() => setScale((s) => Math.min(2.4, +(s + 0.2).toFixed(1)))}>放大</button>
@@ -99,13 +113,16 @@ export default function MaterialViewer({ materialId, versionId, page, onPage, pa
       {loading && <Loading label="页面预览" />}
       {error && <p role="alert" className="text-xs text-error">{error.message} <button type="button" className="link" onClick={() => setRetryKey((key) => key + 1)}>重新加载预览</button></p>}
       {url && (
-        <div className="inline-block max-w-full overflow-auto rounded border border-base-300 bg-base-200">
+        <div className="max-w-full overflow-auto rounded border border-base-300 bg-base-200" tabIndex={scale > 1 ? 0 : undefined} role="region" aria-label="材料预览">
           <div className="relative" role={selecting ? "region" : undefined} aria-label={selecting ? "框选问题区域" : undefined} tabIndex={selecting ? 0 : undefined}
-            style={selecting ? { cursor: "crosshair", touchAction: "none", userSelect: "none" } : undefined}
+            style={{
+              width: `${scale * 100}%`, maxWidth: pw * scale,
+              ...(selecting ? { cursor: "crosshair", touchAction: "none", userSelect: "none" } : {}),
+            }}
             onPointerDown={startSelection} onPointerMove={moveSelection} onPointerUp={finishSelection}
             onPointerCancel={() => { drag.current = null; setSelection(null) }}
             onKeyDown={(event) => { if (event.key === "Escape") cancelSelection() }}>
-          <img src={url} alt={`第 ${requestedPage} 页`} className="block max-w-full" draggable={false} />
+          <img src={url} alt={`第 ${requestedPage} 页`} className="block w-full" draggable={false} />
           <div className="pointer-events-none absolute inset-0">
             {boxes.map((h) => {
               const [x1, y1, x2, y2] = h.bbox
